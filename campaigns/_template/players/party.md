@@ -1,2 +1,20 @@
 # The Party
-Shared inventory, gold, known allies and enemies, and quest log.
+
+## Members
+-
+
+## Gold & shared loot
+-
+
+## Quests & goals
+- [ ]
+
+## Known allies & contacts
+-
+
+## Known enemies & threats
+-
+
+## Things we've learned
+Clues, rumors, and revealed secrets.
+-
