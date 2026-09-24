@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:d20pfsrd.com)",
+      "WebFetch(domain:www.d20pfsrd.com)",
+      "WebFetch(domain:aonprd.com)",
+      "WebFetch(domain:www.aonprd.com)",
+      "WebFetch(domain:pathfinderwiki.com)",
+      "WebFetch(domain:www.pathfinderwiki.com)",
+      "Edit(campaigns/**/dm/**)",
+      "Write(campaigns/**/dm/**)",
+      "Edit(library/settings/**)",
+      "Write(library/settings/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "WebFetch|WebSearch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/web_allowlist.py\""
+          }
+        ]
+      }
+    ]
+  }
+}

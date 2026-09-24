@@ -1,0 +1,9 @@
+{
+  // Hide DM-only folders to avoid spoilers. Set to false (or comment out) to see them.
+  "files.exclude": {
+    "campaigns/*/dm": true
+  },
+  "search.exclude": {
+    "campaigns/*/dm": true
+  }
+}
