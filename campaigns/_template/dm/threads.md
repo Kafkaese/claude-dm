@@ -13,6 +13,8 @@ The registry of every plot thread. Check it before introducing anything with plo
   - [SNN] <clue>, <where / how>
 - **Clues available** [flex]:
   - <clue>, <where / who>
+- **Floating clues** [flex]: 1–3 clues that aren't tied to a place, which an outside actor can deliver when the PCs are stuck (a letter, a witness who seeks them out, a rival).
+  - <clue>, <possible messenger>
 - **Clock:** <what happens when, if unopposed>
 - **Next beat:**
 - **Last touched:** S00

@@ -12,14 +12,15 @@ Read these files:
 - `library/general/table-rules/safety-tools.md` and `library/general/table-rules/continuity.md`
 - the campaign's `campaign.md`, `players/session-zero.md`, `dm/state.md` and `dm/campaign-plan.md`
 - the most recent `dm/session-log/` file, especially its continuity report and "For next prep"
-- `dm/threads.md` and `dm/timeline.md`
+- `dm/threads.md`, `dm/timeline.md` and `dm/world.md`, plus `library/general/table-rules/living-world.md`
 - `dm/characters/` for PC hooks and abilities to plan around
 
 ## Tasks you may get
 
 ### Advance the world
 Decide what NPCs, factions and villains did since the last session, based on their goals and on what the PCs did or failed to do.
-- Advance clocks and timers.
+- Advance clocks and timers. Move the agendas in `dm/world.md` and in the faction files forward.
+- Let heat cool where time has passed and nothing new happened. Awareness only decreases if the PCs have genuinely thrown the antagonist off.
 - Update `dm/state.md`, under "Off-screen developments" and "Clocks & timers".
 - Update the affected `dm/npcs/`, `dm/factions/` and `dm/locations/` files.
 - Consequences should follow logically from play and match the lethality and consequence settings from session zero.
@@ -34,6 +35,13 @@ Write `dm/session-prep/session-NN-prep.md`:
 - **Encounters:** built using `library/<system>/rules/`. Save stat blocks to `library/<system>/bestiary/` or the campaign `dm/npcs/`, citing sources from the allowed sites. Account for the "abilities to plan around" in `dm/characters/`, but only sometimes.
 - **Rewards:** treasure appropriate to the system's wealth guidelines.
 - **Backstory hook:** at least one, if any PC's centrality allows it.
+- **World pressure** (in `dm/world.md` and `dm/threads.md`):
+  - scheduled events for the coming days
+  - reaction triggers for the places and people the PCs are likely to deal with next
+  - responses matching each antagonist's current awareness level
+  - a replenished supply of 1–3 floating clues per main thread
+  - an event table in `dm/tables/` for every region the PCs may travel through
+  - at least one proactive event planned for the session
 
 ### Other DM-only writing
 Do what the caller asks, following the repo conventions.

@@ -17,6 +17,7 @@ What the table agreed on. The DM follows this, and anyone can ask to revisit it.
 - **Theme:**
 - **Flavor:**
 - **Structure:** sandbox ↔ linear
+- **World pressure:** calm / lively / relentless
 - **Branching:** focused / balanced / expansive (max N active side plots)
 - **Pillar balance:** combat / social / exploration
 - **Intrigue & mystery:**

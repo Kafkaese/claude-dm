@@ -37,7 +37,8 @@ Use spoiler-free tool descriptions throughout.
 5. **`dm/characters/*`:** add to Observations what the player enjoyed, their tactics, and how the backstory hooks landed. If stars & wishes changed how the campaign should be run, note that in `dm/campaign-plan.md`.
 6. **`dm/state.md`:** update everything for picking up next time: last session, date, location, exact current scene, PC status, open threads.
 7. **`campaign.md`:** increment "Sessions played" and update the party level.
-8. **Safety:** if lines or veils changed, update `players/session-zero.md`.
+8. **`dm/world.md`:** awareness and heat changes with their causes, fired triggers, and scheduled events that happened.
+9. **Safety:** if lines or veils changed, update `players/session-zero.md`.
 
 ## Step 4: Continuity check
 Do a final checkpoint first (see `continuity.md`): flip revealed facts to locked, and make sure the "New elements" and "Revealed" sections are complete.

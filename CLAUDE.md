@@ -10,7 +10,7 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
   - `**/sources.md`: which websites are trusted for what. The web allowlist hook reads these files.
 - `campaigns/<name>/`: one folder per campaign; copy `campaigns/_template/` to start a new one.
   - `campaign.md`: overview, the `system` field, campaign-specific house rules
-  - `dm/`: **DM only**. `dm/state.md` holds the current game state, `dm/threads.md` is the plot-thread registry, `dm/timeline.md` is the true chronology, and `dm/characters/` holds private notes on the PCs.
+  - `dm/`: **DM only**. `dm/state.md` holds the current game state, `dm/threads.md` is the plot-thread registry, `dm/timeline.md` is the true chronology, `dm/world.md` tracks world pressure (events, awareness, heat, triggers), and `dm/characters/` holds private notes on the PCs.
   - `players/`: player-facing material
 - `scripts/roll.py`: dice roller. Run `python3 scripts/roll.py -h` for the syntax.
 - `.claude/skills/`: `/new-campaign`, `/add-character`, `/start-session`, `/end-session`, plus `lookup` (Claude-only)
@@ -32,3 +32,8 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
    - Improvise freely with flavor. For anything with plot weight, reuse existing elements first, check `dm/timeline.md` and `dm/threads.md` before saying it, and record it immediately.
    - The world exists independently of the player: rolls find things, they don't create them. Use the oracle when you're unsure.
    - Keep to the side-thread budget, and touch the main plot every session.
+9. **Living world.** Follow `library/general/table-rules/living-world.md`:
+   - Things happen **to** the PCs, not only because of them.
+   - At every transition (travel, rest, time passing, notable PC actions, stuck signals), run a world turn before narrating the result: scheduled events, clocks, reaction triggers, a random event roll, floating clues when the PCs are stuck.
+   - Scale the world turn to the transition class, the settlement cooldown and the session budget. Short hops and making the rounds between NPCs stay uneventful, so moving around is never discouraged.
+   - Don't just "arrive". Every proactive event comes from prepared material and gets recorded.

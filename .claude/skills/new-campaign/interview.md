@@ -72,6 +72,10 @@ Don't copy plots, named characters or signature settings from the works. Borrow 
    - Wilderness / exploration
    - Planar / weird
    - Others through "Other", e.g. nautical, war, kingdom building
+3. **World pressure:** how actively does the world push back?
+   - Lively: regular events on the road and at night, and enemies react when you get close (Recommended)
+   - Calm: the world moves mostly off-screen, and interruptions are rare
+   - Relentless: constant pressure, you're hunted, little safe downtime
 
 ## Round 2b: Challenge & Consequences
 Explain that these questions set how merciful the DM is, both with dice and in general.
@@ -177,5 +181,5 @@ Ask in plain chat as free text:
 - **Character concepts:** any ideas they already have, so the campaign can hook into them.
 
 ## Defaults (quick mode or "you decide")
-Golarion (Varisia), original content, guided sandbox, balanced branching (3 side threads), balanced pillars, some intrigue, standard lethality, mercy at low levels only, realistic-but-warned consequences, mostly balanced encounters, level 1, 15 point buy (20 if solo or 2 players), Core plus main rulebooks, medium XP, 2 traits, max HP at 1st level, player rolls own dice, hidden secret rolls.
+Golarion (Varisia), original content, guided sandbox, balanced branching (3 side threads), lively world pressure, balanced pillars, some intrigue, standard lethality, mercy at low levels only, realistic-but-warned consequences, mostly balanced encounters, level 1, 15 point buy (20 if solo or 2 players), Core plus main rulebooks, medium XP, 2 traits, max HP at 1st level, player rolls own dice, hidden secret rolls.
 Safety tools are never skipped, even in quick mode. At minimum, state the default lines, explain the in-chat signals in one short table, and ask "Anything you want off the table or off-screen?"

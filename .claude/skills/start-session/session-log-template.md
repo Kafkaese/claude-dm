@@ -2,6 +2,7 @@
 - **Real date:**
 - **In-game date:**
 - **Present:**
+- **Interruptions:** 0 / budget N · **Last random event:** <in-game day/time, place> · **Routes made today:** <for hop classification>
 
 ## Log
 Append as you play: scene, what happened, key decisions, rolls that mattered.
@@ -14,6 +15,10 @@ Anything improvised during play. Flavor needs only a word; for plot weight, give
 
 ## Revealed
 Facts the players learned this session. Flip these to `[locked SNN]` at the next checkpoint.
+-
+
+## World turns
+Transition (class) → what was checked, what fired (scheduled event, clock, trigger, random event, floating clue), track changes.
 -
 
 ## Oracle rolls

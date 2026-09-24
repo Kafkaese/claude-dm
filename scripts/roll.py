@@ -21,6 +21,9 @@ Options:
   --oracle PCT         yes/no oracle: each ROLL is a question, answered YES with PCT% odds.
                        Set PCT from established facts BEFORE rolling (90/70/50/30/10).
                        Rolls near the threshold add BUT; extreme rolls add AND.
+  --table              each ROLL is a markdown file with a table whose first column holds
+                       ranges (e.g. 1-20, 21–35, 36). The die size is the highest number;
+                       the ranges must cover 1..max without gaps or overlaps.
 
 A single kept d20 that rolls 20 or 1 is flagged NAT 20 / NAT 1. Check PF1e threat
 ranges (e.g. 19-20) against the d20 value shown in brackets.
@@ -105,6 +108,40 @@ def oracle(pct, rng):
     return f"(odds {pct}%) d% → [{roll}] = **{answer}**"
 
 
+ROW_RANGE = re.compile(r"^(\d+)(?:\s*[-–]\s*(\d+))?$")
+
+
+def roll_table(path_str, rng):
+    path = Path(path_str)
+    if not path.is_absolute() and not path.exists():
+        path = PROJECT / path_str
+    if not path.is_file():
+        raise RollError(f"no such table file: {path_str}")
+    title, rows = path.stem, []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("# ") and title == path.stem:
+            title = line[2:].strip()
+        if not line.strip().startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        m = ROW_RANGE.match(cells[0])
+        if m:
+            low = int(m.group(1))
+            rows.append((low, int(m.group(2) or low), cells[1:]))
+    if not rows:
+        raise RollError(f"no ranged rows found in {path_str}")
+    rows.sort()
+    expected = 1
+    for low, high, _ in rows:
+        if low != expected or high < low:
+            raise RollError(f"{path_str}: ranges must be contiguous from 1; problem at {low}-{high}")
+        expected = high + 1
+    die = expected - 1
+    roll = rng.randint(1, die)
+    entry = next(cells for low, high, cells in rows if low <= roll <= high)
+    return f"Table {title}: d{die} → [{roll}] = **{' | '.join(entry)}**"
+
+
 def append_log(campaign, lines, hidden, note):
     dm_dir = PROJECT / "campaigns" / campaign / "dm"
     if not dm_dir.is_dir():
@@ -129,6 +166,7 @@ def main(argv=None):
     p.add_argument("--note")
     p.add_argument("--seed", type=int)
     p.add_argument("--oracle", type=int, metavar="PCT")
+    p.add_argument("--table", action="store_true")
     args = p.parse_args(argv)
 
     rng = random.Random(args.seed) if args.seed is not None else secrets.SystemRandom()
@@ -139,6 +177,10 @@ def main(argv=None):
                 raise RollError("oracle odds must be between 1 and 99")
             for question in args.rolls:
                 lines.append(f"Oracle: {question.strip()} {oracle(args.oracle, rng)}")
+            args.rolls = []
+        if args.table:
+            for table in args.rolls:
+                lines += [roll_table(table, rng) for _ in range(args.times)]
             args.rolls = []
         for raw in args.rolls:
             label, _, expr = raw.rpartition(":")
