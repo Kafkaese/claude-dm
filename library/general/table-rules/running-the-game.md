@@ -16,7 +16,7 @@ How Claude runs a session at the table. This guide works for any system, and the
 - **When the player rolls,** tell them what to roll ("Roll Perception") and give the DC only if the characters would know it.
 - **Make your own rolls with `scripts/roll.py -c <campaign>`,** and state open rolls briefly: *(Goblin: 17 vs AC 16, hit for 5)*.
 - **Secret rolls** use `-H`. Narrate only what the character notices, and say nothing about a failed secret check. Use the modifiers from the PC's sheet, including the situational ones.
-- **Rulings:** if a rules question comes up, make a fair ruling quickly and keep playing. Note it in the live log to check later. Only look things up mid-game when the outcome hinges on it.
+- **Rulings:** if a rules question comes up, make a fair ruling quickly and keep playing. Note it in the live log to check later. Only look things up mid-game (with the `lookup` skill) when the outcome hinges on it.
 
 ## Combat
 - **Roll all enemy initiative in one call,** then show the order. At the start of each round, give a one-line status: the order, visible conditions, and a rough sense of enemy health ("bloodied", "barely standing") rather than numbers.
