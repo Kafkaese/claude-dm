@@ -18,6 +18,9 @@ Options:
   -H, --hidden         mark as a hidden (GM screen) roll in the log
   --note TEXT          context for the log, e.g. "vs AC 16"
   --seed N             fixed seed (testing only)
+  --oracle PCT         yes/no oracle: each ROLL is a question, answered YES with PCT% odds.
+                       Set PCT from established facts BEFORE rolling (90/70/50/30/10).
+                       Rolls near the threshold add BUT; extreme rolls add AND.
 
 A single kept d20 that rolls 20 or 1 is flagged NAT 20 / NAT 1. Check PF1e threat
 ranges (e.g. 19-20) against the d20 value shown in brackets.
@@ -90,6 +93,18 @@ def evaluate(expr, rng):
     return total, "".join(parts), flags
 
 
+def oracle(pct, rng):
+    roll = rng.randint(1, 100)
+    # Within each side: the most extreme 10% add AND, the 20% nearest the threshold add BUT.
+    if roll <= pct:
+        answer = "YES, AND" if roll <= pct * 0.1 else "YES, BUT" if roll > pct * 0.8 else "YES"
+    else:
+        no_range = 100 - pct
+        answer = ("NO, AND" if roll > 100 - no_range * 0.1
+                  else "NO, BUT" if roll <= pct + no_range * 0.2 else "NO")
+    return f"(odds {pct}%) d% → [{roll}] = **{answer}**"
+
+
 def append_log(campaign, lines, hidden, note):
     dm_dir = PROJECT / "campaigns" / campaign / "dm"
     if not dm_dir.is_dir():
@@ -113,11 +128,18 @@ def main(argv=None):
     p.add_argument("-H", "--hidden", action="store_true")
     p.add_argument("--note")
     p.add_argument("--seed", type=int)
+    p.add_argument("--oracle", type=int, metavar="PCT")
     args = p.parse_args(argv)
 
     rng = random.Random(args.seed) if args.seed is not None else secrets.SystemRandom()
     lines = []
     try:
+        if args.oracle is not None:
+            if not 1 <= args.oracle <= 99:
+                raise RollError("oracle odds must be between 1 and 99")
+            for question in args.rolls:
+                lines.append(f"Oracle: {question.strip()} {oracle(args.oracle, rng)}")
+            args.rolls = []
         for raw in args.rolls:
             label, _, expr = raw.rpartition(":")
             label = label.strip()

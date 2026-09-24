@@ -1,6 +1,6 @@
 ---
 name: end-session
-description: Wrap up the current game session. Collects stars & wishes, awards XP, writes the DM log and a player recap, updates party, characters and state, advances the world, and preps the next session. Use when the player wants to stop, end or wrap up a session.
+description: Wrap up the current game session. Collects stars & wishes, awards XP, writes the DM log and a player recap, updates party, characters and state, runs a continuity check, advances the world, and preps the next session. Use when the player wants to stop, end or wrap up a session.
 argument-hint: "[campaign]"
 ---
 
@@ -39,10 +39,16 @@ Use spoiler-free tool descriptions throughout.
 7. **`campaign.md`:** increment "Sessions played" and update the party level.
 8. **Safety:** if lines or veils changed, update `players/session-zero.md`.
 
-## Step 4: Behind the screen
-Delegate to the **dm-scribe** agent: "campaign `<slug>`: session NN just ended; advance the world, then prep session NN+1". Tell the player "I'll prepare next session behind the screen." Relay only the agent's spoiler-free confirmation.
+## Step 4: Continuity check
+Do a final checkpoint first (see `continuity.md`): flip revealed facts to locked, and make sure the "New elements" and "Revealed" sections are complete.
 
-## Step 5: Close
+Then delegate to the **continuity-checker** agent: "campaign `<slug>`, session NN". Relay only its spoiler-free summary.
+- If it reports a problem with a locked fact that **needs raising OOC**, raise it now, briefly and honestly, e.g. *"(OOC: I realized I contradicted myself about when the fire started. The earlier version stands / let's say X instead. Okay?)"*. Record the outcome as locked.
+
+## Step 5: Behind the screen
+Delegate to the **dm-scribe** agent: "campaign `<slug>`: session NN just ended; act on the continuity report's 'For next prep' section, advance the world, then prep session NN+1". Tell the player "I'll prepare next session behind the screen." Relay only the agent's spoiler-free confirmation.
+
+## Step 6: Close
 - Show the player recap. It's theirs to read.
 - If this is a git repo, offer to commit the session as a save point with the message `<campaign>: session NN`.
 - Close with a short in-world teaser line that doesn't spoil anything, e.g. an ominous image or an open question the characters already know about.

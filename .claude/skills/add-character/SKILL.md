@@ -54,6 +54,7 @@ The file slug is the character's name in kebab-case.
     - a permanent fly speed makes melee-only enemies trivial, so answers include ranged foes, flying foes, tight interiors and bad weather
     - at-will *detect evil* spoils many mysteries
     Plan to challenge these abilities sometimes, not every time. Players should get to enjoy what they built.
+- **Continuity:** backstory facts the player wrote are `[locked S00]`. Blanks you fill in are `[flex]` until they're revealed. Check your inventions against `dm/timeline.md` and `dm/threads.md`, then add backstory events to the timeline. Register hooks in `dm/threads.md`: as a character thread (respecting the side-thread budget) or as dormant seeds, depending on centrality.
 - Weave the character into `dm/campaign-plan.md` and the current adventure, with depth matching the centrality they chose.
   - Central or woven in: add real arcs and hooks.
   - Light touch: seed a few hooks.

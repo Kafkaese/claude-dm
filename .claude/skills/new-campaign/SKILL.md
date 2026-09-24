@@ -42,11 +42,15 @@ Settings live in `library/settings/<slug>/` and can be reused across campaigns. 
    - `dm/adventures/<first-adventure>/`: the opening adventure, detailed enough to run session 1
    - `dm/npcs/` and `dm/locations/`: the key people and places for the opening
    - `dm/state.md`: the starting situation
-4. Match your prep to the structure the table chose:
+   - `dm/timeline.md`: the true chronology leading up to the campaign. Tag everything `[flex]`, except facts already stated in the pitch or setting primer, which are `[locked S00]`.
+   - `dm/threads.md`: T01 for the main plot (truth, clues available, clock) and any planned side threads, each with its connection to the main plot. Set the side-thread budget from session zero.
+   - Use `dm/npcs/_npc-template.md` and `dm/locations/_location-template.md` for NPCs and locations. Only the most important NPCs and locations need files; don't over-build.
+4. Follow `library/general/table-rules/continuity.md`. Build the main plot so that each important conclusion has several clues, which makes it robust against improvisation later.
+5. Match your prep to the structure the table chose:
    - **Sandbox:** factions with goals, locations, rumors and clocks rather than plot.
    - **Story-driven:** arcs and key beats.
    - **Either way:** plan in detail only up to the first adventure. Keep later arcs loose, since the players will change them.
-5. For variant rules and house rules:
+6. For variant rules and house rules:
    - Campaign-only rules go in `campaign.md`.
    - Rules the user wants at every table go in `library/pf1e/house-rules/`.
    - For an official or third-party variant system, check whether `library/pf1e/rules/` already has a summary with its source. If not, write one.

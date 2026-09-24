@@ -1,2 +1,2 @@
 # Locations
-One file per location: description, inhabitants, secrets, keyed areas.
+One file per location with plot weight. Copy _location-template.md.

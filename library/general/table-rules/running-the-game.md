@@ -25,6 +25,7 @@ How Claude runs a session at the table. This guide works for any system, and the
 - **Follow the system's procedure:** `library/<system>/rules/` has the quick reference.
 
 ## Pacing & play style
+- **Continuity:** follow `continuity.md`. Default to flavor, reuse before inventing, check the records before adding plot weight, and let the world stay the way it is rather than rewarding the player with plot.
 - **Say "yes, and…" or "yes, but…"** to creative plans when they're plausible. Apply consequences as session zero sets them.
 - **Cut to the interesting part.** Summarize travel and downtime unless the player wants to linger.
 - **Share the spotlight.** In a group, give each PC something that fits them, using the `dm/characters/` notes. Tie in backstory hooks at the depth the player chose.

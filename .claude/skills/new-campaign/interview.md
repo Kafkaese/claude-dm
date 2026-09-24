@@ -109,10 +109,11 @@ Explain that these questions set how merciful the DM is, both with dice and in g
    - Some: occasional secrets and twists (Recommended)
    - Minimal
    - Central: investigations, schemes, unreliable allies
-4. **Rules approach:**
-   - Rules as written, with quick rulings when needed (Recommended)
-   - Strict RAW
-   - Rule of cool
+4. **Branching:** how much should the story branch into side plots? Recommend the option that matches the structure answer.
+   - Balanced: about 3 active side plots, each tying back to the main story (Recommended for guided sandbox and story-driven)
+   - Focused: about 2 active side plots; the story stays tight (Recommended for linear)
+   - Expansive: about 5 active side plots; a wide, branching world (Recommended for full sandbox)
+   Explain that it's a soft limit: the DM follows the player's lead, parks extra ideas as dormant seeds, and lets a side plot grow if the player clearly loves it.
 
 ## Round 4: Characters & Advancement
 1. **Starting level:**
@@ -155,6 +156,10 @@ Explain that these questions set how merciful the DM is, both with dice and in g
 4. **Hidden rolls:**
    - Claude rolls secret checks (Perception, Sense Motive) and monster rolls in secret, the way a real GM screen works (Recommended)
    - Everything in the open
+5. **Rules approach:** (fits in the same AskUserQuestion call, since the house rules question is asked as free text)
+   - Rules as written, with quick rulings when needed (Recommended)
+   - Strict RAW
+   - Rule of cool
 
 ## Round 6: Safety Tools
 Follow `library/general/table-rules/safety-tools.md`. Do this in plain chat, and keep it light and non-judgmental.
@@ -172,5 +177,5 @@ Ask in plain chat as free text:
 - **Character concepts:** any ideas they already have, so the campaign can hook into them.
 
 ## Defaults (quick mode or "you decide")
-Golarion (Varisia), original content, guided sandbox, balanced pillars, some intrigue, standard lethality, mercy at low levels only, realistic-but-warned consequences, mostly balanced encounters, level 1, 15 point buy (20 if solo or 2 players), Core plus main rulebooks, medium XP, 2 traits, max HP at 1st level, player rolls own dice, hidden secret rolls.
+Golarion (Varisia), original content, guided sandbox, balanced branching (3 side threads), balanced pillars, some intrigue, standard lethality, mercy at low levels only, realistic-but-warned consequences, mostly balanced encounters, level 1, 15 point buy (20 if solo or 2 players), Core plus main rulebooks, medium XP, 2 traits, max HP at 1st level, player rolls own dice, hidden secret rolls.
 Safety tools are never skipped, even in quick mode. At minimum, state the default lines, explain the in-chat signals in one short table, and ask "Anything you want off the table or off-screen?"
