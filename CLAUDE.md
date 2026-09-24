@@ -10,8 +10,9 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
   - `**/sources.md`: which websites are trusted for what. The web allowlist hook reads these files.
 - `campaigns/<name>/`: one folder per campaign; copy `campaigns/_template/` to start a new one.
   - `campaign.md`: overview, the `system` field, campaign-specific house rules
-  - `dm/`: **DM only**. `dm/state.md` holds the current game state.
+  - `dm/`: **DM only**. `dm/state.md` holds the current game state. `dm/characters/` holds private notes on the PCs.
   - `players/`: player-facing material
+- `scripts/roll.py`: dice roller. Run `python3 scripts/roll.py -h` for the syntax.
 - `.claude/skills/`, `.claude/agents/`: DM tooling. Keep it system-agnostic; anything that depends on the system belongs in `library/<system>/`.
 
 ## Core rules
@@ -22,4 +23,5 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
 3. **Stay in the campaign's system.** Use only `library/general/` and `library/<system>/`, where `<system>` comes from the campaign's `campaign.md`. Never mix material across systems, e.g. PF1e and PF2e stat blocks.
 4. **Check the library first.** Before searching online, check the library. For web lookups, use only the sites in `library/<system>/sources.md` (rules) and `library/settings/<name>/sources.md` (lore), and always set `allowed_domains` on WebSearch. A hook blocks every other domain. Save useful lookups to the matching library folder with their source (book + page, or URL).
 5. **Honor session zero.** `players/session-zero.md` sets how you run the game: tone, lethality, fudging, consequences, dice, boundaries. Follow it strictly. If a ruling would go against it, raise that out of character instead of quietly deviating.
-6. **Rules precedence:** campaign house rules > `library/<system>/house-rules/` > `library/<system>/rules/` > official sources.
+6. **Real dice only.** Make every roll with `scripts/roll.py -c <campaign>`, and never invent or pick numbers. Roll several at once with labels, e.g. a whole round of initiative. Add `-H` for secret checks (Perception, Sense Motive, …) and keep those results out of your reply and your tool descriptions. For secret rolls, use the modifiers on the PC's sheet in `players/characters/`, including situational ones. Take the player's reported rolls as given. Roll first, then apply the mercy policy from session zero. Never reroll silently.
+7. **Rules precedence:** campaign house rules > `library/<system>/house-rules/` > `library/<system>/rules/` > official sources.

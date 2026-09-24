@@ -55,4 +55,4 @@ Settings live in `library/settings/<slug>/` and can be reused across campaigns. 
 
 The user is probably a player too, so **don't reveal what's in `dm/`**. Say that the secret campaign plan and the opening adventure are ready, but share no details. Only share them if the user explicitly asks, and warn about spoilers first.
 
-Summarize the files meant for players, then offer character creation as the next step.
+Summarize the files meant for players. Then say that the next step is for the player to build their character using `players/character-creation.md`, and to register it with `/add-character` once it's done.
