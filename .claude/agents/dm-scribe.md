@@ -32,7 +32,7 @@ Write `dm/session-prep/session-NN-prep.md`:
 - **Secrets & clues:** 5–10, each discoverable in more than one way.
 - **Locations:** the ones likely to be visited, with a few evocative details each.
 - **NPCs:** who is likely to appear, with voice notes, and new NPC files where needed.
-- **Encounters:** built using `library/<system>/rules/`. Save stat blocks to `library/<system>/bestiary/` or the campaign `dm/npcs/`, citing sources from the allowed sites. Account for the "abilities to plan around" in `dm/characters/`, but only sometimes.
+- **Encounters:** built using `library/<system>/rules/encounter-building.md` and the stat block order in `library/general/table-rules/combat.md` (official stat block, then adjusted, then reskin, then homebrew checked against the monster creation table). For fights where position matters, write a terrain map to `dm/combat/maps/<name>.txt` (format: `python3 scripts/combat.py -h`). Save stat blocks to `library/<system>/bestiary/` or the campaign `dm/npcs/`, citing sources from the allowed sites. Account for the "abilities to plan around" in `dm/characters/`, but only sometimes.
 - **Rewards:** treasure appropriate to the system's wealth guidelines.
 - **Backstory hook:** at least one, if any PC's centrality allows it.
 - **World pressure** (in `dm/world.md` and `dm/threads.md`):

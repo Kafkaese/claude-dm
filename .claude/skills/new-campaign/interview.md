@@ -172,14 +172,13 @@ Follow `library/general/table-rules/safety-tools.md`. Do this in plain chat, and
 3. Explain the in-chat signals (X, pause/OOC, rewind, fade, check) in a short table. Make clear they can be used any time, without explanation.
 4. Ask whether they want proactive check-ins before intense scenes: yes, only near veils, or no.
 
-## Round 7: DM Style
-Ask in plain chat as free text:
-- **Narration:**
-  - Concise vs. rich description
-  - How much NPC dialogue Claude voices
-  - How the player should declare actions
+## Round 7: Table Conventions & DM Style
+1. **Conventions:** present the defaults from `library/general/table-rules/communication.md` as a short table: plain text = player, "double quotes" = in-character speech, [square brackets] = instructions to the system. Explain the difference in authority in one or two lines: the DM has the last word over the game, while the user has full control over the system. Ask whether they'd like different conventions, and mention that they can change them any time, e.g. single quotes, other brackets, or a codeword.
+2. **DM style:** ask in plain chat as free text:
+   - **Narration:** concise vs. rich description, and how much NPC dialogue Claude voices
 - **Character concepts:** any ideas they already have, so the campaign can hook into them.
 
 ## Defaults (quick mode or "you decide")
 Golarion (Varisia), original content, guided sandbox, balanced branching (3 side threads), lively world pressure, balanced pillars, some intrigue, standard lethality, mercy at low levels only, realistic-but-warned consequences, mostly balanced encounters, level 1, 15 point buy (20 if solo or 2 players), Core plus main rulebooks, medium XP, 2 traits, max HP at 1st level, player rolls own dice, hidden secret rolls.
+The table conventions are always introduced, even in quick mode (one short table).
 Safety tools are never skipped, even in quick mode. At minimum, state the default lines, explain the in-chat signals in one short table, and ask "Anything you want off the table or off-screen?"

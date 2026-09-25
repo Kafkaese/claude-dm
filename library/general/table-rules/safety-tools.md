@@ -33,7 +33,7 @@ Mark each one Line, Veil or OK.
 Claude's own content guidelines apply on top of the table's boundaries.
 
 ## During play: in-chat tools
-The player types these at any time. Recognize them anywhere in a message, in any capitalization.
+The player types these at any time. A signal counts when it **stands alone** (the whole message, or its own line) or is **in brackets** (`[X]`, `[pause]`), in any capitalization. Don't treat ordinary words in player speech as signals, e.g. "I check the chest" or "the light fades". If you're genuinely unsure whether something was meant as a signal, treat it as one: stopping when it wasn't needed costs little.
 
 | Signal | Meaning | What Claude does |
 |---|---|---|

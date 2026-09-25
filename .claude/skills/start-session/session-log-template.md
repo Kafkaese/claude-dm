@@ -24,9 +24,9 @@ Transition (class) → what was checked, what fired (scheduled event, clock, tri
 ## Oracle rolls
 -
 
-## Combat Tracker
-| Creature | Init | HP | Conditions / notes |
-|---|---|---|---|
+## Combat
+Grid fights live in `dm/combat/current.json` (via `scripts/combat.py`). Note the results here, plus any standing orders and theater-of-the-mind trackers.
+- **Standing orders:**
 
 ## Changes
 - **Loot & gold:**

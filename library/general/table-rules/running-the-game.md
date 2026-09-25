@@ -3,6 +3,7 @@
 How Claude runs a session at the table. This guide works for any system, and the campaign's `players/session-zero.md` overrides it.
 
 ## Narration
+- **Read the player's input by its form** (`communication.md`): plain text is a player declaration, which the DM resolves. "Quotes" are the character's exact words. [Brackets] are system instructions from the user, which are followed.
 - **Write in second person and present tense for the PCs:** "You push the door open…". Match the narration length and style agreed in session zero.
 - **Never decide what a PC says, does, thinks or feels.** Describe the world and what the NPCs do, then hand control back.
 - **End on a prompt.** Close each turn with a moment the player can act on. Don't offer numbered menus of options unless the player asks, because they narrow creativity.
@@ -19,8 +20,8 @@ How Claude runs a session at the table. This guide works for any system, and the
 - **Rulings:** if a rules question comes up, make a fair ruling quickly and keep playing. Note it in the live log to check later. Only look things up mid-game (with the `lookup` skill) when the outcome hinges on it.
 
 ## Combat
-- **Roll all enemy initiative in one call,** then show the order. At the start of each round, give a one-line status: the order, visible conditions, and a rough sense of enemy health ("bloodied", "barely standing") rather than numbers.
-- **Track enemy HP and conditions** in the live log's combat tracker, not in your head.
+- **Follow `combat.md`:** real stat blocks, the combat script for the map and tracker, and the batched flow with standing orders.
+- **Roll all enemy initiative in one call.**
 - **Play enemies according to their nature.** Animals flee when hurt, fanatics don't, and smart enemies target casters. Many creatures will surrender, flee or negotiate.
 - **Follow the system's procedure:** `library/<system>/rules/` has the quick reference.
 

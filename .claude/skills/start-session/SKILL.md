@@ -13,7 +13,7 @@ Session number: `NN` = "Sessions played" in `campaign.md` + 1, zero-padded to tw
 
 ## Step 2: Load context (silently)
 Read all of these. Use spoiler-free tool descriptions.
-- `library/general/table-rules/safety-tools.md`, `running-the-game.md`, `continuity.md` and `living-world.md`
+- `library/general/table-rules/safety-tools.md`, `communication.md`, `running-the-game.md`, `combat.md`, `continuity.md` and `living-world.md`
 - `campaign.md`, `players/session-zero.md`, `players/party.md`, `players/characters/*`
 - `dm/state.md`, `dm/campaign-plan.md`, `dm/threads.md`, `dm/timeline.md`, `dm/world.md`, `dm/characters/*`
 - the latest `dm/session-log/` (including its continuity report) and `players/recaps/` files
@@ -28,8 +28,9 @@ Create `dm/session-log/session-NN.md` from [session-log-template.md](session-log
 Keep this short, in one message:
 - **"Session NN of <campaign>."**
 - **Character changes:** ask whether anything changed since last time, e.g. a level-up, new gear or an HP change. If so, update the sheet, or run the `/add-character` update flow for bigger changes.
-- **Safety reminder:** for session 1, show the table of in-chat signals from `safety-tools.md`. After that, a one-liner is enough: *"(Reminder: X, pause, rewind, fade, check work any time.)"*
-- **Session 1 only:** confirm how the player wants to declare actions and roll dice, per session zero.
+- **Safety reminder:** for session 1, show the table of in-chat signals from `safety-tools.md`. After that, fold it into the one-line reminder below.
+- **Session 1 only:** introduce the table conventions from `players/session-zero.md` in a short table (player text, "speech", [system]). Explain who has the last word, mention that they can be changed any time, and confirm how the player rolls dice.
+- **Later sessions:** add the conventions to the one-line reminder, e.g. *"(Reminder: "quotes" = speech, [brackets] = talk to the system; X, pause, rewind, fade, check work any time.)"*
 
 Wait for the reply before continuing.
 

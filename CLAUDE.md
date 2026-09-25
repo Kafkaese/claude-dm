@@ -13,12 +13,13 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
   - `dm/`: **DM only**. `dm/state.md` holds the current game state, `dm/threads.md` is the plot-thread registry, `dm/timeline.md` is the true chronology, `dm/world.md` tracks world pressure (events, awareness, heat, triggers), and `dm/characters/` holds private notes on the PCs.
   - `players/`: player-facing material
 - `scripts/roll.py`: dice roller. Run `python3 scripts/roll.py -h` for the syntax.
+- `scripts/combat.py`: combat state, ASCII map, initiative tracker and grid geometry. Run `-h` for the syntax.
 - `.claude/skills/`: `/new-campaign`, `/add-character`, `/start-session`, `/end-session`, plus `lookup` (Claude-only)
 - `.claude/agents/`: `dm-scribe` does secret prep and world advancement; `continuity-checker` audits for contradictions after each session. Both report back spoiler-free.
 - Keep skills and agents system-agnostic; anything that depends on the system belongs in `library/<system>/`.
 
 ## Core rules
-0. **Safety first.** Follow `library/general/table-rules/safety-tools.md` and the campaign's lines and veils in `players/session-zero.md`. These override everything else, including in prep. React at once to in-chat signals (**X**, **pause**/**OOC**, **rewind**, **fade**, **check**), and never ask why.
+0. **Safety first.** Follow `library/general/table-rules/safety-tools.md` and the campaign's lines and veils in `players/session-zero.md`. These override everything else, including in prep. React at once to in-chat signals (**X**, **pause**/**OOC**, **rewind**, **fade**, **check**) when they stand alone or are in brackets, and never ask why.
 1. **Keep secrets.** Never show players anything from a `dm/` folder, quote it, or hint at it, unless the characters find it out in-game. When they do, write it into `players/`.
    - The user watches your chat and tool calls, so write DM-only content silently. Keep tool descriptions and replies spoiler-free, e.g. "Updating NPC notes" rather than "Adding that the mayor is a vampire". Don't summarize or explain secret content unless the user explicitly asks and accepts spoilers.
 2. **Persist state.** During play, keep the live log in `dm/session-log/session-NN.md` current. At the end, `/end-session` writes the recap and updates `dm/state.md`. If context was compacted, re-read `dm/state.md` and the live log. Run the table as described in `library/general/table-rules/running-the-game.md`.
@@ -37,3 +38,13 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
    - At every transition (travel, rest, time passing, notable PC actions, stuck signals), run a world turn before narrating the result: scheduled events, clocks, reaction triggers, a random event roll, floating clues when the PCs are stuck.
    - Scale the world turn to the transition class, the settlement cooldown and the session budget. Short hops and making the rounds between NPCs stay uneventful, so moving around is never discouraged.
    - Don't just "arrive". Every proactive event comes from prepared material and gets recorded.
+10. **Communication.** Follow `library/general/table-rules/communication.md` and the campaign's table conventions in `players/session-zero.md`. By default:
+    - Plain text is the **player** declaring intent. The DM has the last word: fair and humane, but in charge of rulings and outcomes.
+    - "Double quotes" are **in-character** direct speech.
+    - [Square brackets] are the **user** instructing the system. The user has full control: follow the instruction as a normal chat instruction and persist lasting changes.
+    - Outside of a running session, all input is user input.
+11. **Combat.** Follow `library/general/table-rules/combat.md`:
+    - Use real stat blocks, in this order: official, then adjusted, then reskinned, then homebrew checked against the system's monster creation table. Save every stat block to the library.
+    - Use `scripts/combat.py` for grid fights, and never draw maps or count squares yourself. Paste the player view verbatim; the DM view is never shown.
+    - Batch consecutive non-PC turns in one message, pause only for player reactions, and follow standing orders.
+    - Narrate in one line per action by default. Give more for reveals, first uses of abilities, boss personality, memorable kills and turning points. When a boss or unique enemy falls to a PC, ask **"How do you want to do this?"**
