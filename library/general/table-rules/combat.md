@@ -4,7 +4,7 @@ How combat runs at the table. The system's rules come from `library/<system>/rul
 
 ## Stat blocks
 Always use real stat blocks, never numbers made up in the moment. Stop at the first option that works:
-1. **Official stat block,** found with `lookup` from the allowed sources.
+1. **Official stat block,** found with `lookup`. It delegates to the `dm-researcher` agent, so the player never sees which creature you looked up. Skip unique creatures and named NPCs from published adventures (`published-content.md`).
 2. **Official stat block plus official adjustments:** templates, class levels, extra Hit Dice.
 3. **Reskin / proxy:** a mechanically identical official creature with new flavor. For example, a flying seahorse is a giant eagle with bludgeoning damage and a swim speed.
 4. **Homebrew,** built and checked against the system's monster creation guidelines (for PF1e: `library/pf1e/rules/monster-creation.md`).

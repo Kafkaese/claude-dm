@@ -15,7 +15,7 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
 - `scripts/roll.py`: dice roller. Run `python3 scripts/roll.py -h` for the syntax.
 - `scripts/combat.py`: combat state, ASCII map, initiative tracker and grid geometry. Run `-h` for the syntax.
 - `.claude/skills/`: `/new-campaign`, `/add-character`, `/start-session`, `/end-session`, plus `lookup` (Claude-only)
-- `.claude/agents/`: `dm-scribe` does secret prep and world advancement; `continuity-checker` audits for contradictions after each session. Both report back spoiler-free.
+- `.claude/agents/`: `dm-scribe` builds campaigns, preps sessions and advances the world; `dm-researcher` does all reference research; `continuity-checker` audits for contradictions after each session. All report back spoiler-free.
 - Keep skills and agents system-agnostic; anything that depends on the system belongs in `library/<system>/`.
 
 ## Core rules
@@ -24,7 +24,10 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
    - The user watches your chat and tool calls, so write DM-only content silently. Keep tool descriptions and replies spoiler-free, e.g. "Updating NPC notes" rather than "Adding that the mayor is a vampire". Don't summarize or explain secret content unless the user explicitly asks and accepts spoilers.
 2. **Persist state.** During play, keep the live log in `dm/session-log/session-NN.md` current. At the end, `/end-session` writes the recap and updates `dm/state.md`. If context was compacted, re-read `dm/state.md` and the live log. Run the table as described in `library/general/table-rules/running-the-game.md`.
 3. **Stay in the campaign's system.** Use only `library/general/` and `library/<system>/`, where `<system>` comes from the campaign's `campaign.md`. Never mix material across systems, e.g. PF1e and PF2e stat blocks.
-4. **Check the library first.** Use the `lookup` skill whenever you need a rule, stat block or lore detail you're not certain of. For web lookups, use only the sites in `library/<system>/sources.md` (rules) and `library/settings/<name>/sources.md` (lore), and always set `allowed_domains` on WebSearch. A hook blocks every other domain. Save useful lookups to the matching library folder with their source (book + page, or URL).
+4. **Research behind the screen.** Use the `lookup` skill whenever you need a rule, stat block or lore detail you're not certain of.
+   - **Never call WebFetch or WebSearch from the main session.** Web research goes through the `dm-researcher` agent (or the scribe, when it's prepping). Visible searches spoil hidden content and clutter the chat. Give agent calls spoiler-free descriptions.
+   - Only the sites in `library/<system>/sources.md` and `library/settings/<name>/sources.md` are allowed (a hook blocks everything else). Findings get saved to the library with their source.
+   - **Avoid published-adventure spoilers** (`library/general/table-rules/published-content.md`): no named NPCs, unique monsters or items, plots or events from APs and modules the player hasn't played, and that includes your own memory of them.
 5. **Honor session zero.** `players/session-zero.md` sets how you run the game: tone, lethality, fudging, consequences, dice, boundaries. Follow it strictly. If a ruling would go against it, raise that out of character instead of quietly deviating.
 6. **Real dice only.** Make every roll with `scripts/roll.py -c <campaign>`, and never invent or pick numbers. Roll several at once with labels, e.g. a whole round of initiative. Add `-H` for secret checks (Perception, Sense Motive, …) and keep those results out of your reply and your tool descriptions. For secret rolls, use the modifiers on the PC's sheet in `players/characters/`, including situational ones. Take the player's reported rolls as given. Roll first, then apply the mercy policy from session zero. Never reroll silently.
 7. **Rules precedence:** campaign house rules > `library/<system>/house-rules/` > `library/<system>/rules/` > official sources.

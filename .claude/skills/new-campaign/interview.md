@@ -52,6 +52,10 @@ Don't copy plots, named characters or signature settings from the works. Borrow 
   - Absalom: urban
   - Mwangi Expanse: jungle exploration
   - Ask whether the default era (about 4707 AR) is fine.
+  - **Published adventures:** explain briefly that the DM avoids spoilers for published Adventure Paths and modules. Then ask which ones they've **played or read**, confirming what's already listed in `library/general/player-profile.md`. Spoilers for those are fine. If they list any, ask:
+    - **Connection:** none / easter eggs (familiar places and cameos) / connected (its consequences and NPCs matter) / sequel (build on its aftermath)
+    - **Outcome:** did their table's ending differ from canon? If so, get a short summary. Their version becomes what happened.
+    - A connected campaign or a sequel needs an era after that adventure, so adjust the era.
 - **Claude-made:** Ask for seeds:
   - tone
   - how common magic is

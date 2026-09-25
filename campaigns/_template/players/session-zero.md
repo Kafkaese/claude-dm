@@ -7,6 +7,11 @@ What the table agreed on. The DM follows this, and anyone can ask to revisit it.
 - **Content:** original / published (which)
 - **Players:**  **Companions run by DM:**
 
+## Published Adventures
+The DM avoids spoilers for published adventures, except for those listed here. See `library/general/table-rules/published-content.md`.
+| Adventure | Connection (none / easter eggs / connected / sequel) | Outcome at the player's table (if not canon) |
+|---|---|---|
+
 ## Inspirations
 - **Loved works:** (and what the player likes about them)
 - **Disliked works / tropes:**

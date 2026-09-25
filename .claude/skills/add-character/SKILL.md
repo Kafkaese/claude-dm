@@ -43,24 +43,19 @@ Ask for the backstory (full text, summary, or "none yet"). Then ask these questi
 
 Respect the campaign's lines and veils in everything you invent.
 
-## Step 3: Write the files
-
+## Step 3: Write the player sheet
 The file slug is the character's name in kebab-case.
 
-- **`players/characters/<slug>.md`:** fill in `library/<system>/templates/character-sheet.md`. Include only what the player is allowed to see.
-- **`dm/characters/<slug>.md`:** fill in [dm-notes-template.md](dm-notes-template.md):
-  - backstory settings, hooks, and any surprise blanks you filled in
-  - **Abilities to plan around:** assess the character quietly against the campaign's challenge settings. The harsher the challenge settings, the more carefully you plan around strong abilities. Examples:
-    - a permanent fly speed makes melee-only enemies trivial, so answers include ranged foes, flying foes, tight interiors and bad weather
-    - at-will *detect evil* spoils many mysteries
-    Plan to challenge these abilities sometimes, not every time. Players should get to enjoy what they built.
-- **Continuity:** backstory facts the player wrote are `[locked S00]`. Blanks you fill in are `[flex]` until they're revealed. Check your inventions against `dm/timeline.md` and `dm/threads.md`, then add backstory events to the timeline. Register hooks in `dm/threads.md`: as a character thread (respecting the side-thread budget) or as dormant seeds, depending on centrality.
-- Weave the character into `dm/campaign-plan.md` and the current adventure, with depth matching the centrality they chose.
-  - Central or woven in: add real arcs and hooks.
-  - Light touch: seed a few hooks.
-  - Outsider: give a reason to get involved.
+**`players/characters/<slug>.md`:** fill in `library/<system>/templates/character-sheet.md`. Include only what the player is allowed to see. If the player wanted DM-filled blanks **revealed now**, leave them out for the moment: the scribe adds them (step 4).
 
-## Step 4: Hand off
+## Step 4: DM notes behind the screen
+Everything else is secret: inventing blanks, assessing abilities, and weaving the character into the plot. It may also need lore research. Delegate it to the **dm-scribe** agent:
+- **Description:** "Weave the character into the campaign"
+- **Prompt:** "campaign `<slug>`: integrate character `<slug>` following `.claude/skills/add-character/integrate-character.md`". Add the backstory answers from step 2: centrality, blanks and whether they're revealed or a surprise, leverage, and off-limits topics.
+
+Relay only its spoiler-free summary. If blanks were meant to be revealed, the scribe has written them into the player sheet; read that part and show it.
+
+## Step 5: Hand off
 
 - Show the player sheet so the player can check the numbers.
 - About the DM notes, say only that they've been noted, e.g. "I've noted a few hooks from your backstory." Never reveal the ability assessment or any surprises.

@@ -9,7 +9,7 @@ You are the scribe for a Claude DM campaign, preparing material behind the GM sc
 ## Before you start
 Read these files:
 - `CLAUDE.md` (core rules)
-- `library/general/table-rules/safety-tools.md` and `library/general/table-rules/continuity.md`
+- `library/general/table-rules/safety-tools.md`, `continuity.md` and `published-content.md`
 - the campaign's `campaign.md`, `players/session-zero.md`, `dm/state.md` and `dm/campaign-plan.md`
 - the most recent `dm/session-log/` file, especially its continuity report and "For next prep"
 - `dm/threads.md`, `dm/timeline.md` and `dm/world.md`, plus `library/general/table-rules/living-world.md`
@@ -43,6 +43,12 @@ Write `dm/session-prep/session-NN-prep.md`:
   - an event table in `dm/tables/` for every region the PCs may travel through
   - at least one proactive event planned for the session
 
+### Build a new campaign
+Follow `.claude/skills/new-campaign/build-campaign.md`.
+
+### Integrate a character
+Follow `.claude/skills/add-character/integrate-character.md`.
+
 ### Other DM-only writing
 Do what the caller asks, following the repo conventions.
 
@@ -50,7 +56,8 @@ Do what the caller asks, following the repo conventions.
 - **Continuity:** never contradict a `[locked]` fact. Tag everything new as `[flex]`. Record new plot-weight elements in `dm/threads.md` and `dm/timeline.md`, and give NPCs whereabouts that fit the timeline. Change existing flexible facts only deliberately, with a changelog line.
 - **Threads & pacing:** respect the side-thread budget, and prefer existing threads, NPCs and locations over new ones. Every session's prep touches the main plot. If the main plot is stalled beyond the limit, bring it to the PCs. Update each thread's "Next beat" and the clocks in `dm/threads.md`.
 - Respect the campaign's lines and veils in everything you write.
-- Stay in the campaign's system and setting. Use only allowed web sources, and always set `allowed_domains` on WebSearch.
+- Stay in the campaign's system and setting. Research the library first, then only the allowed web sources, and always set `allowed_domains` on WebSearch. Save what you find in the entry format from `.claude/skills/lookup/SKILL.md`.
+- **Published adventures:** filter everything, including your own memory, through `published-content.md` and the "Published adventures" section of session zero. Build original NPCs, villains, items and mysteries.
 - Keep prep flexible. Don't decide what the PCs do.
 - For random elements, use `python3 scripts/roll.py -c <campaign> -H`.
 
