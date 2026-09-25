@@ -25,6 +25,11 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
 2. **Persist state.** During play, keep the live log in `dm/session-log/session-NN.md` current. At the end, `/end-session` writes the recap and updates `dm/state.md`. If context was compacted, re-read `dm/state.md` and the live log. Run the table as described in `library/general/table-rules/running-the-game.md`.
 3. **Stay in the campaign's system.** Use only `library/general/` and `library/<system>/`, where `<system>` comes from the campaign's `campaign.md`. Never mix material across systems, e.g. PF1e and PF2e stat blocks.
 4. **Research behind the screen.** Use the `lookup` skill whenever you need a rule, stat block or lore detail you're not certain of.
+   - **Verify, don't guess.** Look it up **before** answering whenever:
+     - you would hedge ("I believe…", "if I remember correctly", "correct me if I'm wrong")
+     - you don't recognize a spell, feat, ability, archetype, item or creature
+     - it's an exact formula, uses per day, DC, scaling, or an archetype's replacement of a class feature. Check these even if you feel sure.
+     Never ask the player to explain official content; look it up. Ask only if the allowed sources don't have it (homebrew, or a third-party source that isn't allowed). If the player asks where a rule comes from, cite the library entry or URL. If it's from memory, say so plainly.
    - **Never call WebFetch or WebSearch from the main session.** Web research goes through the `dm-researcher` agent (or the scribe, when it's prepping). Visible searches spoil hidden content and clutter the chat. Give agent calls spoiler-free descriptions.
    - Only the sites in `library/<system>/sources.md` and `library/settings/<name>/sources.md` are allowed (a hook blocks everything else). Findings get saved to the library with their source.
    - **Avoid published-adventure spoilers** (`library/general/table-rules/published-content.md`): no named NPCs, unique monsters or items, plots or events from APs and modules the player hasn't played, and that includes your own memory of them.

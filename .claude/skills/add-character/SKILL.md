@@ -43,19 +43,36 @@ Ask for the backstory (full text, summary, or "none yet"). Then ask these questi
 
 Respect the campaign's lines and veils in everything you invent.
 
-## Step 3: Write the player sheet
+## Step 3: Verify the character's abilities
+Before writing anything, verify everything that isn't basic core material:
+- class features from archetypes, and what they replace
+- uncommon or unfamiliar spells, feats and traits
+- special items
+- anything that has a formula for uses per day, rounds per day, DCs or scaling
+
+Make **one batched** call to the **dm-researcher** agent:
+- **Description:** "Verify character abilities"
+- **Prompt:** the campaign slug, the character's class, level and ability scores, and the list of items to check. Ask for the exact rules text, the formulas with the character's actual values worked out, and the library paths.
+
+The character's own abilities aren't spoilers, so you can use the results openly.
+- **Numbers the player gave that differ from the rules:** point out the difference and cite the source, e.g. "Archaeologist's Luck: by the rules it's X rounds per day (source), your sheet says Y. Which should I use?" Their sheet may include a feat or item you don't know about.
+- **Things the sources don't have** (homebrew, or a third-party source that isn't allowed): ask the player for the text.
+
+Never write "from my calculation, correct me if I'm wrong" for official content. Verify it instead.
+
+## Step 4: Write the player sheet
 The file slug is the character's name in kebab-case.
 
-**`players/characters/<slug>.md`:** fill in `library/<system>/templates/character-sheet.md`. Include only what the player is allowed to see. If the player wanted DM-filled blanks **revealed now**, leave them out for the moment: the scribe adds them (step 4).
+**`players/characters/<slug>.md`:** fill in `library/<system>/templates/character-sheet.md`. Include only what the player is allowed to see. If the player wanted DM-filled blanks **revealed now**, leave them out for the moment: the scribe adds them (step 5).
 
-## Step 4: DM notes behind the screen
+## Step 5: DM notes behind the screen
 Everything else is secret: inventing blanks, assessing abilities, and weaving the character into the plot. It may also need lore research. Delegate it to the **dm-scribe** agent:
 - **Description:** "Weave the character into the campaign"
-- **Prompt:** "campaign `<slug>`: integrate character `<slug>` following `.claude/skills/add-character/integrate-character.md`". Add the backstory answers from step 2: centrality, blanks and whether they're revealed or a surprise, leverage, and off-limits topics.
+- **Prompt:** "campaign `<slug>`: integrate character `<slug>` following `.claude/skills/add-character/integrate-character.md`". Add the backstory answers from step 2 and the verified abilities from step 3: centrality, blanks and whether they're revealed or a surprise, leverage, and off-limits topics.
 
 Relay only its spoiler-free summary. If blanks were meant to be revealed, the scribe has written them into the player sheet; read that part and show it.
 
-## Step 5: Hand off
+## Step 6: Hand off
 
 - Show the player sheet so the player can check the numbers.
 - About the DM notes, say only that they've been noted, e.g. "I've noted a few hooks from your backstory." Never reveal the ability assessment or any surprises.

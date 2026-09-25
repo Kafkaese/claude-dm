@@ -31,7 +31,7 @@ Always-on bonuses and penalties and their conditions. Examples: Elven Immunities
 -
 
 ## Notable abilities
-Things the character can do that shape play, briefly: spells known or prepared at a high level, class features, special gear.
+Things the character can do that shape play, briefly: spells known or prepared at a high level, class features, special gear. Give uses per day with the formula and a library link, e.g. `Archaeologist's Luck: N rounds/day ([formula], library/pf1e/character-options/…)`.
 -
 
 ## Backstory (player version)

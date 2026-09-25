@@ -1,12 +1,22 @@
 ---
 name: lookup
-description: Look up game reference material (rules, conditions, spells, monsters, items, feats, class features, setting lore) for the DM's own use. Delegates the research to the dm-researcher agent so searches stay hidden from the player and free of published-adventure spoilers. Use whenever you need a rule, stat block or lore detail you're not certain of.
+description: Look up game reference material (rules, conditions, spells, monsters, items, feats, class features, setting lore) for the DM's own use. Delegates the research to the dm-researcher agent so searches stay hidden from the player and free of published-adventure spoilers. Use it before stating exact mechanics (formulas, uses per day, DCs, archetype replacements), whenever you'd hedge ("I believe", "correct me if I'm wrong"), and whenever you don't recognize a spell, feat, ability, item or creature. Don't ask the player to explain official content.
 user-invocable: false
 ---
 
 # Lookup
 
 This is for **your own use as DM**. The player has their own references, and is watching the chat and the tool calls.
+
+## When to look up
+Don't rely on memory for PF1e details that are easy to get wrong. Look them up when:
+- **You'd hedge.** Words like "I believe", "if I remember correctly", "correct me if I'm wrong" or "according to my calculation" mean it's time to look something up, not to ask the player.
+- **You don't recognize it,** e.g. an uncommon spell, feat, archetype, trait or item. If it's official content, the allowed sources have it.
+- **It's exact mechanics:** formulas, uses per day, rounds per day, DCs, scaling by level, prerequisites, or what an archetype replaces and how the replacement differs. Check these even when you feel sure, because they're the classic memory errors.
+
+Common core rules you use constantly (e.g. how attacks of opportunity work) can come from memory, or from the quick references in `library/<system>/rules/`.
+
+Ask the player only if the sources come up empty (homebrew, or a third-party source that isn't allowed), and say that you looked.
 
 ## Hidden by default: delegate
 **Never call WebFetch or WebSearch from the main session.** A visible search for "drow assassin stat block" spoils the hidden assassin on the map, and web calls clutter the chat.
