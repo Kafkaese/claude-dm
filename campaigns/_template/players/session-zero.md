@@ -49,6 +49,7 @@ See `library/general/table-rules/communication.md`. These can be changed any tim
 - **Player speech / actions:** plain text
 - **In-character direct speech:** "double quotes"
 - **Instructions to the system:** [square brackets]
+- **DM voice:** invisible / narrator / table DM / showman
 - **Combat display:** map when positions change, tracker every PC turn; enemy health shown as words
 - **Standing orders:** (e.g. always take AoOs)
 
