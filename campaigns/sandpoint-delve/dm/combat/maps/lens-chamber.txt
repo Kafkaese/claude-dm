@@ -1,0 +1,22 @@
+// The Listening Vigil: Lens Chamber (sandpoint-delve, adventure the-listening-vigil). 22x16, 5-ft squares.
+// Row 2 = Keeper's Gallery, 10 ft above the floor. Row 3 # = waist-high balustrade (cover +4 AC vs. attacks from the floor).
+// B3-C4 ^ = collapsed rubble slope (gallery <-> floor, west). U3-U4 ^ = stairs (gallery <-> floor, east).
+// L8-M9 _ = the Lens in its bronze cradle (don't walk on it). K7-N10 ^ = dais steps. The shaft opens in the ceiling above the Lens.
+// A7-D12 _ = the sea breach: 40-ft drop to the surf. B13-D13 floor edge: crack runs down the cliff (Climb DC 15 to the beach).
+// ~ = spray-slick tide pools. Other ^ = storm rubble. Pillars # at F5, Q5, Q13. V9 + = the Orrery Door (PC's entrance from the gallery).
+######################
+#....................#
+#^^#################^#
+#^^.................^#
+#....#..........#....#
+#....................#
+___.......^^^^.......#
+____......^__^.......#
+____......^__^.......+
+____......^^^^.......#
+____.............^^..#
+___.~~............^..#
+#...~~~^^.......#....#
+#.......^............#
+#....................#
+######################
