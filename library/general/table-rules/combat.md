@@ -36,6 +36,8 @@ Never draw the map by hand, and never count squares in your head. `scripts/comba
 - `show --dm` is **for you only**. Never paste it.
 - Script output marks hidden tokens `[HIDDEN]`. Never mention those tokens to the player.
 
+**Image view (optional):** if the table uses it (see "Combat display" in session zero), run `image on` right after setup. From then on, every change re-renders `players/combat-map.png`, the player view as a picture. The player keeps it open in a VS Code tab, where it refreshes by itself. The first time, offer to open it with `code campaigns/<campaign>/players/combat-map.png`. Keep pasting the ASCII view unless the player says the image is enough. Hidden tokens never appear in the image.
+
 **Map symbols:** PCs are uppercase letters (`V`), allies and enemies are lowercase plus a number (`g1`, `o1`), and `x` marks fallen enemies. Coordinates work like chess: columns A…, rows 1…. The player can use them ("I move to D4 and attack g2").
 
 ## Flow
