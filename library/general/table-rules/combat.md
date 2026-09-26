@@ -11,6 +11,9 @@ Always use real stat blocks, never numbers made up in the moment. Stop at the fi
 
 For an **unexpected fight,** take a moment and prefer options 1–3; they're fast and balanced. Save every stat block you use to the library, so the next fight is faster. Size encounters with `library/<system>/rules/encounter-building.md`.
 
+## Starting a fight
+When combat starts, give the player view (or describe positions in theater of the mind), the initiative order, and a one-line reminder of the turn convention: *"(Declare your actions, and say **end turn** when you're done.)"* Give it at every fight in the first sessions, and later only when it helps.
+
 ## Grid or theater of the mind?
 - **Grid** when position matters: terrain, cover, several enemies, reach, flanking, area spells, or a boss fight.
 - **Theater of the mind** for quick, simple fights, like two thugs in an alley or a single animal. Describe positions in words and keep the tracker in the live log.
@@ -48,7 +51,14 @@ After each message you wait for the player, so a message per enemy turn would ma
 2. **End with the player view** (map plus tracker) **and whose turn it is.** Show the map when positions changed since the last one; the tracker always shows. Then say "Valeros, your turn."
 3. **Pause mid-batch only when the player could react,** e.g. a readied action, an immediate action, or a choice they must make, such as an attack of opportunity they haven't set a standing order for. gm-screen stops and reports NEEDS PLAYER INPUT. Ask, then continue the batch with the answer.
 4. **Standing orders** avoid pauses. The player can set them any time, e.g. "always take AoOs", "Feather Fall if anyone falls", or "hold the door". Record them in the live log and apply them without asking.
-5. **On the player's turn,** accept a full turn in one message, e.g. "Move to D4, attack g2, rolled 17, 9 damage". Send it to gm-screen as `resolve`, including the movement. If the next actors are non-PCs, ask for `enemy-turns` in the same call, so a round usually costs one wait.
+5. **The player's turn is open until they say "end turn".** That's the default convention; session zero can set a different phrase.
+   - Never assume that a declared action is the whole turn. "I attack, 20 to hit, 5 damage" resolves the attack, and then the player may still want to move, take a 5-foot step, draw a weapon, use a swift action or speak.
+   - After resolving what they declared, say briefly which actions remain and wait, e.g. *"Hit, 5 damage; the goblin staggers. You still have a move and a swift action."*
+   - Only a full-round action, or the player saying "end turn" (or "done", "that's it"), ends the turn. **When in doubt, ask.**
+   - The player can declare a whole turn at once, e.g. "Move to D4, attack g2, 17 to hit, 9 damage. End turn." Send it to gm-screen as `resolve`, including the movement, and ask for `enemy-turns` in the same call, so a round costs one wait.
+   - Without "end turn", send only `resolve` for the declared actions, report what remains, and wait.
+   - Delaying and readying are declared the same way.
+   - Free actions like speaking or dropping an item are fine outside the PC's turn when the rules allow them.
 6. **Step mode:** if the player asks for `[step mode]`, e.g. for a boss fight, resolve one actor per message instead.
 7. **In a surprise round,** only aware combatants act, with one standard or move action each.
 

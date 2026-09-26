@@ -9,6 +9,7 @@ During play there are three voices at the table: the **player**, the **character
 | "Double quotes" | **In-character direct speech:** the character's exact words | `"We're not here for trouble."` |
 | Plain text, indirect | **Indirect speech** in the player's voice | `I tell him we're looking for his brother.` |
 | [Square brackets] | **User input:** instructions to the system, not to the DM | `[Less description in combat, please.]` |
+| "End turn" | **Combat:** the player is done with their turn. Until then, the turn stays open. | `Attack g2, 18 to hit, 7 damage. End turn.` |
 
 ## Authority
 - **Player ↔ DM: the DM has the last word.** Like a real DM: fair, humane and on the player's side, but in charge.

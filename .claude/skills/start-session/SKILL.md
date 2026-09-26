@@ -32,7 +32,7 @@ Keep this short, in one message:
 - **"Session NN of <campaign>."**
 - **Character changes:** ask whether anything changed since last time, e.g. a level-up, new gear or an HP change. If so, update the sheet, or run the `/add-character` update flow for bigger changes.
 - **Safety reminder:** for session 1, show the table of in-chat signals from `safety-tools.md`. After that, fold it into the one-line reminder below.
-- **Session 1 only:** introduce the table conventions from `players/session-zero.md` in a short table (player text, "speech", [system]). Explain who has the last word, mention that they can be changed any time, and confirm how the player rolls dice.
+- **Session 1 only:** introduce the table conventions from `players/session-zero.md` in a short table (player text, "speech", [system], "end turn" in combat). Explain who has the last word, mention that they can be changed any time, and confirm how the player rolls dice.
 - **Later sessions:** add the conventions to the one-line reminder, e.g. *"(Reminder: "quotes" = speech, [brackets] = talk to the system; X, pause, rewind, fade, check work any time.)"*
 
 Wait for the reply before continuing.

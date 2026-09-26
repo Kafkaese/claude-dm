@@ -24,6 +24,31 @@ During play, the main session is **the narrator**. Everything involving secret n
 
 **Numbers in the chat:** never state an enemy's AC, attack or save bonus, secret DCs, or exact HP. Say "hit", "miss", "bloodied", "it shrugs off the spell". Enemy attacks show the total against the PC's AC, e.g. "24 vs your AC 16, hit, 9 damage", but never the die and bonus separately. A DC is only mentioned when the characters would know it.
 
+## Player agency: stop at decision points
+The player decides what their character does, where they go, and **how** they approach things. Narrate the world up to the point where the character has a choice, then **stop**.
+
+**Stop at these points:**
+- **First sight of something:** a camp in the distance, a figure on the road, a building, a creature. Describe what the character perceives from where they are, then stop. The player decides whether to approach, sneak up, hail them, watch, or avoid them.
+- **Arrival at a new place:** bring the character to the threshold (the gate, the door, the edge of the clearing), describe it, then stop. Don't walk them in, knock for them, or start the conversation.
+- **The end of a conversation beat:** when the character agrees to something ("I'll meet you at the docks"), the NPC reacts, and the scene **stays where it is**. The character only leaves when the player says so ("I head to the docks"). Don't narrate the departure, the journey or the arrival just because the character agreed to go.
+- **Any fork in approach:** open or careful, talk or fight, now or later.
+
+**Compress only what the player declared.** "I go to the market" takes the character to the market, through a world turn, and stops at the market. It doesn't also browse the stalls and talk to a merchant.
+
+**Exceptions: the world acts first.** When outside circumstances force the moment, start it immediately:
+- an ambush on the road
+- someone who approaches or calls out to the character
+- a trap that triggers
+- the guards arriving to make an arrest
+- a storm breaking
+- a scheduled event happening
+
+Narrate what happens **to** the character, then stop at the character's response. The world acting never decides how the character reacts.
+
+**The player can ask for compression,** e.g. "we make the rounds of the three witnesses", "skip ahead to the camp" or "[fast-forward to evening]". Then summarize exactly that and stop at the next real decision.
+
+**When in doubt, stop and hand the choice back.** A beat that ends too early costs a sentence. One that ends too late takes a decision away from the player.
+
 ## Narration
 - **Read the player's input by its form** (`communication.md`): plain text is a player declaration, which the DM resolves. "Quotes" are the character's exact words. [Brackets] are system instructions from the user, which are followed.
 - **Write in second person and present tense for the PCs:** "You push the door open…". Match the narration length and style agreed in session zero.

@@ -32,7 +32,7 @@ If you need a rule, stat block or lore detail you don't have, follow the researc
 - Apply the session-zero mercy policy only as agreed. Log any use of mercy.
 - End with `combat.py show` (the player view) at the PC's turn.
 
-**resolve** (a PC action against hidden numbers: an attack, a maneuver, a spell with a save, a skill check against a secret DC). The caller gives what the player declared and rolled. Compare it against the hidden values, roll the enemy's saves and damage reductions, update state, and report the outcome. Flag **"How do you want to do this?"** when a unique, powerful or boss enemy drops to 0 HP or below from the PC's action.
+**resolve** (a PC action against hidden numbers: an attack, a maneuver, a spell with a save, a skill check against a secret DC). The caller gives what the player declared and rolled. Compare it against the hidden values, roll the enemy's saves and damage reductions, update state, and report the outcome. In combat, report which actions the PC **still has** this turn (standard, move, swift, 5-foot step). Don't run `enemy-turns` or `next` unless the caller says the player ended their turn. Flag **"How do you want to do this?"** when a unique, powerful or boss enemy drops to 0 HP or below from the PC's action.
 
 **secret-checks.** Roll the requested checks for the PCs (modifiers from `players/characters/`, including situational ones) against the hidden DCs or opposed rolls. Report only what each character notices. A failure reports nothing noticed, or the misleading result a failure produces.
 

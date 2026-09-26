@@ -11,6 +11,8 @@ Longer transitions are opportunities. When the player says "we go to A", don't j
 - **They arrive with the scene already in motion:** a brawl, an argument, a body, a festival, someone waiting for them.
 - **They arrive quietly, when that's what the world turn says:** calm stretches are part of the rhythm. Summarize travel briefly.
 
+In every case, stop at the character's next decision (see "Player agency" in `running-the-game.md`). The world acts; the player decides how the character responds and how they approach the place.
+
 ## 2. The world turn
 During play, the gm-screen agent runs it (`world-turn`), so the checks and rolls stay hidden. Run it whenever one of these happens:
 - the PCs move somewhere, or rest
