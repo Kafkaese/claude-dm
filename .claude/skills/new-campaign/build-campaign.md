@@ -26,6 +26,7 @@ Fill in the template files in `campaigns/<slug>/`:
 - Stat blocks for the opening encounters: save them to the library, following the stat block order in `library/general/table-rules/combat.md`
 
 ## 3. Design principles
+- **Addressable files.** Give every scene, room, handout, encounter and NPC section its own heading (`###`), with an ID where it helps (e.g. `### H2. Tally-stele`). Agents read files section by section, so clear headings make every call during play faster and cheaper. Prefer several focused files over one huge one.
 - **Original content.** Invent the campaign's NPCs, villains and mysteries yourself. Use published-adventure material only as far as the "Published adventures" section of session zero allows, e.g. easter eggs or connections to adventures the player has played.
 - **Balanced fights:** build every encounter with the solo and small-party rules in `library/<system>/rules/encounter-building.md` and `combat.md`: effective APL, the solo checks, worst-case allies, and an exit ramp.
 - **Robust mystery.** Every important conclusion needs several clues, so the plot survives improvisation.

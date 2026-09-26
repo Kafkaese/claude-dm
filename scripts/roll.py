@@ -4,7 +4,8 @@
 Usage:
   python3 scripts/roll.py [options] ROLL [ROLL ...]
 
-A ROLL is a dice expression, optionally prefixed with a label and a colon:
+A ROLL is a dice expression, optionally prefixed with a label and a colon (or =).
+Labels may contain spaces and dashes; quote them:
   1d20+5                     d20 = 1d20, d% = 1d100
   "Goblin 1 init: 1d20+6"
   "Longsword: 1d8+4"
@@ -158,7 +159,7 @@ def append_log(campaign, lines, hidden, note):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description="Dice roller for Claude DM.")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("rolls", nargs="+")
     p.add_argument("-n", "--times", type=int, default=1)
     p.add_argument("-c", "--campaign")
@@ -183,7 +184,9 @@ def main(argv=None):
                 lines += [roll_table(table, rng) for _ in range(args.times)]
             args.rolls = []
         for raw in args.rolls:
-            label, _, expr = raw.rpartition(":")
+            label, sep, expr = raw.rpartition(":")
+            if not sep and "=" in raw:  # also accept "Label=1d20+5"
+                label, _, expr = raw.partition("=")
             label = label.strip()
             for i in range(args.times):
                 total, detail, flags = evaluate(expr, rng)

@@ -600,7 +600,7 @@ def cmd_end(args, st):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(description="Combat tracker for Claude DM.")
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("-c", "--campaign", required=True)
     sub = p.add_subparsers(dest="command", required=True)
     n = sub.add_parser("new"); n.add_argument("mapfile", nargs="?"); n.add_argument("--blank"); n.add_argument("--force", action="store_true")
