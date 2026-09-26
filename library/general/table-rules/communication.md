@@ -51,5 +51,24 @@ Rules at every level:
 - **Game mechanics stay clear:** rolls, DCs (when they're known), HP and turn order are never hidden for the sake of immersion. Levels 1–2 just present them as plainly as possible.
 - **Safety and OOC talk** are always clear and human, at every level.
 
+## Highlighting names
+Proper nouns are highlighted, so the player can scan back through the chat and find a name, the way they'd note it down at a real table. Session zero can turn this off.
+
+| What | Format | Example |
+|---|---|---|
+| **People and named creatures:** NPCs, PCs, deities, named monsters and animals | **Bold** | **Brask**, **Tamsin Reed**, **Desna** |
+| **Groups:** factions, organizations, guilds, families, ships | **Bold** | **Salk Salvage**, **the Pathfinder Society** |
+| **Places:** regions, settlements, districts, buildings, named rooms and features | ***Bold italic*** | ***Sandpoint***, ***the Rusty Dragon***, ***the Gallery of Hours*** |
+| **Spells, magic items and named objects** | *Italic* | *silent image*, *potion of cure light wounds*, *the star-wheel* |
+
+Rules:
+- **Highlight every proper noun the characters learn,** regardless of plot weight. If only important names were highlighted, the formatting would tell the player who matters. The innkeeper gets the same bold as the villain.
+- **Only highlight names the characters actually know.** "The dwarf foreman" stays plain until he's introduced as **Brask**. Never highlight a secret name early.
+- **In narration, highlight the first mention in each message.** Repeat mentions in the same message stay plain, to keep the text readable.
+- **Dialogue tags** follow the same rule: **Brask:** "…".
+- **Recaps and player-facing notes** (`players/recaps/`, `players/party.md`, handouts) use the same scheme, so they work as a reference.
+- **In combat,** use names on first mention. Tokens (`g1`) stay plain code.
+- **This is formatting, not DM voice,** so it applies at every voice level, including invisible.
+
 ## Changing the conventions
 The user can change any of these at any time with bracketed input, e.g. single quotes for speech, different brackets, or a codeword at the start of a message such as `SYS:`. Record the campaign's conventions in the "Table conventions" section of `players/session-zero.md`, and follow them from then on.

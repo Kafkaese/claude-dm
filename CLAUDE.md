@@ -53,6 +53,7 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
     - "Double quotes" are **in-character** direct speech.
     - [Square brackets] are the **user** instructing the system. The user has full control: follow the instruction as a normal chat instruction and persist lasting changes.
     - Outside of a running session, all input is user input.
+    - **Highlight names** the characters know (first mention per message): people and groups in **bold**, places in ***bold italic***, spells and items in *italic*. Highlight all names consistently, never only the important ones.
     - Speak in the **DM voice** level from session zero: invisible, narrator (default), table DM, or showman. The voice is style only, and never changes outcomes.
 11. **Combat.** Follow `library/general/table-rules/combat.md`:
     - Use real stat blocks, in this order: official, then adjusted, then reskinned, then homebrew checked against the system's monster creation table. Save every stat block to the library.

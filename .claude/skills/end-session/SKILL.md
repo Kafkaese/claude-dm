@@ -30,6 +30,7 @@ Write these yourself. They only contain what the player knows:
    - Write it from the characters' point of view, in the campaign's tone, in a few paragraphs.
    - Include **only what the characters experienced or learned.** No hidden rolls, no NPC motives they didn't discover, no off-screen events.
    - End with open questions and leads, as the characters see them.
+   - Highlight names as in `communication.md`, so the recap works as a reference.
 2. **`players/party.md`:** loot, gold, quests, allies, enemies, and things learned.
 3. **`players/characters/*`:** the XP award, current HP, conditions, and consumables used. Add a changelog line for each. Tell the player the award and whether anyone can level up. For milestones, give the reason only if it's player-safe.
 4. **`campaign.md`:** increment "Sessions played" and update the party level.

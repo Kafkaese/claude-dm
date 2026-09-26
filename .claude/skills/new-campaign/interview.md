@@ -177,7 +177,7 @@ Follow `library/general/table-rules/safety-tools.md`. Do this in plain chat, and
 4. Ask whether they want proactive check-ins before intense scenes: yes, only near veils, or no.
 
 ## Round 7: Table Conventions & DM Style
-1. **Conventions:** present the defaults from `library/general/table-rules/communication.md` as a short table: plain text = player, "double quotes" = in-character speech, [square brackets] = instructions to the system. Explain the difference in authority in one or two lines: the DM has the last word over the game, while the user has full control over the system. Ask whether they'd like different conventions, and mention that they can change them any time, e.g. single quotes, other brackets, or a codeword.
+1. **Conventions:** present the defaults from `library/general/table-rules/communication.md` as a short table: plain text = player, "double quotes" = in-character speech, [square brackets] = instructions to the system. Explain the difference in authority in one or two lines: the DM has the last word over the game, while the user has full control over the system. Ask whether they'd like different conventions, and mention that they can change them any time, e.g. single quotes, other brackets, or a codeword. Also mention name highlighting (people **bold**, places ***bold italic***, spells and items *italic*), and that it can be turned off.
 2. **DM voice:** use AskUserQuestion, with a `preview` for each option showing the example lines from the DM voice table in `communication.md` (asking for a roll, reacting to a clever plan, ending a beat):
    - Narrator: a storyteller's voice, with no comments on your rolls or choices (Recommended)
    - Invisible: like a novel or video game, with no DM persona at all
