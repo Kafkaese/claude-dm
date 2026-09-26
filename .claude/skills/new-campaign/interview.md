@@ -161,9 +161,9 @@ Explain that these questions set how merciful the DM is, both with dice and in g
    - You roll your own dice; Claude rolls for NPCs (Recommended)
    - Claude rolls everything
    - You roll everything, including NPCs
-4. **Hidden rolls:**
-   - Claude rolls secret checks (Perception, Sense Motive) and monster rolls in secret, the way a real GM screen works (Recommended)
-   - Everything in the open
+4. **Noticing and knowing checks** (Perception, Sense Motive, Knowledge and similar). Enemy rolls are always behind the screen, and reactive checks the player didn't ask for (spotting an ambush, noticing a trap) are always secret.
+   - The DM rolls them: you describe what you do ("I examine the hands") and get the result as narration, without constant "roll Perception" requests. You still roll attacks, saves and action checks (Recommended)
+   - You roll them: the DM rolls in secret only when the result or the roll itself would give something away
 5. **Rules approach:** (fits in the same AskUserQuestion call, since the house rules question is asked as free text)
    - Rules as written, with quick rulings when needed (Recommended)
    - Strict RAW
@@ -188,6 +188,6 @@ Follow `library/general/table-rules/safety-tools.md`. Do this in plain chat, and
 - **Character concepts:** any ideas they already have, so the campaign can hook into them.
 
 ## Defaults (quick mode or "you decide")
-Golarion (Varisia), original content, guided sandbox, balanced branching (3 side threads), lively world pressure, Narrator DM voice, balanced pillars, some intrigue, standard lethality, mercy at low levels only, realistic-but-warned consequences, mostly balanced encounters, level 1, 15 point buy (20 if solo or 2 players), Core plus main rulebooks, medium XP, 2 traits, max HP at 1st level, player rolls own dice, hidden secret rolls.
+Golarion (Varisia), original content, guided sandbox, balanced branching (3 side threads), lively world pressure, Narrator DM voice, balanced pillars, some intrigue, standard lethality, mercy at low levels only, realistic-but-warned consequences, mostly balanced encounters, level 1, 15 point buy (20 if solo or 2 players), Core plus main rulebooks, medium XP, 2 traits, max HP at 1st level, player rolls own dice, the DM rolls noticing and knowing checks.
 The table conventions are always introduced, even in quick mode (one short table).
 Safety tools are never skipped, even in quick mode. At minimum, state the default lines, explain the in-chat signals in one short table, and ask "Anything you want off the table or off-screen?"

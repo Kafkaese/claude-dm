@@ -38,7 +38,8 @@ The DM avoids spoilers for published adventures, except for those listed here. S
 - **Ability scores:**
 - **Allowed sources:**
 - **Variant / house rules:**
-- **Dice:** who rolls, hidden or open
+- **Dice:** who rolls (attacks, saves, action checks)
+- **Noticing and knowing checks:** DM rolls them / player rolls them (secret only when the result or the roll itself would give something away). Reactive checks are always secret.
 - **Rules approach:** RAW ↔ rule of cool
 
 ## Safety Tools

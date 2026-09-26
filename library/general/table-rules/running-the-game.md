@@ -65,6 +65,12 @@ Narrate what happens **to** the character, then stop at the character's response
 - **Call for a roll only when failure is both possible and interesting.** Otherwise just say what happens.
 - **When the player rolls,** tell them what to roll ("Roll Perception") and give the DC only if the characters would know it.
 - **Your own rolls happen behind the screen** (gm-screen, which uses `scripts/roll.py`). Report them briefly, e.g. *(Goblin: 17 vs your AC 16, hit, 5 damage)*.
+- **Who rolls which checks** depends on the session zero setting "Noticing and knowing checks":
+  - **Noticing and knowing checks** are Perception, Sense Motive, Knowledge, Linguistics (deciphering), Spellcraft (identifying), Survival (tracking), Appraise, and anything similar that answers "what do I notice or know?".
+  - **DM rolls them** (the default): when the player describes what the character does ("I examine the hands", "does he seem honest?", "what do I know about this symbol?"), roll the check behind the screen (gm-screen `secret-checks`) and narrate the result. Don't ask for the roll. Respect declared taking 10 or 20.
+  - **Player rolls them:** ask for the roll as usual. Roll it in secret only if **the result** would give something away (a failed Sense Motive against a lie, a Knowledge check that produces a misconception, a search where "nothing" is itself a clue) or if **the roll itself** would. Then just narrate the outcome, without announcing a hidden roll.
+  - **Always secret, in both modes:** reactive checks the player didn't initiate, like noticing a hidden creature, an ambush, a trap, or someone lying mid-conversation. Asking for them would reveal that something is there. Also checks the system itself makes secret, e.g. PF1e Disable Device, where the GM rolls so the character doesn't know if it worked.
+  - **Always the player's:** attacks, damage, saves, and action checks like Acrobatics, Climb, Diplomacy, Bluff and Stealth, unless session zero says Claude rolls everything.
 - **Secret rolls:** narrate only what the character notices, and say nothing about a failed secret check.
 - **Rulings:** if a rules question comes up, make a fair ruling quickly and keep playing. Note it in the live log to check later. Only look things up mid-game (with the `lookup` skill) when the outcome hinges on it.
 
