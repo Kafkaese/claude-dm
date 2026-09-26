@@ -12,7 +12,7 @@ Longer transitions are opportunities. When the player says "we go to A", don't j
 - **They arrive quietly, when that's what the world turn says:** calm stretches are part of the rhythm. Summarize travel briefly.
 
 ## 2. The world turn
-Run it (quietly, with spoiler-free tool descriptions) whenever one of these happens:
+During play, the gm-screen agent runs it (`world-turn`), so the checks and rolls stay hidden. Run it whenever one of these happens:
 - the PCs move somewhere, or rest
 - time passes: downtime, waiting, a time skip
 - the PCs do something notable (see section 3)

@@ -17,31 +17,26 @@ Keep this to one message, out of character:
 
 Wait for the reply.
 
-## Step 2: XP & advancement
-Follow the advancement method in session zero.
-- **XP:** total the XP from the encounters and story awards in the live log, using `library/<system>/rules/`. Divide it among the PCs who were present. Show the award and each PC's new total, and say if anyone can level up.
-- **Milestone:** say whether a milestone was reached. Only share the reason if it's player-safe.
+## Step 2: DM records behind the screen
+Delegate to the **gm-screen** agent:
+- **Description:** "Close the session"
+- **Prompt:** "campaign `<slug>`, session NN: `close-session`", plus "Events since last call" and the player's stars & wishes, rulings feedback and safety changes.
 
-## Step 3: Write the records
-Use spoiler-free tool descriptions throughout.
-1. **DM log** (`dm/session-log/session-NN.md`):
-   - Complete the log and the "Changes" section.
-   - Record the stars & wishes.
-   - List any rulings still to check. Check them now if they're quick, and note the correct rule for next time.
-2. **Player recap** (`players/recaps/session-NN.md`):
+It completes the DM log and its "Changes" section, records the stars & wishes, checks quick rulings, and updates `dm/characters/*`, `dm/campaign-plan.md` (if stars & wishes change how to run it), `dm/state.md` and `dm/world.md`. It also works out the **XP or milestone** award using the advancement method in session zero and `library/<system>/rules/`. It returns the award and the PC status as player-safe facts.
+
+## Step 3: Player records
+Write these yourself. They only contain what the player knows:
+1. **Player recap** (`players/recaps/session-NN.md`):
    - Write it from the characters' point of view, in the campaign's tone, in a few paragraphs.
    - Include **only what the characters experienced or learned.** No hidden rolls, no NPC motives they didn't discover, no off-screen events.
    - End with open questions and leads, as the characters see them.
-3. **`players/party.md`:** loot, gold, quests, allies, enemies, and things learned.
-4. **`players/characters/*`:** XP, current HP, conditions, and consumables used, as known. Add a changelog line for each.
-5. **`dm/characters/*`:** add to Observations what the player enjoyed, their tactics, and how the backstory hooks landed. If stars & wishes changed how the campaign should be run, note that in `dm/campaign-plan.md`.
-6. **`dm/state.md`:** update everything for picking up next time: last session, date, location, exact current scene, PC status, open threads.
-7. **`campaign.md`:** increment "Sessions played" and update the party level.
-8. **`dm/world.md`:** awareness and heat changes with their causes, fired triggers, and scheduled events that happened.
-9. **Safety:** if lines or veils changed, update `players/session-zero.md`.
+2. **`players/party.md`:** loot, gold, quests, allies, enemies, and things learned.
+3. **`players/characters/*`:** the XP award, current HP, conditions, and consumables used. Add a changelog line for each. Tell the player the award and whether anyone can level up. For milestones, give the reason only if it's player-safe.
+4. **`campaign.md`:** increment "Sessions played" and update the party level.
+5. **Safety:** if lines or veils changed, update `players/session-zero.md`.
 
 ## Step 4: Continuity check
-Do a final checkpoint first (see `continuity.md`): flip revealed facts to locked, and make sure the "New elements" and "Revealed" sections are complete.
+(The `close-session` call has already done the final checkpoint: revealed facts are locked, and "New elements" and "Revealed" are complete.)
 
 Then delegate to the **continuity-checker** agent: "campaign `<slug>`, session NN". Relay only its spoiler-free summary.
 - If it reports a problem with a locked fact that **needs raising OOC**, raise it now, briefly and honestly, e.g. *"(OOC: I realized I contradicted myself about when the fire started. The earlier version stands / let's say X instead. Okay?)"*. Record the outcome as locked.

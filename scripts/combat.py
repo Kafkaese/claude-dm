@@ -9,7 +9,7 @@ Usage: python3 scripts/combat.py -c CAMPAIGN COMMAND [args]
 Setup
   new MAPFILE | --blank WxH       start an encounter from a terrain map (see below)
   add TOKEN NAME --pos D4 --init 15 --hp 11 [--ac 16] [--side enemy|pc|ally]
-      [--size 1|2|3|4] [--reach 5] [--speed 30] [--cr 1/2] [--hidden]
+      [--size 1|2|3|4] [--reach 5] [--speed 30] [--cr 1/2] [--hidden] [--ref STATBLOCK.md]
                                   TOKEN is 1-2 chars: PCs uppercase (V), others lowercase+digit (g1)
 Play
   show [--dm]                     player view (paste verbatim) / DM view (never paste)
@@ -285,7 +285,7 @@ def render(st, dm=False):
             extra.append(", ".join(c["conditions"]))
         if dm:
             extra += [f"AC {c['ac']}" if c.get("ac") else "", "hidden" if c.get("hidden") else "",
-                      f"CR {c['cr']}" if c.get("cr") else ""]
+                      f"CR {c['cr']}" if c.get("cr") else "", f"ref {c['ref']}" if c.get("ref") else ""]
         extra = "  ".join(e for e in extra if e)
         init = f"{c['init']:g}"
         out.append(f"{mark} {c['token']:<2} {c['name']:<18} {init:>4}  {hp:<16}{extra}".rstrip())
@@ -478,7 +478,7 @@ def cmd_add(args, st):
     c = {"token": args.token, "name": args.name, "side": args.side, "x": x, "y": y,
          "size": args.size, "reach": args.reach, "speed": args.speed, "init": args.init,
          "hp": args.hp, "max_hp": args.hp, "ac": args.ac, "cr": args.cr,
-         "hidden": args.hidden, "conditions": []}
+         "hidden": args.hidden, "conditions": [], "ref": args.ref}
     for cx, cy in cells(c):
         if cost(st, cx, cy) is None or occupied(st, c, cx, cy):
             raise CombatError(f"{fmt_pos(cx, cy)} is blocked or occupied")
@@ -610,6 +610,7 @@ def main(argv=None):
     a.add_argument("--ac", type=int); a.add_argument("--side", choices=["enemy", "pc", "ally"], default="enemy")
     a.add_argument("--size", type=int, default=1, choices=[1, 2, 3, 4]); a.add_argument("--reach", type=int, default=5)
     a.add_argument("--speed", type=int, default=30); a.add_argument("--cr"); a.add_argument("--hidden", action="store_true")
+    a.add_argument("--ref", help="path to the stat block file (DM view only)")
     s = sub.add_parser("show"); s.add_argument("--dm", action="store_true")
     sub.add_parser("next")
     m = sub.add_parser("move"); m.add_argument("token"); m.add_argument("pos")

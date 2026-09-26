@@ -20,14 +20,14 @@ Use this for anything you make up on the spot.
 
 **Step 2: Reuse before inventing.** Can this be an existing NPC, location, thread or clue? A known NPC who turns out to know something beats a new one. An existing thread gaining a clue beats a new thread.
 
-**Step 3: Check the records.** Before saying it out loud, grep `dm/timeline.md`, `dm/threads.md` and the relevant NPC and location files. Ask:
+**Step 3: Check the records.** Before saying it out loud, check `dm/timeline.md`, `dm/threads.md` and the relevant NPC and location files. During play, send this to gm-screen as an `improv-check`, so the searches stay hidden. Ask:
 - Does it contradict anything locked?
 - Does the timeline allow it (who was where, and when)?
 - Would it make an existing clue misleading or pointless?
 
 If it conflicts with something **locked**, change your improvisation. If it conflicts with something **flexible**, either change the improvisation or revise the flexible fact and record the change.
 
-**Step 4: Record it immediately** in the live log, under "New elements", with its weight and thread ID. A new plot-weight element also goes into `dm/threads.md`, plus the timeline or NPC file if it touches them.
+**Step 4: Record it immediately** (gm-screen does this with the check, or through "Events since last call") in the live log, under "New elements", with its weight and thread ID. A new plot-weight element also goes into `dm/threads.md`, plus the timeline or NPC file if it touches them.
 
 ## 3. The world exists before the player looks
 This is the guard against sycophancy. Your job isn't to reward the player with plot. It's to be the world, honestly.
@@ -41,6 +41,7 @@ This is the guard against sycophancy. Your job isn't to reward the player with p
 ### The oracle
 When you genuinely don't know the answer to a question with plot weight ("Does this guard know about the smuggling?", "Is anyone home?"), don't decide by what would be exciting. Set the odds from the established facts **before** rolling, then roll:
 
+During play, send the question to gm-screen (`oracle`). It sets the odds from the records and rolls:
 ```
 python3 scripts/roll.py -c <campaign> -H --oracle 30 "Guard knows about the smuggling?"
 ```
@@ -80,10 +81,10 @@ If the answer is YES and it carries plot weight, run the improvisation protocol 
 - **Watch for waning interest:** shorter replies, rushing through scenes, or asking "what now?". If you see it, make a brief OOC check-in about direction.
 
 ## 6. Checkpoints
-At every scene break (end of a scene, combat, or location), do these quietly with spoiler-free tool descriptions:
+At every scene break (end of a scene, combat, or location), have gm-screen do these, as a `checkpoint` or as part of the next call:
 - update the live log
 - flip revealed facts to `[locked SNN]`
 - update `dm/threads.md` (clues given, status, last touched)
 - add timeline entries for anything that happened in-game
 
-After context compaction, re-read `dm/threads.md`, `dm/timeline.md` and the live log before continuing.
+After context compaction, ask gm-screen for a fresh `brief` before continuing.

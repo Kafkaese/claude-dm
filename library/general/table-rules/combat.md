@@ -19,9 +19,11 @@ For an **unexpected fight,** take a moment and prefer options 1–3; they're fas
 ## The combat script
 Never draw the map by hand, and never count squares in your head. `scripts/combat.py` holds the battle state and does the geometry (run it with `-h` for commands).
 
+**The gm-screen agent runs the script.** The narrator only pastes the player view it returns (see "Behind the screen" in `running-the-game.md`). Combat commands reveal stats (`add … --ac 17`) and hidden tokens, so they never run in the main session.
+
 **Setup:**
 - Use a prepared map from `dm/combat/maps/` if the prep has one, or write a quick map file. Otherwise use `--blank WxH`.
-- Add every combatant with its real initiative roll (from `roll.py`), HP, AC, CR, size, reach and speed.
+- Add every combatant with its real initiative roll (from `roll.py`), HP, AC, CR, size, reach, speed, and `--ref` pointing to its stat block file.
 - Add enemies the PCs can't see yet with `--hidden`, and `reveal` them when they're spotted.
 
 **During play:**
@@ -42,11 +44,11 @@ Never draw the map by hand, and never count squares in your head. `scripts/comba
 
 ## Flow
 After each message you wait for the player, so a message per enemy turn would make the player type "continue" constantly. Instead:
-1. **Resolve every consecutive non-PC turn in one message.** Give each one a line or two, with the key rolls, e.g. *g1 charges Valeros: 17 vs AC 16, hit, 6 damage.* Hidden rolls stay hidden.
+1. **Resolve every consecutive non-PC turn in one gm-screen call** (`enemy-turns`) **and one message.** Give each one a line or two from the PLAYER-SAFE report, e.g. *g1 charges Valeros: 17 vs your AC 16, hit, 6 damage.* Never state enemy AC, bonuses or HP numbers.
 2. **End with the player view** (map plus tracker) **and whose turn it is.** Show the map when positions changed since the last one; the tracker always shows. Then say "Valeros, your turn."
-3. **Pause mid-batch only when the player could react,** e.g. a readied action, an immediate action, or a choice they must make, such as an attack of opportunity they haven't set a standing order for. Ask, then continue the batch after the answer.
+3. **Pause mid-batch only when the player could react,** e.g. a readied action, an immediate action, or a choice they must make, such as an attack of opportunity they haven't set a standing order for. gm-screen stops and reports NEEDS PLAYER INPUT. Ask, then continue the batch with the answer.
 4. **Standing orders** avoid pauses. The player can set them any time, e.g. "always take AoOs", "Feather Fall if anyone falls", or "hold the door". Record them in the live log and apply them without asking.
-5. **On the player's turn,** accept a full turn in one message, e.g. "Move to D4, attack g2, rolled 17, 9 damage". Resolve it, update the script, then run the next batch.
+5. **On the player's turn,** accept a full turn in one message, e.g. "Move to D4, attack g2, rolled 17, 9 damage". Send it to gm-screen as `resolve`, including the movement. If the next actors are non-PCs, ask for `enemy-turns` in the same call, so a round usually costs one wait.
 6. **Step mode:** if the player asks for `[step mode]`, e.g. for a boss fight, resolve one actor per message instead.
 7. **In a surprise round,** only aware combatants act, with one standard or move action each.
 
@@ -75,4 +77,4 @@ When a **unique, powerful or boss** enemy drops to 0 HP or below from the PC's a
 - **Morale:** most creatures flee or surrender when the fight is clearly lost. Use the morale entry in the stat block, if it has one.
 
 ## After combat
-Run `end`. It prints a summary with the XP from defeated enemies, and archives the state. Copy the relevant results to the live log (XP, loot, HP, consequences), then run a checkpoint (`continuity.md`).
+Ask gm-screen for `combat-end`. It runs `end`, logs XP, loot, HP and consequences, and does a checkpoint. Narrate the aftermath from its PLAYER-SAFE report.
