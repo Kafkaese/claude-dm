@@ -19,9 +19,9 @@ Session number: `NN` = "Sessions played" in `campaign.md` + 1, zero-padded to tw
 
 **Don't open `dm/` files in the main session.** Their names and contents are spoilers.
 
-**Missing prep:** if there's no `dm/session-prep/session-NN-prep.md` (and it isn't session 1), tell the player "One moment, I'm preparing the session." Delegate to the **dm-scribe** agent: "campaign `<slug>`: advance the world if not yet done since session NN-1, then prep session NN".
+**Missing prep:** if there's no `dm/session-prep/session-NN-prep.md` (and it isn't session 1), tell the player "One moment, I'm preparing the session." Delegate to the **dm-scribe** agent (wait for the result: `run_in_background: false`): "campaign `<slug>`: advance the world if not yet done since session NN-1, then prep session NN".
 
-**Then get the DM brief** from the **gm-screen** agent:
+**Then get the DM brief** from the **gm-screen** agent (wait for the result: `run_in_background: false`):
 - **Description:** "Prepare the DM brief"
 - **Prompt:** "campaign `<slug>`, session NN: `brief`. Create `dm/session-log/session-NN.md` from `.claude/skills/start-session/session-log-template.md` if it doesn't exist, and set `campaign.md` status to `active`."
 

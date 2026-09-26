@@ -18,7 +18,7 @@ Keep this to one message, out of character:
 Wait for the reply.
 
 ## Step 2: DM records behind the screen
-Delegate to the **gm-screen** agent:
+Delegate to the **gm-screen** agent (wait for the result: `run_in_background: false`):
 - **Description:** "Close the session"
 - **Prompt:** "campaign `<slug>`, session NN: `close-session`", plus "Events since last call" and the player's stars & wishes, rulings feedback and safety changes.
 
@@ -39,11 +39,11 @@ Write these yourself. They only contain what the player knows:
 ## Step 4: Continuity check
 (The `close-session` call has already done the final checkpoint: revealed facts are locked, and "New elements" and "Revealed" are complete.)
 
-Then delegate to the **continuity-checker** agent: "campaign `<slug>`, session NN". Relay only its spoiler-free summary.
+Then delegate to the **continuity-checker** agent (wait for the result: `run_in_background: false`): "campaign `<slug>`, session NN". Relay only its spoiler-free summary.
 - If it reports a problem with a locked fact that **needs raising OOC**, raise it now, briefly and honestly, e.g. *"(OOC: I realized I contradicted myself about when the fire started. The earlier version stands / let's say X instead. Okay?)"*. Record the outcome as locked.
 
 ## Step 5: Behind the screen
-Delegate to the **dm-scribe** agent: "campaign `<slug>`: session NN just ended; act on the continuity report's 'For next prep' section, advance the world, then prep session NN+1". Tell the player "I'll prepare next session behind the screen." Relay only the agent's spoiler-free confirmation.
+Delegate to the **dm-scribe** agent (wait for the result: `run_in_background: false`): "campaign `<slug>`: session NN just ended; act on the continuity report's 'For next prep' section, advance the world, then prep session NN+1". Tell the player "I'll prepare next session behind the screen." Relay only the agent's spoiler-free confirmation.
 
 ## Step 6: Close
 - Show the player recap. It's theirs to read.

@@ -8,4 +8,4 @@ Spoilers for these are fine. Include each one's outcome at the player's table if
 |---|---|---|---|
 
 ## Notes
--
+- 2026-09-26: confirmed at session zero (sandpoint-delve): no published adventures played or read.

@@ -81,7 +81,7 @@ If the answer is YES and it carries plot weight, run the improvisation protocol 
 - **Watch for waning interest:** shorter replies, rushing through scenes, or asking "what now?". If you see it, make a brief OOC check-in about direction.
 
 ## 6. Checkpoints
-At every scene break (end of a scene, combat, or location), have gm-screen do these, as a `checkpoint` or as part of the next call:
+At scene breaks (end of a scene, combat, or location), gm-screen does these with the next call, from the "Events since last call" you pass. A standalone `checkpoint` is only for long stretches without any call:
 - update the live log
 - flip revealed facts to `[locked SNN]`
 - update `dm/threads.md` (clues given, status, last touched)

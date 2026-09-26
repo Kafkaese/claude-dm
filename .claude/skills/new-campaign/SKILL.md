@@ -33,7 +33,7 @@ When the interview is done, show a compact summary of all choices. Ask for corre
 ## Step 3: Build behind the screen
 **Everything else is secret, including the setting research, so delegate it.** Web searches, lore pages and the campaign plan would all spoil the game if they appeared in the chat.
 
-Tell the player "I'll build the campaign behind the screen. This takes a moment." Then delegate to the **dm-scribe** agent:
+Tell the player "I'll build the campaign behind the screen. This takes a moment." Then delegate to the **dm-scribe** agent (wait for the result: `run_in_background: false`):
 - **Description:** "Build the campaign"
 - **Prompt:** "campaign `<slug>`: build the campaign following `.claude/skills/new-campaign/build-campaign.md`", plus anything from the interview that isn't captured in session zero.
 

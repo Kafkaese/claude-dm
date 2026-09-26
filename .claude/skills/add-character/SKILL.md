@@ -50,7 +50,7 @@ Before writing anything, verify everything that isn't basic core material:
 - special items
 - anything that has a formula for uses per day, rounds per day, DCs or scaling
 
-Make **one batched** call to the **dm-researcher** agent:
+Make **one batched** call to the **dm-researcher** agent (wait for the result: `run_in_background: false`):
 - **Description:** "Verify character abilities"
 - **Prompt:** the campaign slug, the character's class, level and ability scores, and the list of items to check. Ask for the exact rules text, the formulas with the character's actual values worked out, and the library paths.
 
@@ -66,7 +66,7 @@ The file slug is the character's name in kebab-case.
 **`players/characters/<slug>.md`:** fill in `library/<system>/templates/character-sheet.md`. Include only what the player is allowed to see. If the player wanted DM-filled blanks **revealed now**, leave them out for the moment: the scribe adds them (step 5).
 
 ## Step 5: DM notes behind the screen
-Everything else is secret: inventing blanks, assessing abilities, and weaving the character into the plot. It may also need lore research. Delegate it to the **dm-scribe** agent:
+Everything else is secret: inventing blanks, assessing abilities, and weaving the character into the plot. It may also need lore research. Delegate it to the **dm-scribe** agent (wait for the result: `run_in_background: false`):
 - **Description:** "Weave the character into the campaign"
 - **Prompt:** "campaign `<slug>`: integrate character `<slug>` following `.claude/skills/add-character/integrate-character.md`". Add the backstory answers from step 2 and the verified abilities from step 3: centrality, blanks and whether they're revealed or a surprise, leverage, and off-limits topics.
 

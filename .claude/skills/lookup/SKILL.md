@@ -21,7 +21,7 @@ Ask the player only if the sources come up empty (homebrew, or a third-party sou
 ## Hidden by default: delegate
 **Never call WebFetch or WebSearch from the main session.** A visible search for "drow assassin stat block" spoils the hidden assassin on the map, and web calls clutter the chat.
 
-Delegate to the **dm-researcher** agent:
+Delegate to the **dm-researcher** agent (wait for the result: `run_in_background: false`):
 - **Description** (visible to the player): spoiler-free and generic, e.g. "Look up a creature", "Check a rule", "Research local lore".
 - **Prompt:** the campaign slug, exactly what you need and why (e.g. "stat block for an assassin-type NPC around CR 4, humanoid, for an ambush"), and any constraints.
 - The agent checks the library, searches only the allowed sources, filters out published-adventure spoilers (`library/general/table-rules/published-content.md`), saves the result to the library, and returns what you need.

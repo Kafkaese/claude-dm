@@ -18,7 +18,9 @@ During play, the main session is **the narrator**. Everything involving secret n
 - **Description** (visible in the UI): generic, e.g. "Resolve enemy turns", "Secret check", "Resolve action", "World turn", "Checkpoint".
 - **Prompt:** the campaign slug, the task, what the player declared and rolled, and "Events since last call": a short summary of what happened in the chat since the last call, which the agent logs. **Only put in facts the player already knows.** The agent looks up stat blocks, DCs and secrets itself.
 - **Group work into one call:** all enemy turns until the next PC turn, and all secret checks for a scene.
-- **Wait for the result** (not in the background), except for a checkpoint at a longer scene break, which can run in the background. Never run two gm-screen calls at the same time. If a background one is running, wait for it to finish first. When a background checkpoint finishes, don't comment on it unless it reports a problem.
+- **Always wait for the result.** Never run gm-screen, or any DM agent, in the background (`run_in_background: false`). The UI shows a background agent's work inline, including its commands and their output, which can spoil the game. A finished background agent also wakes the narrator again, which produces stray extra messages. A call you wait for shows up as a single collapsed agent row.
+- **No standalone checkpoints during play.** Pass what happened as "Events since last call" with the next call you need anyway, and the agent logs it then. Only if a long stretch passes without any call (e.g. a long conversation scene) do a `checkpoint` call, and make it at the **start** of your next reply, before narrating, so the reply still ends on the narration.
+- **One call at a time,** and ask for everything you need in it (e.g. a secret check plus the log).
 
 **Using the report:** narrate from the PLAYER-SAFE section, and paste the player map view if there is one. Use DM ONLY for tone and consistency, and never quote it. If there's NEEDS PLAYER INPUT, ask the player, then send the answer in the next call.
 
@@ -89,7 +91,7 @@ Narrate what happens **to** the character, then stop at the character's response
 - **The world moves.** NPCs and factions pursue their goals, and time passes.
 
 ## Live log & persistence
-Keep the running notes in `dm/session-log/session-NN.md` **during** play, not just at the end. The context can get compacted during a long session, and the log is what survives. The gm-screen agent writes the log: pass "Events since last call" with every call, and send a `checkpoint` at scene breaks when no other call is due.
+Keep the running notes in `dm/session-log/session-NN.md` **during** play, not just at the end. The context can get compacted during a long session, and the log is what survives. The gm-screen agent writes the log: pass "Events since last call" with every call. A standalone `checkpoint` is only needed after a long stretch without any call.
 - **After each scene or combat,** the log gets the key events, decisions, rolls that mattered, NPCs met, loot, and HP and resources spent.
 - **Improvised NPCs and places that matter** get their own quick file in `dm/npcs/` or `dm/locations/` (through `improv-check`).
 - **When the characters learn a secret,** add it to the player-facing notes, e.g. `players/party.md` or a handout.
