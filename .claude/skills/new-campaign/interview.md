@@ -21,7 +21,14 @@ These rounds are guidelines. Adapt the options to earlier answers, and mark the 
    - Solo
    - 2–3
    - 4+
-   - If the party is small: should Claude run companion NPCs to fill gaps? Other options are 20 point buy, gestalt, or Automatic Bonus Progression.
+   - **Solo follow-up** (always ask when the player is alone). Explain that solo combat is notoriously hard to balance in PF1e, and that a lone character has no one to heal, flank or rescue them. Strongly recommend help:
+     - A companion NPC: an ally who travels and fights alongside the PC (Recommended)
+     - A gestalt character: the PC takes two classes at every level. It's more versatile and durable, but it still has only one set of actions, so fights stay scaled as solo
+     - Both: gestalt and a companion. The companion fixes the action economy, and gestalt adds resilience
+     - Neither: then fights are kept easy, and temporary allies appear often
+
+     If they pick a companion, ask who **plays it in combat**: the player (like a second PC, with its sheet visible) or the DM (an NPC with its own personality and judgment). Also ask who **builds** it: the player, or the DM using an official NPC stat block or a build at the PC's level minus 1.
+   - **Two or three players:** a companion or 20 point buy is still worth offering.
 
 ## Round 1b: Inspirations
 Ask in plain chat as free text. Explain that this is the best way for the DM to learn their taste, and that a quick list is enough:
@@ -188,6 +195,6 @@ Follow `library/general/table-rules/safety-tools.md`. Do this in plain chat, and
 - **Character concepts:** any ideas they already have, so the campaign can hook into them.
 
 ## Defaults (quick mode or "you decide")
-Golarion (Varisia), original content, guided sandbox, balanced branching (3 side threads), lively world pressure, Narrator DM voice, balanced pillars, some intrigue, standard lethality, mercy at low levels only, realistic-but-warned consequences, mostly balanced encounters, level 1, 15 point buy (20 if solo or 2 players), Core plus main rulebooks, medium XP, 2 traits, max HP at 1st level, player rolls own dice, the DM rolls noticing and knowing checks.
+Golarion (Varisia), original content, guided sandbox, balanced branching (3 side threads), lively world pressure, Narrator DM voice, balanced pillars, some intrigue, standard lethality, mercy at low levels only, realistic-but-warned consequences, mostly balanced encounters, level 1, 15 point buy (20 if solo or 2 players), a companion NPC for a solo player (played by the DM), Core plus main rulebooks, medium XP, 2 traits, max HP at 1st level, player rolls own dice, the DM rolls noticing and knowing checks.
 The table conventions are always introduced, even in quick mode (one short table).
 Safety tools are never skipped, even in quick mode. At minimum, state the default lines, explain the in-chat signals in one short table, and ask "Anything you want off the table or off-screen?"

@@ -5,7 +5,9 @@ What the table agreed on. The DM follows this, and anyone can ask to revisit it.
 - **Scope:**
 - **Setting:**
 - **Content:** original / published (which)
-- **Players:**  **Companions run by DM:**
+- **Players:**
+- **Solo support:** companion NPC / gestalt / both / neither. Companion played by: player / DM. Built by: player / DM.
+- **Encounter scaling:** effective APL = APL − N (see `library/<system>/rules/encounter-building.md`)
 
 ## Published Adventures
 The DM avoids spoilers for published adventures, except for those listed here. See `library/general/table-rules/published-content.md`.

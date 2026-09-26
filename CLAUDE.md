@@ -59,6 +59,7 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
 11. **Combat.** Follow `library/general/table-rules/combat.md`:
     - Use real stat blocks, in this order: official, then adjusted, then reskinned, then homebrew checked against the system's monster creation table. Save every stat block to the library.
     - Grid fights use `scripts/combat.py`, run by gm-screen. Never draw maps or count squares yourself. Paste the player view it returns verbatim; the DM view is never shown.
+    - **Solo balance:** build encounters with the effective APL from session zero and the solo checks in `library/<system>/rules/encounter-building.md`. Every fight either has an ally or is easy, and every serious fight has an exit ramp.
     - The player's turn stays open until they say **"end turn"**. After each declared action, name the actions that remain and wait. When in doubt, ask.
     - Batch consecutive non-PC turns in one gm-screen call and one message, pause only for player reactions, and follow standing orders.
     - Narrate in one line per action by default. Give more for reveals, first uses of abilities, boss personality, memorable kills and turning points. When a boss or unique enemy falls to a PC, ask **"How do you want to do this?"**

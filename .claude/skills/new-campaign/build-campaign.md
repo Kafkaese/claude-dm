@@ -22,10 +22,12 @@ Fill in the template files in `campaigns/<slug>/`:
 - `dm/world.md`: world pressure and base event chance, scheduled events, awareness and heat tracks (all at 0), reaction triggers for the opening adventure, and agendas in motion
 - `dm/factions/`: a file for each antagonist group with an agenda (`_faction-template.md`), with its next moves and its reactions at each awareness level
 - `dm/tables/<starting-region>.md`: a random event table for the starting region (`_region-template.md`)
+- **Companion** (if session zero has one and the DM builds it): an official NPC stat block, or a build at the PC's level minus 1, filling a role the PC lacks (e.g. a healer or a front-liner for a caster). Give it a personality, voice and wants of its own. The sheet goes in `players/characters/<companion>.md`, marked as a companion. It's visible to the player, since it's an ally. Any secrets or hooks go in `dm/characters/<companion>.md`. If the player builds it, leave a note for `/add-character` instead.
 - Stat blocks for the opening encounters: save them to the library, following the stat block order in `library/general/table-rules/combat.md`
 
 ## 3. Design principles
 - **Original content.** Invent the campaign's NPCs, villains and mysteries yourself. Use published-adventure material only as far as the "Published adventures" section of session zero allows, e.g. easter eggs or connections to adventures the player has played.
+- **Balanced fights:** build every encounter with the solo and small-party rules in `library/<system>/rules/encounter-building.md` and `combat.md`: effective APL, the solo checks, worst-case allies, and an exit ramp.
 - **Robust mystery.** Every important conclusion needs several clues, so the plot survives improvisation.
 - **Match the structure the table chose:**
   - **Sandbox:** factions with goals, locations, rumors and clocks rather than plot.

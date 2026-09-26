@@ -14,6 +14,15 @@ For an **unexpected fight,** take a moment and prefer options 1–3; they're fas
 ## Starting a fight
 When combat starts, give the player view (or describe positions in theater of the mind), the initiative order, and a one-line reminder of the turn convention: *"(Declare your actions, and say **end turn** when you're done.)"* Give it at every fight in the first sessions, and later only when it helps.
 
+## Solo and small parties
+Balance is the hardest part of solo play, and challenge ratings underestimate how dangerous enemies are to a lone character. Use the system's solo guideline (for PF1e: section 5 of `library/pf1e/rules/encounter-building.md`), plus these principles:
+- **Every fight either has an ally or is easy.** Give the PC help (a companion, a temporary ally like a turned henchman, a guard who joins in, a summoned creature, or terrain that works like an ally) or keep the encounter at the easy end of the scale. A challenging or hard solo fight without any help is only for a climax, and only if session zero's lethality allows it.
+- **Build for the worst plausible case,** e.g. an ally who might not join, or reinforcements who might arrive.
+- **Plan an exit ramp for every serious fight:** morale, surrender, bargaining, escape routes, or capture instead of death. Know it before the fight starts, not only once the PC is dying.
+- **Spread the threat across rounds:** waves, enemies at a distance, a boss who talks before fighting. That beats everything happening at once.
+- **Companions:** a companion played by the player takes PC turns (with its own "end turn"). One played by the DM is resolved by gm-screen along with the other non-PC turns. It acts in character with its own judgment, not as a perfect optimizer, and the player can give it simple instructions like "stay back and heal".
+- **Listen to feedback.** If stars & wishes say fights feel too hard (or too easy), adjust the campaign's effective APL in session zero, and tell the scribe.
+
 ## Grid or theater of the mind?
 - **Grid** when position matters: terrain, cover, several enemies, reach, flanking, area spells, or a boss fight.
 - **Theater of the mind** for quick, simple fights, like two thugs in an alley or a single animal. Describe positions in words and keep the tracker in the live log.
