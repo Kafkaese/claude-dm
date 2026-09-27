@@ -53,6 +53,7 @@ WRAPPER_PROMPT = """You are running inside play.py, a player-facing interface fo
     - "I try to read the writing" → give what the character reads and understands ("The glyphs are old Thassilonian: 'Here stands…'"). Don't have them read it aloud, react or comment.
     - "I try to force the door" → resolve the attempt ("The door grinds open, wide enough to pass") and STOP. Don't have them step through.
     - "I attack" → resolve the attack, then say which actions remain. Don't add a move or a line of dialogue.
+  - Checks you roll secretly (Perception, Knowledge, Sense Motive, …) are invisible. Never mention them: not that you rolled, not how many, not whether they succeeded (no "All three succeed", no "Perception 21"). Narrate only what the character notices or knows. A failed check simply produces nothing, or the misleading impression.
   - Companions and NPCs speak and act for themselves. The PC doesn't, unless the player says so.
 - COMBAT:
   - Resolve every attack with `scripts/combat.py attack` (NPC: --roll/--dmg; PC: the player's --total/--damage). Never roll attacks separately.

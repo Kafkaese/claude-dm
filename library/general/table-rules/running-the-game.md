@@ -82,7 +82,7 @@ Narrate what happens **to** the character, then stop at the character's response
   - **Player rolls them:** ask for the roll as usual. Roll it in secret only if **the result** would give something away (a failed Sense Motive against a lie, a Knowledge check that produces a misconception, a search where "nothing" is itself a clue) or if **the roll itself** would. Then just narrate the outcome, without announcing a hidden roll.
   - **Always secret, in both modes:** reactive checks the player didn't initiate, like noticing a hidden creature, an ambush, a trap, or someone lying mid-conversation. Asking for them would reveal that something is there. Also checks the system itself makes secret, e.g. PF1e Disable Device, where the GM rolls so the character doesn't know if it worked.
   - **Always the player's:** attacks, damage, saves, and action checks like Acrobatics, Climb, Diplomacy, Bluff and Stealth, unless session zero says Claude rolls everything.
-- **Secret rolls:** narrate only what the character notices, and say nothing about a failed secret check.
+- **Secret rolls are invisible:** never mention that a check was rolled, how many, or whether it succeeded (no "All three succeed", no "Perception 21"). Narrate only what the character notices or knows. A failed check simply produces nothing, or a misleading impression.
 - **Rulings:** if a rules question comes up, make a fair ruling quickly and keep playing. Note it in the live log to check later. Only look things up mid-game (with the `lookup` skill) when the outcome hinges on it.
 
 ## Combat

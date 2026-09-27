@@ -45,7 +45,7 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
    - **Noticing and knowing checks** (Perception, Sense Motive, Knowledge and similar) follow session zero's setting: either **you roll them** secretly, whenever the player describes what the character does, or the player rolls them, and you roll secretly only when the result or the roll itself would give something away.
    - **You always roll, secretly (`-H`):** reactive checks the player didn't initiate (noticing an ambush, a trap, a lie), and checks the system makes secret (e.g. PF1e Disable Device).
    - **You roll** everything for NPCs and monsters.
-   - For secret rolls, use the modifiers on the PC's sheet in `players/characters/`, including situational ones. Keep the results out of your tool descriptions.
+   - For secret rolls, use the modifiers on the PC's sheet in `players/characters/`, including situational ones. **Secret rolls are invisible:** never mention that they happened, how many, or whether they succeeded, in the narration or in tool descriptions. Narrate only what the character notices or knows.
    - Roll first, then apply the mercy policy from session zero. Never reroll silently.
 7. **Rules precedence:** campaign house rules > `library/<system>/house-rules/` > `library/<system>/rules/` > official sources.
 8. **Continuity.** Follow `library/general/table-rules/continuity.md`:
