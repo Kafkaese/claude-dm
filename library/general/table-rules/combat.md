@@ -12,7 +12,12 @@ Always use real stat blocks, never numbers made up in the moment. Stop at the fi
 For an **unexpected fight,** take a moment and prefer options 1–3; they're fast and balanced. Save every stat block you use to the library, so the next fight is faster. Size encounters with `library/<system>/rules/encounter-building.md`.
 
 ## Starting a fight
-When combat starts, give the player view (or describe positions in theater of the mind), the initiative order, and a one-line reminder of the turn convention: *"(Declare your actions, and say **end turn** when you're done.)"* Give it at every fight in the first sessions, and later only when it helps.
+Setting up a fight takes a moment. Use it: give the player something to do while you prepare, so the fight doesn't start with a silent wait.
+
+1. **Call it and stop.** In one short message, with **no tool calls** before it: narrate the moment violence breaks out (only what the PC perceives), then ask the player to **roll initiative** (give their modifier from the sheet) and to get their attack and damage dice ready. Example: *"Steel clears leather. **Roll initiative** (d20+5), and get your dice ready."* End the message there.
+2. **Set up while they roll.** When the answer comes in, do the whole setup in as few calls as possible: one `roll.py` call for all enemy initiatives and surprise checks, then one `combat.py do "new …" "add …" "add …" "show"` call. Hidden enemies get `--hidden`.
+3. **Open the fight:** give the initiative order (only combatants the PC knows about), the map (in `play.py` the interface prints it), and a one-line reminder of the turn convention: *"(Declare your actions, and say **end turn** when you're done.)"* Give the reminder at every fight in the first sessions, and later only when it helps.
+4. **Surprise:** if the enemies strike first from hiding, it's fine to narrate the ambush and then ask for initiative in the same message.
 
 ## Solo and small parties
 Balance is the hardest part of solo play, and challenge ratings underestimate how dangerous enemies are to a lone character. Use the system's solo guideline (for PF1e: section 5 of `library/pf1e/rules/encounter-building.md`), plus these principles:
@@ -31,12 +36,14 @@ Balance is the hardest part of solo play, and challenge ratings underestimate ho
 ## The combat script
 Never draw the map by hand, and never count squares in your head. `scripts/combat.py` holds the battle state and does the geometry (run it with `-h` for commands).
 
-**The gm-screen agent runs the script.** The narrator only pastes the player view it returns (see "Behind the screen" in `running-the-game.md`). Combat commands reveal stats (`add … --ac 17`) and hidden tokens, so they never run in the main session.
+**In `play.py` mode,** run the script yourself. The interface prints the player view and the image after each turn, so don't paste them. **In the Claude Code UI, the gm-screen agent runs the script.** The narrator only pastes the player view it returns (see "Behind the screen" in `running-the-game.md`). Combat commands reveal stats (`add … --ac 17`) and hidden tokens, so they never run in the main session.
 
 **Setup:**
 - Use a prepared map from `dm/combat/maps/` if the prep has one, or write a quick map file. Otherwise use `--blank WxH`.
 - Add every combatant with its real initiative roll (from `roll.py`), HP, AC, CR, size, reach, speed, and `--ref` pointing to its stat block file.
 - Add enemies the PCs can't see yet with `--hidden`, and `reveal` them when they're spotted.
+
+**Attacks go through the script:** `combat.py attack`. It rolls NPC attacks (`--roll "1d20+9" --dmg "1d8+5" --crit 19 --mult 2`), or takes the player's numbers for PC attacks (`--total 17 --damage 9`, plus `--nat 20 --confirm 18` for crits). It confirms criticals, rolls damage only on a hit, applies hardness or DR (`add … --dr 5`), updates HP and writes the **combat log**, the player-safe record of every attack, hit, miss and damage number. Never roll attacks with `roll.py` during a grid fight. Use `log "…"` for anything else the player should see in the log (a spell's effect, a surrender). Give PCs and allies `--con` so the log shows "dead" correctly.
 
 **During play:**
 - `move` for every movement. It finds the cheapest legal path, reports the feet used, and warns about leaving threatened squares (AoO).
@@ -52,7 +59,7 @@ Never draw the map by hand, and never count squares in your head. `scripts/comba
 
 **Image view (optional):** if the table uses it (see "Combat display" in session zero), run `image on` right after setup. From then on, every change re-renders `players/combat-map.png`, the player view as a picture. The player keeps it open in a VS Code tab, where it refreshes by itself. The first time, offer to open it with `code campaigns/<campaign>/players/combat-map.png`. Keep pasting the ASCII view unless the player says the image is enough. Hidden tokens never appear in the image.
 
-**Map symbols:** PCs are uppercase letters (`V`), allies and enemies are lowercase plus a number (`g1`, `o1`), and `x` marks fallen enemies. Coordinates work like chess: columns A…, rows 1…. The player can use them ("I move to D4 and attack g2").
+**Map symbols:** each PC uses the uppercase first letter of their name (Corin → `C`; pick another letter if two PCs share one), allies and enemies are lowercase plus a number (`g1`, `o1`), and `x` marks fallen enemies. Coordinates work like chess: columns A…, rows 1…. The player can use them ("I move to D4 and attack g2").
 
 ## Flow
 After each message you wait for the player, so a message per enemy turn would make the player type "continue" constantly. Instead:
@@ -72,7 +79,10 @@ After each message you wait for the player, so a message per enemy turn would ma
 7. **In a surprise round,** only aware combatants act, with one standard or move action each.
 
 ## Narration
-**The default is one line per action,** with the key rolls: *g1 charges Valeros: 17 vs AC 16, hit, 6 damage.* Quick and readable, so combat keeps moving.
+**The default is one line per action,** with the key rolls: *The bandit leader charges you: 17 vs your AC 16, hit, **6 damage**.* Quick and readable, so combat keeps moving.
+- **Every creature's turn gets its own line,** at least, including companions and allies. Never merge several creatures into one sentence ("the three of them close in and one clips you"). The player needs to see who did what. Narrate **every** attack in the combat log. The log and the narration must match.
+- **Numbers the player always gets:** each attack against the PC as its total against the PC's AC (hit or miss), and **damage taken as a number, per attacker**. The same goes for saves the PC is forced to make (the DC only if the characters would know it). They show the player which enemy is most dangerous. Enemy AC, bonuses and HP stay hidden, as always.
+- **Hidden creatures:** a creature the PC hasn't perceived doesn't appear in the narration, the initiative order or the map. If it acts without being noticed (moving, readying), say nothing. If its action reveals it (an attack, a noise, stepping into view), narrate the reveal from the PC's point of view as a surprise (*"Something low and fast bursts from under the cart: a dog, jaws first."*), then `reveal` it.
 
 **Some moments get more:** 2–4 vivid sentences instead of one line. Use this for:
 - **A new enemy is revealed:** what the PCs see, hear or smell as it appears. Give details that hint at what it is without handing over its stat block.
@@ -89,6 +99,11 @@ When a **unique, powerful or boss** enemy drops to 0 HP or below from the PC's a
 - If the player says "just finish it" or doesn't want to describe it, narrate a fitting finish yourself.
 - The finish has to fit the fiction and the character's abilities, and the DM has the final say. Within that, be generous: this is the player's moment.
 - If the player wants to spare, capture or interrogate the enemy, that's a valid answer too.
+
+## When the PC goes down
+- **The player rolls** their stabilization checks while dying (Constitution, per the system's rules). Ask for the roll each turn.
+- **Resolve the end of the fight in the same reply, step by step:** what the enemies do (per the exit ramp prepared for this fight), what the companion does, what happens to the PC. Never "keep rolling it forward and report back later".
+- **Apply the session-zero mercy policy and lethality openly,** as agreed.
 
 ## Honesty and tactics
 - **Enemies act by their nature and knowledge,** not by what you know as DM. A goblin doesn't know the wizard is out of spells. Intelligent enemies do use tactics: focus fire, flanking, retreating, surrendering, fleeing.

@@ -2,6 +2,17 @@
 
 The interview is done. `players/session-zero.md` and the basic `campaign.md` are written. Your job is to build everything else, behind the screen. Follow `CLAUDE.md`, `library/general/table-rules/continuity.md`, `living-world.md` and `published-content.md`.
 
+## 0. Scale the build to the scope
+Build only what the scope needs, and stop there. Every extra file and web lookup makes the player wait.
+
+| Scope | Build | Research |
+|---|---|---|
+| **One-shot** (1–2 sessions) | `campaign-plan.md` (short), one adventure file with every scene, handout and encounter under its own heading, 3–6 NPC entries (in the adventure file or `dm/npcs/`), `state.md`, `threads.md` (T01 only), a short `timeline.md`, `world.md` with only the clocks and triggers the adventure uses, and the player files. **Skip** factions, event tables and side threads unless the adventure uses them. | At most about 5 lookups: the starting location's public lore, and stat blocks for the planned fights. |
+| **Short adventure** | As for a one-shot, plus faction files for active antagonists and one event table if there's travel | About 10 lookups |
+| **Campaign** | Everything in section 2 | As needed, but saved to the library for reuse |
+
+Check the library before any web lookup. Write each file once, completely, rather than in many small edits. For a one-shot, aim for **about 10 files written in total**. The template's empty files and READMEs can stay as they are.
+
 ## 1. Setting
 Settings live in `library/settings/<slug>/` and can be reused across campaigns (see `library/settings/README.md`). Research the setting yourself using the allowed sources.
 - **Golarion (default):** use canonical lore, filtered through `published-content.md`, and respect the "Published adventures" section of session zero. The default era is about 4707 AR unless session zero says otherwise. Make sure the starting region has a file in `library/settings/golarion/regions/`. Save what you learn, with its sources.

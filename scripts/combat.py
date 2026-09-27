@@ -10,6 +10,8 @@ Setup
   new MAPFILE | --blank WxH       start an encounter from a terrain map (see below)
   add TOKEN NAME --pos D4 --init 15 --hp 11 [--ac 16] [--side enemy|pc|ally]
       [--size 1|2|3|4] [--reach 5] [--speed 30] [--cr 1/2] [--hidden] [--ref STATBLOCK.md]
+      [--dr 5]                    hardness or damage reduction subtracted from every hit
+      [--con 14]                  PCs and allies: Constitution score, so the log shows "dead" at -Con
                                   TOKEN is 1-2 chars: PCs uppercase (V), others lowercase+digit (g1)
 Play
   show [--dm]                     player view (paste verbatim) / DM view (never paste)
@@ -17,12 +19,22 @@ Play
   move TOKEN POS                  move along the cheapest legal path, report feet used
   dist A B                        distance between two tokens (or squares) in feet
   threat TOKEN                    who threatens TOKEN, and who flanks it
+  attack ATT TGT --roll "1d20+9" --dmg "1d8+5" [--crit 19] [--mult 3] [--name slam] [--nonlethal]
+                                  NPC attack: rolls d20, confirms threats, rolls damage only on a hit,
+                                  applies the target's hardness/DR, updates HP, logs the result
+  attack ATT TGT --total 17 --damage 9 [--nat 20|1] [--confirm 18] [--name rapier]
+                                  PC attack with the player's reported numbers, against the hidden AC
+       both: [--no-crit] (mercy: treat a crit as a normal hit)  [--ac N] (override)
+  log "TEXT"                      add a player-safe line to the combat log
+  events                          print combat log lines not shown yet (Claude Code UI mode)
   hp TOKEN DELTA                  e.g. hp g2 -7, hp V +5
   cond TOKEN add|remove TEXT      conditions, e.g. cond g2 add prone
   init TOKEN VALUE                change initiative (delay / ready)
   reveal TOKEN / hide TOKEN       toggle visibility to the players
   remove TOKEN                    take a token off the board (fled, dismissed)
   end                             finish the encounter: summary + XP, archive the state
+  do "CMD" ["CMD" ...]            run several commands in one call, e.g.
+                                  do "move g1 D4" "hp V -6" "next" "show"
   image [on|off]                  render the player view as players/combat-map.png (needs Pillow);
                                   'on' re-renders after every change, for a live VS Code tab
 
@@ -30,6 +42,11 @@ Map files: one line per row, one character per square, no spaces between squares
   .  floor      #  wall (blocks)     +  door        ^  difficult (rubble, brush)
   ~  water (difficult)  T  trees (difficult)  _  pit / chasm (blocks)  (space) outside (blocks)
 Columns are lettered A-Z (max 26 wide), rows numbered from 1.
+Tokens: a PC uses the first letter of its name (Corin -> C); others lowercase + digit (g1, s1).
+
+The combat log (events) is what the player sees about attacks, damage and conditions. play.py prints
+new lines after every turn. The numbers shown: attack totals (against AC only for PCs and allies),
+damage per hit (and what hardness/DR absorbed), PC/ally HP, enemy health in words.
 """
 import argparse
 import json
@@ -438,6 +455,142 @@ def maybe_image(args, st):
         render_image(st, image_path(args.campaign))
 
 
+# ---------- combat log ----------
+
+def event(st, text):
+    st.setdefault("events", []).append({"round": st.get("round", 1), "text": text})
+
+
+def who(c):
+    return c["name"]
+
+
+def status(c):
+    if c["side"] in FRIENDLY:
+        s = f"{c['hp']}/{c['max_hp']} HP"
+        if c["hp"] == 0:
+            s += ", disabled"
+        elif c.get("con") and c["hp"] <= -c["con"]:
+            s += ", dead"
+        elif c["hp"] < 0:
+            s += ", dying"
+        return s
+    return health(c)
+
+
+def apply_damage(c, dmg, nonlethal=False):
+    """Apply damage after hardness/DR. Returns (dealt, absorbed)."""
+    dr = c.get("dr") or 0
+    dealt = max(0, dmg - dr)
+    absorbed = dmg - dealt
+    if nonlethal:
+        c["nonlethal"] = c.get("nonlethal", 0) + dealt
+    else:
+        c["hp"] -= dealt
+    return dealt, absorbed
+
+
+def _roll(expr):
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import secrets
+    from roll import evaluate
+    total, detail, flags = evaluate(expr, secrets.SystemRandom())
+    return total, detail, flags
+
+
+def _natural(detail):
+    """The d20 face from a roll.py detail string like '[17]+9'."""
+    import re
+    m = re.match(r"\[(\d+)\]", detail)
+    return int(m.group(1)) if m else None
+
+
+def cmd_attack(args, st):
+    out = _attack(args, st)
+    try:  # keep the roll log complete
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from roll import append_log
+        append_log(args.campaign, [f"Combat: {l}" for l in out.splitlines()], True, None)
+    except Exception:
+        pass
+    return out
+
+
+def _attack(args, st):
+    a, t = token(st, args.attacker), token(st, args.target)
+    ac = args.ac if args.ac is not None else t.get("ac")
+    if ac is None:
+        raise CombatError(f"{t['token']} has no AC; pass --ac")
+    weapon = f" ({args.name})" if args.name else ""
+    reveal_note = ""
+    if a.get("hidden"):
+        a["hidden"] = False
+        reveal_note = f"{who(a)} bursts from hiding! "
+    dm, crit = [], False
+    if args.roll:  # NPC attack: roll everything
+        total, detail, _ = _roll(args.roll)
+        nat = _natural(detail)
+        dm.append(f"attack {args.roll} → {detail} = {total} vs AC {ac}")
+        hit = nat != 1 and (nat == 20 or total >= ac)
+        if hit and nat is not None and nat >= args.crit and not args.no_crit:
+            ctotal, cdetail, _ = _roll(args.roll)
+            cnat = _natural(cdetail)
+            crit = cnat != 1 and (cnat == 20 or ctotal >= ac)
+            dm.append(f"confirm → {cdetail} = {ctotal}: {'crit' if crit else 'no crit'}")
+        shown_total = total
+    else:          # PC attack: the player's numbers
+        if args.total is None:
+            raise CombatError("give --roll for an NPC attack, or --total for a PC attack")
+        shown_total, nat = args.total, args.nat
+        hit = nat != 1 and (nat == 20 or args.total >= ac)
+        if hit and args.confirm is not None and not args.no_crit:
+            crit = args.confirm >= ac
+            dm.append(f"confirm {args.confirm} vs AC {ac}: {'crit' if crit else 'no crit'}")
+        dm.append(f"attack {args.total} vs AC {ac}")
+    vs = f" vs AC {ac}" if t["side"] in FRIENDLY else ""
+    line = f"{reveal_note}{who(a)}{weapon} → {who(t)}: {shown_total}{vs}"
+    if nat == 20:
+        line += " (natural 20)"
+    elif nat == 1:
+        line += " (natural 1)"
+    if not hit:
+        event(st, line + " — miss")
+        return "\n".join(dm + [f"MISS. Log: {line} — miss"])
+    if args.dmg:
+        times = args.mult if crit else 1
+        dmg, parts = 0, []
+        for _ in range(times):
+            d, ddetail, _ = _roll(args.dmg)
+            dmg += d
+            parts.append(ddetail)
+        dm.append(f"damage {args.dmg} x{times} → {' + '.join(parts)} = {dmg}")
+    elif args.damage is not None:
+        dmg = args.damage
+    else:
+        raise CombatError("give --dmg (NPC) or --damage (PC) for the damage")
+    dealt, absorbed = apply_damage(t, dmg, args.nonlethal)
+    kind = " nonlethal" if args.nonlethal else ""
+    res = f" — {'critical hit' if crit else 'hit'}, {dmg}{kind} damage"
+    if absorbed:
+        res += f" ({absorbed} absorbed, {dealt} gets through)" if dealt else " (all of it absorbed)"
+    res += f" [{who(t)}: {status(t)}]"
+    event(st, line + res)
+    return "\n".join(dm + [f"HIT. HP {t['hp']}/{t['max_hp']}. Log: {line}{res}"])
+
+
+def cmd_log(args, st):
+    event(st, args.text)
+    return f"Logged: {args.text}"
+
+
+def cmd_events(args, st):
+    evs = st.get("events", [])
+    start = 0 if args.all else st.get("events_shown", 0)
+    st["events_shown"] = len(evs)
+    lines = [f"R{e['round']}: {e['text']}" for e in evs[start:]]
+    return "\n".join(lines) if lines else "(no new combat log lines)"
+
+
 # ---------- commands ----------
 
 def cmd_new(args):
@@ -478,7 +631,7 @@ def cmd_add(args, st):
     c = {"token": args.token, "name": args.name, "side": args.side, "x": x, "y": y,
          "size": args.size, "reach": args.reach, "speed": args.speed, "init": args.init,
          "hp": args.hp, "max_hp": args.hp, "ac": args.ac, "cr": args.cr,
-         "hidden": args.hidden, "conditions": [], "ref": args.ref}
+         "hidden": args.hidden, "conditions": [], "ref": args.ref, "dr": args.dr, "con": args.con}
     for cx, cy in cells(c):
         if cost(st, cx, cy) is None or occupied(st, c, cx, cy):
             raise CombatError(f"{fmt_pos(cx, cy)} is blocked or occupied")
@@ -545,8 +698,15 @@ def cmd_threat(args, st):
 
 def cmd_hp(args, st):
     c = token(st, args.token)
-    c["hp"] = min(c["max_hp"], c["hp"] + int(args.delta))
+    delta = int(args.delta)
+    c["hp"] = min(c["max_hp"], c["hp"] + delta)
     state = health(c) if c["hp"] > 0 else ("disabled" if c["hp"] == 0 else "dying / down")
+    if not c.get("hidden"):
+        why = f" ({args.why})" if args.why else ""
+        if c["side"] in FRIENDLY:
+            event(st, f"{who(c)}: {'+' if delta > 0 else ''}{delta} HP{why} [{status(c)}]")
+        else:
+            event(st, f"{who(c)} {'recovers' if delta > 0 else 'takes damage'}{why} [{status(c)}]")
     return f"{c['token']}: HP {c['hp']}/{c['max_hp']} ({state})"
 
 
@@ -554,6 +714,8 @@ def cmd_cond(args, st):
     c = token(st, args.token)
     if args.action == "add":
         c["conditions"].append(args.text)
+        if not c.get("hidden"):
+            event(st, f"{who(c)} is {args.text}")
     elif args.text in c["conditions"]:
         c["conditions"].remove(args.text)
     else:
@@ -572,6 +734,8 @@ def cmd_flag(args, st):
         c["removed"] = True
     else:
         c["hidden"] = args.command == "hide"
+        if args.command == "reveal":
+            event(st, f"{who(c)} appears!")
     return f"{c['token']}: {args.command}"
 
 
@@ -611,24 +775,43 @@ def main(argv=None):
     a.add_argument("--size", type=int, default=1, choices=[1, 2, 3, 4]); a.add_argument("--reach", type=int, default=5)
     a.add_argument("--speed", type=int, default=30); a.add_argument("--cr"); a.add_argument("--hidden", action="store_true")
     a.add_argument("--ref", help="path to the stat block file (DM view only)")
+    a.add_argument("--dr", type=int, default=0, help="hardness or damage reduction")
+    a.add_argument("--con", type=int, help="Constitution score (PCs/allies): dead at -Con HP")
+    at = sub.add_parser("attack"); at.add_argument("attacker"); at.add_argument("target")
+    at.add_argument("--roll"); at.add_argument("--dmg"); at.add_argument("--crit", type=int, default=20)
+    at.add_argument("--mult", type=int, default=2); at.add_argument("--total", type=int)
+    at.add_argument("--damage", type=int); at.add_argument("--nat", type=int, choices=[1, 20])
+    at.add_argument("--confirm", type=int); at.add_argument("--name"); at.add_argument("--ac", type=int)
+    at.add_argument("--nonlethal", action="store_true"); at.add_argument("--no-crit", action="store_true")
+    lg = sub.add_parser("log"); lg.add_argument("text")
+    ev = sub.add_parser("events"); ev.add_argument("--all", action="store_true")
     s = sub.add_parser("show"); s.add_argument("--dm", action="store_true")
     sub.add_parser("next")
     m = sub.add_parser("move"); m.add_argument("token"); m.add_argument("pos")
     d = sub.add_parser("dist"); d.add_argument("a"); d.add_argument("b")
     t = sub.add_parser("threat"); t.add_argument("token")
-    h = sub.add_parser("hp"); h.add_argument("token"); h.add_argument("delta")
+    h = sub.add_parser("hp"); h.add_argument("token"); h.add_argument("delta"); h.add_argument("--why")
     c = sub.add_parser("cond"); c.add_argument("token"); c.add_argument("action", choices=["add", "remove"]); c.add_argument("text")
     i = sub.add_parser("init"); i.add_argument("token"); i.add_argument("value", type=float)
     for name in ("reveal", "hide", "remove"):
         sub.add_parser(name).add_argument("token")
     sub.add_parser("end")
     im = sub.add_parser("image"); im.add_argument("mode", nargs="?", choices=["on", "off"])
+    dp = sub.add_parser("do"); dp.add_argument("cmds", nargs="+")
     args = p.parse_args(argv)
 
     handlers = {"add": cmd_add, "next": cmd_next, "move": cmd_move, "dist": cmd_dist,
                 "threat": cmd_threat, "hp": cmd_hp, "cond": cmd_cond, "init": cmd_init,
                 "reveal": cmd_flag, "hide": cmd_flag, "remove": cmd_flag, "end": cmd_end,
-                "image": cmd_image}
+                "image": cmd_image, "attack": cmd_attack, "log": cmd_log, "events": cmd_events}
+    if args.command == "do":
+        import shlex
+        for c in args.cmds:
+            print(f"$ {c}")
+            rc = main(["-c", args.campaign] + shlex.split(c))
+            if rc:
+                return rc
+        return 0
     try:
         if args.command == "new":
             if not args.mapfile and not args.blank:

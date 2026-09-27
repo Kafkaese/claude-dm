@@ -17,7 +17,7 @@ Session number: `NN` = "Sessions played" in `campaign.md` + 1, zero-padded to tw
 - `campaign.md`, `players/session-zero.md`, `players/party.md`, `players/characters/*`, and the latest `players/recaps/` file
 - `library/<system>/rules/` quick references relevant to play
 
-**Don't open `dm/` files in the main session.** Their names and contents are spoilers.
+**Don't open `dm/` files in the main session** in the Claude Code UI: their names and contents are spoilers. **In `play.py` mode** (tool calls are hidden), skip the gm-screen brief. Read what the brief would contain yourself, and write `dm/screen-digest.md` if you like (see `.claude/agents/gm-screen.md`, task `brief`), then create the session log and set the status as below.
 
 **Missing prep:** if there's no `dm/session-prep/session-NN-prep.md` (and it isn't session 1), tell the player "One moment, I'm preparing the session." Delegate to the **dm-scribe** agent (wait for the result: `run_in_background: false`): "campaign `<slug>`: advance the world if not yet done since session NN-1, then prep session NN".
 

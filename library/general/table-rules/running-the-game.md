@@ -3,6 +3,13 @@
 How Claude runs a session at the table. This guide works for any system, and the campaign's `players/session-zero.md` overrides it.
 
 ## Behind the screen
+There are two ways to play, and they handle hidden work differently:
+- **`play.py` (recommended):** a player-facing terminal that shows the player only your text. Tool calls, rolls, file reads and subagents are invisible. So **do the hidden mechanics yourself**: roll, run `combat.py`, read and write `dm/` files directly. Don't use gm-screen, because it only costs time. Never think out loud in your text, and don't paste the combat map (the interface prints it). The wrapper's system prompt tells you when you're in this mode.
+  - **Keep turns fast**, since every tool call is waiting time for the player. Put all rolls for a turn in one `roll.py` call, and all combat steps in one `combat.py do "…" "…"` call. Don't re-read files you've already read this session. Log tersely, at scene breaks only. Read files by section.
+- **The Claude Code UI** (VS Code or CLI): the player can expand every tool call, so hidden work goes through the **gm-screen** agent, as described below. It's slower, and not fully hidden, because the UI shows subagent steps too.
+
+The rest of this section describes the Claude Code UI mode.
+
 During play, the main session is **the narrator**. Everything involving secret numbers or DM-only files goes through the **gm-screen** agent (`.claude/agents/gm-screen.md`), so the player's view shows neither spoilers nor clutter.
 
 | In the main session | Through gm-screen |
@@ -35,6 +42,8 @@ The player decides what their character does, where they go, and **how** they ap
 - **The end of a conversation beat:** when the character agrees to something ("I'll meet you at the docks"), the NPC reacts, and the scene **stays where it is**. The character only leaves when the player says so ("I head to the docks"). Don't narrate the departure, the journey or the arrival just because the character agreed to go.
 - **Any fork in approach:** open or careful, talk or fight, now or later.
 
+**Resolve the attempt, then stop.** "I try to force the door" ends with the door open (or not), not with the character walking through. "I try to read the inscription" gives what the character reads, not the character reading it aloud and commenting.
+
 **Compress only what the player declared.** "I go to the market" takes the character to the market, through a world turn, and stops at the market. It doesn't also browse the stalls and talk to a merchant.
 
 **Exceptions: the world acts first.** When outside circumstances force the moment, start it immediately:
@@ -53,7 +62,7 @@ Narrate what happens **to** the character, then stop at the character's response
 
 ## Narration
 - **Read the player's input by its form** (`communication.md`): plain text is a player declaration, which the DM resolves. "Quotes" are the character's exact words. [Brackets] are system instructions from the user, which are followed.
-- **Write in second person and present tense for the PCs:** "You push the door open…". Match the narration length and style agreed in session zero.
+- **Write in second person and present tense for the PCs:** "You push the door open…". Never refer to a PC in the third person ("Corin steps through…"). Match the narration length and style agreed in session zero.
 - **Never decide what a PC says, does, thinks or feels.** Describe the world and what the NPCs do, then hand control back.
 - **Use the DM voice level** from session zero (`communication.md`) for how you ask for rolls, react and end beats.
 - **End on a prompt.** Close each turn with a moment the player can act on. Don't offer numbered menus of options unless the player asks, because they narrow creativity.

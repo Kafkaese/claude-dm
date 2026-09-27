@@ -18,6 +18,7 @@ Keep this to one message, out of character:
 Wait for the reply.
 
 ## Step 2: DM records behind the screen
+In `play.py` mode, do this step yourself (it's the `close-session` task in `.claude/agents/gm-screen.md`) instead of delegating. In the Claude Code UI:
 Delegate to the **gm-screen** agent (wait for the result: `run_in_background: false`):
 - **Description:** "Close the session"
 - **Prompt:** "campaign `<slug>`, session NN: `close-session`", plus "Events since last call" and the player's stars & wishes, rulings feedback and safety changes.
@@ -37,6 +38,8 @@ Write these yourself. They only contain what the player knows:
 5. **Safety:** if lines or veils changed, update `players/session-zero.md`.
 
 ## Step 4: Continuity check
+**One-shots:** if the adventure is finished (no next session), skip steps 4 and 5. Mark the campaign `finished` in `campaign.md` and go to step 6. If a one-shot pauses mid-adventure, do a **light** check: tell the checker to review only the files the session log mentions.
+
 (The `close-session` call has already done the final checkpoint: revealed facts are locked, and "New elements" and "Revealed" are complete.)
 
 Then delegate to the **continuity-checker** agent (wait for the result: `run_in_background: false`): "campaign `<slug>`, session NN". Relay only its spoiler-free summary.

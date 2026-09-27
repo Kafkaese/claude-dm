@@ -45,4 +45,4 @@ When it reports back:
 
 The user is probably a player too, so **don't reveal what's in `dm/`**. Say that the secret campaign plan and the opening adventure are ready, but share no details. Only share them if the user explicitly asks, and warn about spoilers first.
 
-Summarize the files meant for players: pitch, setting primer and character creation rules. Read and show them. Then say that the next step is for the player to build their character using `players/character-creation.md`, and to register it with `/add-character` once it's done.
+Summarize the files meant for players: pitch, setting primer and character creation rules. Read and show them. Then say that the next step is for the player to build their character using `players/character-creation.md`, and to register it with `/add-character` once it's done. **Don't start playing here.** When the player is ready, run `/start-session`, even if they just say "let's go". It loads the table rules for play.

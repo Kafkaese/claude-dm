@@ -43,17 +43,22 @@ python3 scripts/roll.py -c <camp> -H --table campaigns/<camp>/dm/tables/<region>
 
 # combat (tokens: PCs uppercase, others lowercase+digit; squares like D4)
 python3 scripts/combat.py -c <camp> new campaigns/<camp>/dm/combat/maps/<map>.txt   # or: new --blank 10x8
-python3 scripts/combat.py -c <camp> add g1 "Goblin" --pos D4 --init 15 --hp 6 --ac 16 --cr 1/3 --ref library/pf1e/bestiary/goblin.md [--hidden] [--side enemy|pc|ally] [--size 2] [--reach 10] [--speed 30]
+python3 scripts/combat.py -c <camp> add g1 "Goblin" --pos D4 --init 15 --hp 6 --ac 16 --cr 1/3 --ref library/pf1e/bestiary/goblin.md [--hidden] [--side enemy|pc|ally] [--size 2] [--reach 10] [--speed 30] [--dr 5] [--con 14]
 python3 scripts/combat.py -c <camp> move C E5      # path, feet used, AoO warning
 python3 scripts/combat.py -c <camp> dist C g1      # feet, also squares: dist C D4
 python3 scripts/combat.py -c <camp> threat g1      # who threatens / flanks it
-python3 scripts/combat.py -c <camp> hp g1 -7       # or +5
+python3 scripts/combat.py -c <camp> attack g1 C --roll "1d20+4" --dmg "1d6+1" --name spear [--crit 19 --mult 2]
+python3 scripts/combat.py -c <camp> attack C g1 --total 17 --damage 9 --name rapier [--nat 20 --confirm 18]
+python3 scripts/combat.py -c <camp> log "The goblin drops its spear and begs."
+python3 scripts/combat.py -c <camp> events         # player-safe combat log lines since last call (paste these)
+python3 scripts/combat.py -c <camp> hp g1 -7       # or +5 [--why "cure light wounds"]
 python3 scripts/combat.py -c <camp> cond g1 add prone      # / remove
 python3 scripts/combat.py -c <camp> next | reveal g1 | hide g1 | remove g1 | init g1 12
 python3 scripts/combat.py -c <camp> show           # player view (paste this)
 python3 scripts/combat.py -c <camp> show --dm      # never paste
 python3 scripts/combat.py -c <camp> image on       # live PNG, if session zero wants it
 python3 scripts/combat.py -c <camp> end            # summary + XP, archives the state
+python3 scripts/combat.py -c <camp> do "move g1 D4" "hp C -6" "next" "show"   # several steps, ONE call
 ```
 
 ## Tasks

@@ -26,6 +26,15 @@
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/web_allowlist.py\""
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/agent_foreground.py\""
+          }
+        ]
       }
     ]
   }
