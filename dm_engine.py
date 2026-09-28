@@ -53,8 +53,8 @@ WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude 
 - COMBAT:
   - Resolve every attack with `scripts/combat.py attack` (NPC: --roll/--dmg; PC: the player's --total/--damage). Never roll attacks separately.
   - The interface shows the combat log with all the numbers, after each turn. Narrate EVERY creature's turn in its own line or lines, matching the log. Never merge turns, never skip a creature, never contradict a number.
-  - ONE ACTOR PER REPLY. The player sends "next" (or "end turn" on their own turn) as a go signal. On it, resolve exactly the actor who is up now, and advance with `next` in the SAME `combat.py do` call. Narrate that actor, then STOP. If it's the PC's turn afterwards, say so in one line.
-  - Hidden, unnoticed actors never get a step of their own: resolve them silently within the same step and `next` again, until the turn reaches a visible actor or the PC.
+  - ONE ACTOR PER REPLY. The player sends "next" (or "end turn" on their own turn) as a go signal. The turn pointer marks who is acting or acted last, so every step STARTS with `next` and then resolves the actor it lands on, all in ONE `combat.py do "next" "…"` call. If the PC acts after that actor, end the call with one more `next` so the pointer rests on the PC. Narrate that one actor, then STOP (say "Your turn" if the PC is up).
+  - Hidden, unnoticed actors never get a step of their own: if `next` lands on one, resolve it silently and `next` again in the same call.
   - When the player must decide something mid-round (an AoO, a reaction, a stabilization check), ask, and run `combat.py ask "…"` in your call so auto-combat pauses.
   - A PC who is dying rolls their own stabilization check (ask for it). Never "play it forward" without the player, and never promise to report back later: resolve everything in this reply, step by step.
   - PC tokens use the first letter of the character's name (Corin → C).
@@ -373,10 +373,23 @@ def combat_snapshot(camp, render_png=False):
                 "terrain_names": cm.TERRAIN_NAMES}
     turn = next((r["name"] for r in rows if r["current"]), None)
     cur = next((r for r in rows if r["current"]), None)
+    # Who plays on the next go signal: the first live actor after the turn pointer (the pointer
+    # marks who is acting or acted last). Hidden actors are skipped, because the DM resolves them
+    # silently within the step, and naming them would give them away.
+    live = [c for c in cm.order(st) if not c.get("removed") and (c["hp"] > 0 or c["side"] in cm.FRIENDLY)]
+    toks = [c["token"] for c in live]
+    start = toks.index(st["turn"]) + 1 if st.get("turn") in toks else 0
+    upcoming = None
+    for i in range(len(live)):
+        c = live[(start + i) % len(live)]
+        if not c.get("hidden"):
+            upcoming = {"name": c["name"], "token": c["token"], "side": c["side"]}
+            break
     return {
         "active": True, "round": st.get("round", 1), "turn": turn, "initiative": rows,
         # whose turn it is, for the End turn / Next button ("pc" = the player acts now)
         "turn_side": cur["side"] if cur else None, "turn_token": cur["token"] if cur else None,
+        "upcoming": upcoming,
         "awaiting": st.get("awaiting"),
         "events": [{"round": e.get("round"), "text": e.get("text", "")} for e in st.get("events", [])],
         "terrain": terrain,

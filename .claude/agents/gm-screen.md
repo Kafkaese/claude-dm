@@ -71,7 +71,7 @@ python3 scripts/combat.py -c <camp> do "move g1 D4" "hp C -6" "next" "show"   # 
 - `add` every token with `--ref` pointing to its stat block file. Use `--hidden` for enemies the PCs can't see, and `image on` if session zero wants it.
 - Return the player view, plus what the PCs perceive: only the visible enemies, described.
 
-**enemy-turns.** Resolve every non-PC turn until the next PC turn:
+**enemy-turns.** One step, see `combat.md`: `next`, then resolve exactly the ONE non-PC actor it lands on (hidden, unnoticed ones silently, then `next` again), and another `next` at the end if the PC is up after it:
 - Play tactics by each creature's nature and what it knows, not by what the DM knows. Include morale.
 - Update HP and conditions with `combat.py`, and `next` through the order.
 - **Stop** as soon as the PC has a real choice to make (an attack of opportunity without a standing order, a readied or immediate action), and report what's needed.

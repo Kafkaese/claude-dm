@@ -325,11 +325,12 @@ function updateTurnButton() {
   if (!c.active) return;
   const label = document.getElementById("turn-label");
   turnBtn.classList.toggle("end", sig === "end turn");
+  const up = c.upcoming;   // who plays on the next signal (computed by the server, hidden ones skipped)
   if (c.awaiting) label.textContent = "Answer the DM";
   else if (sig === "end turn") label.textContent = "End turn";
-  else label.textContent = c.turn ? `Next: ${c.turn}` : "Next turn";
+  else label.textContent = up ? `Next: ${up.name}` : "Next turn";
   turnBtn.disabled = busy || !sig;
-  turnBtn.setAttribute("aria-label", sig === "end turn" ? "End your turn" : (c.turn ? `Play ${c.turn}'s turn` : "Play the next turn"));
+  turnBtn.setAttribute("aria-label", sig === "end turn" ? "End your turn" : (up ? `Play ${up.name}'s turn` : "Play the next turn"));
 }
 turnBtn.addEventListener("click", () => {
   const sig = turnSignal();
@@ -340,7 +341,7 @@ turnBtn.addEventListener("click", () => {
 function maybeAuto() {
   clearTimeout(autoTimer);
   if (!autoBox.checked || busy || turnSignal() !== "next") return;
-  const key = `${combatState.round}:${combatState.turn_token}`;
+  const key = `${combatState.round}:${combatState.turn_token}:${combatState.events ? combatState.events.length : 0}`;
   if (key === lastAutoKey) return;   // the turn didn't advance since the last auto signal: don't loop
   autoTimer = setTimeout(() => {
     if (!autoBox.checked || busy || turnSignal() !== "next") return;
