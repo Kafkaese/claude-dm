@@ -1,3 +1,9 @@
 .play/
 
+# campaigns, rules and lore
 campaigns
+library
+~library/general
+
+# python
+**/__pycache__
