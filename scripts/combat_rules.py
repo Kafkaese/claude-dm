@@ -123,6 +123,125 @@ def expire(st, token_now, round_now):
     return gone
 
 
+# ---------- profile validation ----------
+
+def schema_for(system="pf1e"):
+    path = PROJECT / "library" / system / "combat-profile.schema.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
+
+
+_TYPES = {"object": dict, "array": list, "string": str, "boolean": bool, "null": type(None)}
+
+
+def _is_type(v, t):
+    if t == "integer":
+        return isinstance(v, int) and not isinstance(v, bool)
+    if t == "number":
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+    return isinstance(v, _TYPES[t])
+
+
+def _validate(v, s, path, errs):
+    """A small JSON Schema subset: type, enum, required, properties, additionalProperties,
+    patternProperties, items, minItems, minimum, maximum, pattern, anyOf."""
+    if "anyOf" in s:
+        if not any(not _validate(v, sub, path, []) for sub in s["anyOf"]):
+            errs.append(f"{path}: doesn't match any allowed form")
+        return errs
+    t = s.get("type")
+    if t and not any(_is_type(v, x) for x in (t if isinstance(t, list) else [t])):
+        errs.append(f"{path}: should be {t}, got {type(v).__name__} ({json.dumps(v)[:40]})")
+        return errs
+    if "enum" in s and v not in s["enum"]:
+        errs.append(f"{path}: {json.dumps(v)} is not one of {s['enum']}")
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        if "minimum" in s and v < s["minimum"]:
+            errs.append(f"{path}: {v} is below the minimum {s['minimum']}")
+        if "maximum" in s and v > s["maximum"]:
+            errs.append(f"{path}: {v} is above the maximum {s['maximum']}")
+    if isinstance(v, str) and "pattern" in s and not re.match(s["pattern"], v):
+        errs.append(f"{path}: {v!r} doesn't match {s['pattern']}")
+    if isinstance(v, list):
+        if len(v) < s.get("minItems", 0):
+            errs.append(f"{path}: needs at least {s['minItems']} item(s)")
+        if "items" in s:
+            for i, x in enumerate(v):
+                _validate(x, s["items"], f"{path}[{i}]", errs)
+    if isinstance(v, dict):
+        for k in s.get("required", []):
+            if k not in v:
+                errs.append(f"{path}: missing required field '{k}'")
+        props, pats = s.get("properties", {}), s.get("patternProperties", {})
+        for k, x in v.items():
+            if k in props:
+                _validate(x, props[k], f"{path}.{k}", errs)
+                continue
+            pat = next((p for p in pats if re.match(p, k)), None)
+            if pat:
+                _validate(x, pats[pat], f"{path}.{k}", errs)
+            elif s.get("additionalProperties") is False:
+                errs.append(f"{path}: unknown field '{k}'" + (f" (allowed: {', '.join(props)})" if props else ""))
+            elif isinstance(s.get("additionalProperties"), dict):
+                _validate(x, s["additionalProperties"], f"{path}.{k}", errs)
+    return errs
+
+
+def check_profile(p, system="pf1e"):
+    """Returns (errors, warnings) for a combat profile: the schema plus checks it can't express."""
+    schema = schema_for(system)
+    errs = _validate(p, schema, "profile", []) if schema else []
+    warns = [] if schema else [f"no schema at library/{system}/combat-profile.schema.json; only basic checks"]
+    if not isinstance(p, dict):
+        return errs or ["profile: must be a JSON object"], warns
+    import random
+    from roll import evaluate, RollError
+    if p.get("kind") == "creature" and "attacks" not in p:
+        errs.append("profile: a creature needs 'attacks' (it may be empty: {})")
+    attacks = p.get("attacks") or {}
+    for name, a in attacks.items():
+        if not isinstance(a, dict):
+            continue
+        if name != name.lower():
+            warns.append(f"attacks.{name}: use lowercase names ({name.lower()!r}) so --with matches easily")
+        if isinstance(a.get("damage"), str):
+            try:
+                evaluate(a["damage"], random.Random(0))
+            except (RollError, ValueError) as e:
+                errs.append(f"attacks.{name}.damage: {a['damage']!r} isn't a dice expression ({e})")
+        if (a.get("type") == "ranged" or a.get("thrown")) and "range" not in a:
+            errs.append(f"attacks.{name}: ranged and thrown attacks need 'range' (the range increment from the weapon table)")
+    for n in p.get("full_attack") or []:
+        if n not in attacks:
+            errs.append(f"full_attack: '{n}' isn't in attacks ({', '.join(attacks) or 'none'})")
+    for k in ("touch", "ff"):
+        if isinstance(p.get(k), int) and isinstance(p.get("ac"), int) and p[k] > p["ac"]:
+            warns.append(f"{k} {p[k]} is higher than ac {p['ac']}: double-check the stat block")
+    if isinstance(p.get("max_hp"), int) and isinstance(p.get("hp"), int) and p["hp"] > p["max_hp"]:
+        errs.append(f"hp {p['hp']} is above max_hp {p['max_hp']}")
+    for i, sc in enumerate(p.get("spellcasting") or []):
+        if not isinstance(sc, dict):
+            continue
+        slots, spells = sc.get("slots") or {}, sc.get("spells") or {}
+        for lvl, lst in spells.items():
+            if lvl not in slots:
+                errs.append(f"spellcasting[{i}].spells.{lvl}: level {lvl} has spells but no slots")
+            elif sc.get("type") == "prepared" and lvl != "0" and len(lst) > slots[lvl]:
+                errs.append(f"spellcasting[{i}]: {len(lst)} level-{lvl} spells prepared but only {slots[lvl]} slots")
+        for lvl, sp in (sc.get("domain") or {}).items():
+            if sp not in (spells.get(lvl) or []):
+                warns.append(f"spellcasting[{i}].domain.{lvl}: {sp!r} should also be in the level-{lvl} spell list")
+        if sc.get("type") == "prepared" and not spells:
+            errs.append(f"spellcasting[{i}]: a prepared caster needs its prepared 'spells'")
+    for i, s in enumerate(p.get("sla") or []):
+        if isinstance(s, dict) and s.get("per_day") not in ("constant",) and "level" not in s:
+            warns.append(f"sla[{i}] {s.get('name')!r}: no 'level', so concentration checks assume level 0")
+    return errs, warns
+
+
+def profile_text_blocks(text):
+    return re.findall(r"```combat-profile\s*\n(.*?)\n```", text, re.S)
+
+
 # ---------- profiles ----------
 
 def load_profile(ref):

@@ -64,7 +64,9 @@ save types, prerequisites, and full stat blocks. Cut flavor text.>
 <Errata, source conflicts, common rulings, or house-rule interactions.>
 ```
 
-- **Monsters and NPC stat blocks:** the full stat block, including tactics and morale if given, **plus a ` ```combat-profile ` JSON block** taken exactly from it, which `combat.py` reads. The format is in `library/general/table-rules/combat.md` ("Combat profiles"). Include init, hp, ac, touch, ff, cmb, cmd, saves, speed, size (1 = Medium or smaller, 2 = Large, …), reach, dr, con, dex, feats, uncanny_dodge, attacks (bonus, damage, crit, mult, type, range for ranged or thrown) and full_attack.
+- **Monsters and NPC stat blocks:** the full stat block, including tactics and morale if given, **plus a ` ```combat-profile ` JSON block** taken exactly from it, which `combat.py` reads.
+  - Follow `library/<system>/combat-profile-guide.md`, which covers the translation line by line, including spellcasting and spell-like abilities. The schema is `library/<system>/combat-profile.schema.json`.
+  - After saving, run `python3 scripts/combat.py -c <campaign> profile check <file>` and fix every error before you report back.
 - **Rules:** one topic per file.
 - **Lore:** update the relevant file in the setting folder, e.g. a region or deity file. Mark any paragraphs taken from an adventure with `[AP: <name>]`.
 

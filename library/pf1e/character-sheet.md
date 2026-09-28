@@ -22,7 +22,7 @@
 ## Combat profile
 Read by `scripts/combat.py` (`add C … --ref players/characters/<slug>.md`). Keep it in sync with the numbers above, and update it on every level-up or gear change. The player rolls their own attacks, so only the defensive numbers are needed:
 ```combat-profile
-{"init": 0, "hp": 0, "max_hp": 0, "ac": 0, "touch": 0, "ff": 0, "cmd": 0,
+{"kind": "pc", "init": 0, "hp": 1, "max_hp": 1, "ac": 0, "touch": 0, "ff": 0, "cmd": 0,
  "saves": {"fort": 0, "ref": 0, "will": 0}, "con": 10, "dex": 10, "speed": 30, "size": 1,
  "reach": 5, "uncanny_dodge": false, "feats": []}
 ```

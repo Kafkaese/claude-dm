@@ -55,6 +55,10 @@ python3 scripts/combat.py -c <camp> area burst 10 --at D4 --save ref --dc 13 --d
 python3 scripts/combat.py -c <camp> save C --total 17          # a PC's pending save; NPC: save g1 will --dc 14
 python3 scripts/combat.py -c <camp> stabilize C --total 12     # a dying PC's check (NPCs roll their own on `next`)
 python3 scripts/combat.py -c <camp> move C C4 --step           # 5-foot step; normal moves roll NPC AoOs automatically
+python3 scripts/combat.py -c <camp> cast s1 "magic missile" [--defensive]   # spends the slot, provokes, concentration
+python3 scripts/combat.py -c <camp> sla s1 darkness            # spell-like ability; `spells s1` shows what's left
+python3 scripts/combat.py -c <camp> provoke C --reason "casting a spell"     # AoOs a creature provokes (e.g. a PC casting)
+python3 scripts/combat.py -c <camp> profile check library/pf1e/bestiary/goblin.md   # validate a combat profile
 python3 scripts/combat.py -c <camp> log "The goblin drops its spear and begs."
 python3 scripts/combat.py -c <camp> events         # player-safe combat log lines since last call (paste these)
 python3 scripts/combat.py -c <camp> hp g1 -7       # or +5 [--why "cure light wounds"]

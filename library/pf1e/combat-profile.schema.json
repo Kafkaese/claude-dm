@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PF1e combat profile",
+  "description": "The ```combat-profile block in a stat block or character sheet, read by scripts/combat.py. How to translate a PF1e stat block into it: library/pf1e/combat-profile-guide.md. Check a file with: python3 scripts/combat.py -c <campaign> profile check <file>.",
+  "type": "object",
+  "required": ["kind", "init", "hp", "ac", "touch", "ff", "saves"],
+  "additionalProperties": false,
+  "properties": {
+    "kind": {"enum": ["creature", "pc"], "description": "creature: NPCs and monsters (the DM rolls their attacks). pc: player characters (the player rolls; only defensive numbers needed)."},
+    "init": {"type": "integer", "description": "Init modifier."},
+    "hp": {"type": "integer", "minimum": 1, "description": "Hit points as listed (a PC's current HP lives on the sheet's HP line)."},
+    "max_hp": {"type": "integer", "minimum": 1},
+    "ac": {"type": "integer"},
+    "touch": {"type": "integer"},
+    "ff": {"type": "integer", "description": "Flat-footed AC."},
+    "cmb": {"type": "integer"},
+    "cmd": {"type": "integer"},
+    "saves": {
+      "type": "object", "required": ["fort", "ref", "will"], "additionalProperties": false,
+      "properties": {"fort": {"type": "integer"}, "ref": {"type": "integer"}, "will": {"type": "integer"}}
+    },
+    "save_notes": {"type": "array", "items": {"type": "string"}, "description": "Conditional save bonuses, e.g. '+2 vs. fear'. Not automated: the DM applies them."},
+    "ac_notes": {"type": "array", "items": {"type": "string"}, "description": "Conditional AC bonuses, e.g. '+4 dodge vs. giants'."},
+    "speed": {"type": "integer", "minimum": 0, "description": "Base land speed in feet."},
+    "speeds": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"fly": {"type": "integer"}, "swim": {"type": "integer"}, "climb": {"type": "integer"}, "burrow": {"type": "integer"},
+                     "fly_maneuverability": {"enum": ["clumsy", "poor", "average", "good", "perfect"]}}
+    },
+    "size": {"type": "integer", "enum": [1, 2, 3, 4], "description": "Squares per side: 1 = Medium or smaller, 2 = Large, 3 = Huge, 4 = Gargantuan."},
+    "reach": {"type": "integer", "minimum": 0, "description": "Natural reach in feet (the second number of Space/Reach)."},
+    "dr": {"type": "integer", "minimum": 0, "description": "Damage reduction amount (hardness for objects). combat.py subtracts it from every hit."},
+    "dr_bypass": {"type": "string", "description": "What overcomes the DR, e.g. 'magic', 'silver', 'cold iron/good', '-' for DR x/-. Not automated yet."},
+    "resist": {"type": "object", "additionalProperties": {"type": "integer"}, "description": "Energy resistance, e.g. {\"fire\": 10}. Not automated yet."},
+    "immune": {"type": "array", "items": {"type": "string"}, "description": "Immunities, e.g. ['fire', 'sleep', 'mind-affecting']. Not automated yet."},
+    "sr": {"type": "integer", "minimum": 0, "description": "Spell resistance. Not automated yet."},
+    "fast_healing": {"type": "integer", "minimum": 0},
+    "regeneration": {"type": "object", "required": ["amount"], "additionalProperties": false,
+                     "properties": {"amount": {"type": "integer"}, "stopped_by": {"type": "string"}}},
+    "con": {"type": ["integer", "null"], "description": "Constitution score (null for undead/constructs)."},
+    "dex": {"type": ["integer", "null"], "description": "Dexterity score (extra AoOs with Combat Reflexes)."},
+    "feats": {"type": "array", "items": {"type": "string"}, "description": "At least those the script uses: Combat Reflexes, Precise Shot, Improved Initiative. Listing all is fine."},
+    "uncanny_dodge": {"type": "boolean"},
+    "aoo": {"type": "integer", "minimum": 0, "description": "AoOs per round, only if it differs from the rules (1, +Dex with Combat Reflexes)."},
+    "attacks": {
+      "type": "object", "description": "One entry per distinct attack. Required for kind creature (may be empty for a creature that doesn't attack).",
+      "additionalProperties": {
+        "type": "object", "required": ["bonus", "damage", "type"], "additionalProperties": false,
+        "properties": {
+          "bonus": {"anyOf": [{"type": "integer"}, {"type": "array", "items": {"type": "integer"}, "minItems": 1}], "description": "Total attack bonus; a list for iterative attacks (+6/+1 -> [6, 1])."},
+          "damage": {"type": "string", "pattern": "^[0-9d+\\- ]+$", "description": "Dice expression, e.g. '1d8+4'. Riders go in 'rider'."},
+          "type": {"enum": ["melee", "ranged"]},
+          "touch": {"type": "boolean", "description": "A touch attack (e.g. a spell or incorporeal touch)."},
+          "crit": {"type": "integer", "minimum": 2, "maximum": 20, "description": "Lowest number of the threat range: /19-20 -> 19. Default 20."},
+          "mult": {"type": "integer", "minimum": 2, "maximum": 4, "description": "Crit multiplier: /x3 -> 3. Default 2."},
+          "range": {"type": "integer", "minimum": 5, "description": "Range increment in feet. Required for ranged and thrown attacks (from the weapon table)."},
+          "thrown": {"type": "boolean"},
+          "reach": {"type": "integer", "description": "Reach of this attack, if it differs from the creature's (e.g. a longspear)."},
+          "damage_type": {"type": "string", "description": "e.g. 'S', 'P', 'B', 'P/S', 'fire'."},
+          "rider": {"type": "string", "description": "What happens on a hit besides damage, e.g. 'plus trip', 'plus poison (DC 13 Fort, 1d2 Str)', 'plus 1d6 fire'. Not automated: the DM applies it."},
+          "nonlethal": {"type": "boolean"}
+        }
+      }
+    },
+    "full_attack": {"type": "array", "items": {"type": "string"}, "description": "Attack names used in a full attack, repeated as often as they're made ('2 claws' -> ['claw', 'claw']). Omit if the only full attack is one weapon's iterative bonuses."},
+    "spellcasting": {
+      "type": "array", "description": "One entry per spellcasting class or source.",
+      "items": {
+        "type": "object", "required": ["class", "cl", "concentration", "type", "dc_base", "slots"], "additionalProperties": false,
+        "properties": {
+          "class": {"type": "string", "description": "e.g. 'sorcerer', 'cleric', 'adept'."},
+          "cl": {"type": "integer", "minimum": 1},
+          "concentration": {"type": "integer", "description": "The concentration bonus from the stat block (CL + casting ability modifier, plus feats)."},
+          "type": {"enum": ["prepared", "spontaneous"]},
+          "dc_base": {"type": "integer", "description": "10 + casting ability modifier; a spell's DC is dc_base + spell level."},
+          "slots": {"type": "object", "patternProperties": {"^[0-9]$": {"type": "integer", "minimum": 0}}, "additionalProperties": false,
+                    "description": "Spells per day by level (spontaneous), or the number of prepared spells per level (prepared). Level 0 is at will: use 99."},
+          "spells": {"type": "object", "patternProperties": {"^[0-9]$": {"type": "array", "items": {"type": "string"}}}, "additionalProperties": false,
+                     "description": "Prepared: the prepared list, repeated per copy ('sleep' twice if prepared twice). Spontaneous: spells known."},
+          "domain": {"type": "object", "patternProperties": {"^[1-9]$": {"type": "string"}}, "additionalProperties": false, "description": "Domain spell per level (clerics)."}
+        }
+      }
+    },
+    "sla": {
+      "type": "array", "description": "Spell-like abilities.",
+      "items": {
+        "type": "object", "required": ["name", "per_day"], "additionalProperties": false,
+        "properties": {
+          "name": {"type": "string"},
+          "per_day": {"anyOf": [{"type": "integer", "minimum": 1}, {"enum": ["at will", "constant"]}]},
+          "cl": {"type": "integer"},
+          "dc": {"type": "integer"},
+          "level": {"type": "integer", "minimum": 0, "maximum": 9, "description": "Spell level (for concentration DCs)."},
+          "concentration": {"type": "integer", "description": "Concentration bonus from the Spell-Like Abilities line (defaults to the CL)."}
+        }
+      }
+    },
+    "special": {"type": "array", "items": {"type": "string"}, "description": "Other combat-relevant abilities in one line each, e.g. 'ferocity', 'pounce', 'grab (Medium)'. Not automated."},
+    "source": {"type": "string", "description": "Where the numbers come from, e.g. 'Bestiary pg. 156'."}
+  }
+}

@@ -42,7 +42,7 @@ Never draw the map by hand, and never count squares in your head. `scripts/comba
 
 **Combat profiles.** Every combatant gets its numbers from a ` ```combat-profile ` JSON block in its stat block (`library/<system>/bestiary/…`, a campaign NPC file) or character sheet (`players/characters/…`):
 ```combat-profile
-{"init": 6, "hp": 6, "ac": 16, "touch": 13, "ff": 14, "cmb": 1, "cmd": 13,
+{"kind": "creature", "init": 6, "hp": 6, "ac": 16, "touch": 13, "ff": 14, "cmb": 1, "cmd": 13,
  "saves": {"fort": 3, "ref": 2, "will": -1}, "speed": 30, "size": 1, "reach": 5, "dr": 0,
  "con": 12, "dex": 15, "feats": ["Improved Initiative"], "uncanny_dodge": false,
  "attacks": {"short sword": {"bonus": 2, "damage": "1d4", "crit": 19, "mult": 2, "type": "melee"},
@@ -50,6 +50,17 @@ Never draw the map by hand, and never count squares in your head. `scripts/comba
  "full_attack": ["short sword"]}
 ```
 Iterative attacks use a list: `"bonus": [10, 5]`. Natural attacks go in `full_attack`, e.g. `["bite", "claw", "claw"]`. A PC's profile only needs the defensive numbers (AC, touch, flat-footed, saves, Con, init), because the player rolls their own attacks. **If a stat block has no profile yet, add one before the fight,** taken exactly from the stat block. That's a one-time cost that makes every attack after it cheaper and error-free.
+
+**The format is fixed by a schema** (`library/<system>/combat-profile.schema.json`: required and optional fields, types, allowed values). **The translation rules** are in `library/<system>/combat-profile-guide.md`: the stat block line by line, crit ranges, iterative and natural attacks, riders, range increments, spellcasting and spell-like abilities. Check every new or edited profile with `combat.py profile check <file>`. `add` validates too, and rejects a broken profile with a list of what to fix.
+
+**Spellcasters:** their `spellcasting` and `sla` entries are tracked per fight.
+- `cast s1 "magic missile"` spends a slot (spontaneous) or a prepared copy.
+- **Casting while threatened provokes AoOs.** NPC attacks are rolled, and a PC's AoO opens a question. Damage from them forces a concentration check.
+- `--defensive` casts defensively (concentration DC 15 + 2 × spell level).
+- `sla s1 darkness` does the same for spell-like abilities.
+- `spells s1` shows what's left.
+- The player's log only says "casts a spell". Whether the PC identifies it is a Spellcraft matter, so narrate that separately.
+- **A PC casting in melee:** `provoke C --reason "casting a spell"`. NPCs take their AoOs, and damage opens the PC's concentration question.
 
 **Setup:**
 - Use a prepared map from `dm/combat/maps/` if the prep has one, or write a quick map file. Otherwise use `--blank WxH`.

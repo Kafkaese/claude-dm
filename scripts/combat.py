@@ -48,6 +48,18 @@ Play
                                   NPCs roll). Failure costs 1 HP; success adds "stable"
   order TOKEN aoo always|never|ask
                                   a PC's standing order for attacks of opportunity
+  cast TOKEN "SPELL" [--level N] [--class X] [--defensive] [--no-provoke]
+                                  an NPC casts: checks and spends a slot (spontaneous) or a prepared copy,
+                                  provokes AoOs when threatened (or --defensive: concentration DC 15+2x
+                                  level), concentration after damage, reports the save DC. The log only
+                                  says "casts a spell" (identifying it is a Spellcraft matter)
+  sla TOKEN "NAME" [--defensive] [--no-provoke]
+                                  the same for a spell-like ability (uses per day)
+  spells TOKEN                    remaining slots, prepared spells and SLA uses (DM view)
+  provoke TOKEN [--reason "drinking a potion"]
+                                  resolve the AoOs a creature provokes right now (e.g. a PC casting)
+  profile check FILE [FILE …]     validate combat-profile blocks against the system's schema
+                                  (library/<system>/combat-profile.schema.json); add does it too
   log "TEXT"                      add a player-safe line to the combat log
   ask "QUESTION"                  mark that the DM waits for a player decision mid-round (a reaction,
                                   an AoO, a stabilization check). Pauses auto-combat in the web UI;
@@ -814,6 +826,11 @@ def cmd_add(args, st):
             raise CombatError(f"bad combat-profile block in {args.ref}: {e}")
     if args.profile:
         prof.update(json.loads(args.profile))
+    if prof:
+        errs, warns = R.check_profile(prof, campaign_system(args.campaign))
+        if errs:
+            raise CombatError(f"the combat profile for {args.token} has errors (fix the stat block's block, "
+                              f"see library/<system>/combat-profile-guide.md):\n  " + "\n  ".join(errs))
 
     def pick(arg, key, default=None):
         return arg if arg is not None else prof.get(key, default)
@@ -906,6 +923,230 @@ def aoo_left(o):
     return allowed - o.get("aoo_used", 0)
 
 
+def provoke_aoos(st, c, no_aoo=False, reason="provoking"):
+    """Resolve the attacks of opportunity that `c` provokes right now. NPC and ally threateners
+    attack automatically (first melee attack in their profile); a PC's chance opens a question
+    (unless its standing order says never). Returns (lines, damage c took)."""
+    out, hp_before = [], c["hp"]
+    for o in [x for x in st["tokens"] if threatens(x, c)]:
+        if aoo_left(o) <= 0:
+            out.append(f"  {label(o)} could make an AoO but has none left this round")
+            continue
+        if o["side"] == "pc":
+            order = st.get("orders", {}).get(o["token"], {}).get("aoo", "ask")
+            if order == "never":
+                out.append(f"  {label(o)} passes on the AoO (standing order)")
+                continue
+            st["awaiting"] = f"{o['name']}: {who(c)} provokes ({reason}). Take an attack of opportunity? If so, roll it"
+            out.append(f"  {label(o)} may take an AoO on {c['token']} ({reason}): ask the player (question set), "
+                       f"then `attack {o['token']} {c['token']} --total N --damage N --aoo`")
+            continue
+        if no_aoo:
+            out.append(f"  {label(o)} could take an AoO (skipped: --no-aoo)")
+            continue
+        melee = [(k, v) for k, v in ((o.get("profile") or {}).get("attacks") or {}).items()
+                 if v.get("type", "melee") == "melee"]
+        if not melee:
+            out.append(f"  {label(o)} may take an AoO on {c['token']}: no melee attack in its profile, "
+                       f"resolve with `attack {o['token']} {c['token']} --roll … --dmg … --aoo`")
+            continue
+        k, w = melee[0]
+        b = w["bonus"][0] if isinstance(w["bonus"], list) else w["bonus"]
+        o["aoo_used"] = o.get("aoo_used", 0) + 1
+        ns = argparse.Namespace(touch=False, charge=False, ac=None, aoo=True, nonlethal=False,
+                                no_crit=False, total=None, nat=None, confirm=None, damage=None)
+        out.append("  " + _attack_once(ns, st, o, c, k, b, w["damage"], w.get("crit", 20),
+                                       w.get("mult", 2), "melee", w).replace("\n", "\n  "))
+        if c["hp"] <= 0:
+            break
+    return out, max(0, hp_before - c["hp"])
+
+
+def cmd_provoke(args, st):
+    c = token(st, args.token)
+    out, dmg = provoke_aoos(st, c, args.no_aoo, args.reason)
+    if dmg and c["side"] == "pc" and c["hp"] > 0 and "cast" in args.reason.lower():
+        st["awaiting"] = (f"{c['name']} took {dmg} damage while {args.reason}: roll a concentration check "
+                          f"(DC {10 + dmg} + the spell's level) or lose the spell")
+        out.append(f"  {c['name']} must make a concentration check: DC {10 + dmg} + spell level (question set)")
+    return "\n".join([f"{c['token']} provokes ({args.reason})"] + (out or ["  no one threatens it"]))
+
+
+# ---------- spellcasting ----------
+
+def _spent(c):
+    return c.setdefault("spent", {"slots": {}, "prepared": {}, "sla": {}})
+
+
+def _concentration(st, c, bonus, dc, why):
+    total_c, detail, _ = _roll(f"1d20{bonus:+d}")
+    ok = total_c >= dc
+    return ok, f"concentration ({why}) 1d20{bonus:+d} → {detail} = {total_c} vs DC {dc}: {'success' if ok else 'FAILED, the spell is lost'}"
+
+
+def _cast_common(st, c, name, level, conc_bonus, args):
+    """Provoking, defensive casting and concentration. Returns (lines, success)."""
+    out = []
+    threatened = any(threatens(o, c) for o in st["tokens"])
+    if threatened and args.defensive:
+        ok, line = _concentration(st, c, conc_bonus, 15 + 2 * level, "casting defensively")
+        out.append("  " + line)
+        return out, ok
+    if threatened and not args.no_provoke:
+        lines, dmg = provoke_aoos(st, c, False, f"casting {name}")
+        out += lines
+        if c["hp"] <= 0:
+            out.append(f"  {c['token']} goes down; the spell is lost")
+            return out, False
+        if dmg:
+            ok, line = _concentration(st, c, conc_bonus, 10 + dmg + level, f"took {dmg} damage while casting")
+            out.append("  " + line)
+            return out, ok
+    return out, True
+
+
+def cmd_cast(args, st):
+    c = token(st, args.token)
+    spell = args.spell.lower()
+    casters = (c.get("profile") or {}).get("spellcasting") or []
+    if not casters:
+        raise CombatError(f"{c['token']} has no spellcasting in its profile")
+    sp = _spent(c)
+    found = None
+    for sc in casters:
+        if args.cls and sc["class"].lower() != args.cls.lower():
+            continue
+        for lvl, lst in (sc.get("spells") or {}).items():
+            if args.level is not None and int(lvl) != args.level:
+                continue
+            if spell in [x.lower() for x in lst]:
+                found = (sc, int(lvl))
+                break
+        if found:
+            break
+    if not found:
+        raise CombatError(f"{c['token']} doesn't have {args.spell!r}" + (f" at level {args.level}" if args.level is not None else "")
+                          + " in its spells known / prepared")
+    sc, lvl = found
+    key = sc["class"].lower()
+    left_note = ""
+    if lvl > 0:
+        if sc["type"] == "spontaneous":
+            used = sp["slots"].setdefault(key, {}).get(str(lvl), 0)
+            per_day = sc["slots"].get(str(lvl), 0)
+            if used >= per_day:
+                raise CombatError(f"{c['token']} has no level-{lvl} {sc['class']} slots left ({used}/{per_day} used)")
+            sp["slots"][key][str(lvl)] = used + 1
+            left_note = f"level-{lvl} slots left: {per_day - used - 1}/{per_day}"
+        else:
+            prepared = [x.lower() for x in sc["spells"][str(lvl)]].count(spell)
+            cast_n = sp["prepared"].setdefault(key, []).count(spell)
+            if cast_n >= prepared:
+                raise CombatError(f"{c['token']} has already cast every prepared {args.spell!r} ({cast_n}/{prepared})")
+            sp["prepared"][key].append(spell)
+            left_note = f"prepared {args.spell!r} left: {prepared - cast_n - 1}"
+    lines, ok = _cast_common(st, c, args.spell, lvl, sc["concentration"], args)
+    dc = sc["dc_base"] + lvl
+    if not c.get("hidden"):
+        event(st, f"{who(c)} casts a spell" + ("" if ok else ", but loses it"))
+    head = f"{c['token']} casts {args.spell} ({sc['class']} {lvl}, CL {sc['cl']}, save DC {dc}): {'OK' if ok else 'LOST'}"
+    return "\n".join([head] + ([f"  {left_note}"] if left_note else []) + lines)
+
+
+def cmd_sla(args, st):
+    c = token(st, args.token)
+    name = args.name.lower()
+    entry = next((s for s in (c.get("profile") or {}).get("sla") or [] if s["name"].lower() == name), None)
+    if not entry:
+        raise CombatError(f"{c['token']} has no spell-like ability {args.name!r}")
+    sp = _spent(c)
+    per_day = entry["per_day"]
+    note = ""
+    if per_day == "constant":
+        return f"{args.name} is constant: always active, nothing to use"
+    if per_day != "at will":
+        used = sp["sla"].get(name, 0)
+        if used >= per_day:
+            raise CombatError(f"{c['token']} has used {args.name!r} {used}/{per_day} times today")
+        sp["sla"][name] = used + 1
+        note = f"uses left today: {per_day - used - 1}/{per_day}"
+    lvl = entry.get("level", 0)
+    lines, ok = _cast_common(st, c, args.name, lvl, entry.get("concentration", entry.get("cl", 0)), args)
+    if not c.get("hidden"):
+        event(st, f"{who(c)} uses a spell-like ability" + ("" if ok else ", but loses it"))
+    dc = f", DC {entry['dc']}" if entry.get("dc") else ""
+    head = f"{c['token']} uses {args.name} (SLA, CL {entry.get('cl', '?')}{dc}): {'OK' if ok else 'LOST'}"
+    return "\n".join([head] + ([f"  {note}"] if note else []) + lines)
+
+
+def cmd_spells(args, st):
+    c = token(st, args.token)
+    prof = c.get("profile") or {}
+    sp = _spent(c)
+    out = []
+    for sc in prof.get("spellcasting") or []:
+        key = sc["class"].lower()
+        out.append(f"{sc['class']} ({sc['type']}, CL {sc['cl']}, concentration {sc['concentration']:+d}, DC {sc['dc_base']}+level)")
+        for lvl in sorted(sc["slots"], key=int):
+            spells = sc.get("spells", {}).get(lvl, [])
+            if lvl == "0":
+                out.append(f"  0: at will: {', '.join(spells)}")
+            elif sc["type"] == "spontaneous":
+                used = sp["slots"].get(key, {}).get(lvl, 0)
+                out.append(f"  {lvl}: {sc['slots'][lvl] - used}/{sc['slots'][lvl]} left: {', '.join(spells)}")
+            else:
+                cast = list(sp["prepared"].get(key, []))
+                left = []
+                for s in spells:
+                    if s.lower() in cast:
+                        cast.remove(s.lower())
+                    else:
+                        left.append(s)
+                out.append(f"  {lvl}: left {', '.join(left) or 'none'}")
+    for s in prof.get("sla") or []:
+        per = s["per_day"]
+        if isinstance(per, int):
+            per = f"{per - sp['sla'].get(s['name'].lower(), 0)}/{per} left"
+        out.append(f"SLA {s['name']}: {per}")
+    return "\n".join(out) or f"{c['token']} has no spells or spell-like abilities"
+
+
+def campaign_system(campaign):
+    f = PROJECT / "campaigns" / campaign / "campaign.md"
+    if f.exists():
+        m = re.search(r"\*\*System:\*\*\s*([a-z0-9]+)", f.read_text(encoding="utf-8"))
+        if m:
+            return m.group(1)
+    return "pf1e"
+
+
+def cmd_profile(args):
+    """profile check FILE [FILE …]: validate the combat-profile blocks in stat block files."""
+    system = campaign_system(args.campaign)
+    bad = 0
+    lines = []
+    for f in args.files:
+        path = Path(f) if Path(f).is_absolute() else PROJECT / f
+        if not path.exists():
+            lines.append(f"{f}: no such file"); bad += 1; continue
+        blocks = R.profile_text_blocks(path.read_text(encoding="utf-8"))
+        if not blocks:
+            lines.append(f"{f}: NO combat-profile block"); bad += 1; continue
+        for i, b in enumerate(blocks):
+            tag = f"{f}" + (f" (block {i + 1})" if len(blocks) > 1 else "")
+            try:
+                prof = json.loads(b)
+            except ValueError as e:
+                lines.append(f"{tag}: INVALID JSON: {e}"); bad += 1; continue
+            errs, warns = R.check_profile(prof, system)
+            if errs:
+                bad += 1
+            lines.append(f"{tag}: {'ERRORS' if errs else 'OK'}")
+            lines += [f"  error: {e}" for e in errs] + [f"  warning: {w}" for w in warns]
+    print("\n".join(lines))
+    return 1 if bad else 0
+
+
 def cmd_move(args, st):
     c = token(st, args.token)
     dest = parse_pos(args.pos, st)
@@ -921,40 +1162,12 @@ def cmd_move(args, st):
     elif c.get("stepped"):
         out.append("  WARNING: took a 5-foot step this turn, so no other movement is allowed")
     # attacks of opportunity for leaving threatened squares (not on a 5-foot step)
-    threateners = [o for o in st["tokens"] if threatens(o, c)]
-    if threateners and not args.step:
-        for o in threateners:
-            if aoo_left(o) <= 0:
-                out.append(f"  {label(o)} could make an AoO but has none left this round")
-                continue
-            if o["side"] == "pc":
-                order = st.get("orders", {}).get(o["token"], {}).get("aoo", "ask")
-                if order == "never":
-                    out.append(f"  {label(o)} passes on the AoO (standing order)")
-                    continue
-                st["awaiting"] = f"{o['name']}: take an attack of opportunity on {who(c)}? If so, roll it"
-                out.append(f"  {label(o)} may take an AoO on {c['token']}: ask the player (question set), "
-                           f"then `attack {o['token']} {c['token']} --total N --damage N --aoo`")
-                continue
-            if args.no_aoo:
-                out.append(f"  {label(o)} could take an AoO (skipped: --no-aoo)")
-                continue
-            melee = [(k, v) for k, v in ((o.get("profile") or {}).get("attacks") or {}).items()
-                     if v.get("type", "melee") == "melee"]
-            if not melee:
-                out.append(f"  {label(o)} may take an AoO on {c['token']}: no melee attack in its profile, "
-                           f"resolve with `attack {o['token']} {c['token']} --roll … --dmg … --aoo`")
-                continue
-            k, w = melee[0]
-            b = w["bonus"][0] if isinstance(w["bonus"], list) else w["bonus"]
-            o["aoo_used"] = o.get("aoo_used", 0) + 1
-            ns = argparse.Namespace(touch=False, charge=False, ac=None, aoo=True, nonlethal=False,
-                                    no_crit=False, total=None, nat=None, confirm=None, damage=None)
-            out.append("  " + _attack_once(ns, st, o, c, k, b, w["damage"], w.get("crit", 20),
-                                           w.get("mult", 2), "melee", w).replace("\n", "\n  "))
-            if c["hp"] <= 0:
-                out.insert(0, f"{c['token']} is dropped by an attack of opportunity at {frm} and doesn't move")
-                return "\n".join(out)
+    if not args.step:
+        lines, _dmg = provoke_aoos(st, c, args.no_aoo, "moving out of a threatened square")
+        out += lines
+        if c["hp"] <= 0:
+            out.insert(0, f"{c['token']} is dropped by an attack of opportunity at {frm} and doesn't move")
+            return "\n".join(out)
     c["x"], c["y"] = dest
     c["moved"] = c.get("moved", 0) + feet
     speed = c.get("speed") or 30
@@ -1246,6 +1459,16 @@ def main(argv=None):
     ar.add_argument("--at"); ar.add_argument("--from", dest="frm"); ar.add_argument("--toward")
     ar.add_argument("--save", choices=["fort", "ref", "will"]); ar.add_argument("--dc", type=int)
     ar.add_argument("--dmg"); ar.add_argument("--half", action="store_true"); ar.add_argument("--name")
+    pf = sub.add_parser("profile"); pf.add_argument("action", choices=["check"]); pf.add_argument("files", nargs="+")
+    for nm in ("cast", "sla"):
+        cp = sub.add_parser(nm); cp.add_argument("token"); cp.add_argument("spell" if nm == "cast" else "name")
+        cp.add_argument("--defensive", action="store_true", help="cast defensively (concentration DC 15 + 2x level)")
+        cp.add_argument("--no-provoke", action="store_true", help="it doesn't provoke (e.g. a quickened spell)")
+        if nm == "cast":
+            cp.add_argument("--level", type=int); cp.add_argument("--class", dest="cls")
+    sub.add_parser("spells").add_argument("token")
+    pv = sub.add_parser("provoke"); pv.add_argument("token"); pv.add_argument("--reason", default="provoking")
+    pv.add_argument("--no-aoo", action="store_true")
     od = sub.add_parser("order"); od.add_argument("token"); od.add_argument("kind", choices=["aoo"])
     od.add_argument("value", choices=["always", "never", "ask"])
     d = sub.add_parser("dist"); d.add_argument("a"); d.add_argument("b")
@@ -1268,7 +1491,10 @@ def main(argv=None):
                 "reveal": cmd_flag, "hide": cmd_flag, "remove": cmd_flag, "end": cmd_end,
                 "image": cmd_image, "attack": cmd_attack, "log": cmd_log, "events": cmd_events,
                 "ask": cmd_ask, "stabilize": cmd_stabilize, "save": cmd_save, "area": cmd_area,
-                "order": cmd_order}
+                "order": cmd_order, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
+                "provoke": cmd_provoke}
+    if args.command == "profile":
+        return cmd_profile(args)
     if args.command == "do":
         import shlex
         for c in args.cmds:
