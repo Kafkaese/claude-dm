@@ -320,6 +320,11 @@ def campaign_title(camp):
     return camp or "Claude DM"
 
 
+def map_png_path(camp):
+    """The clean map image (map only, no initiative panel) that the web UI shows."""
+    return REPO / "campaigns" / camp / "players" / "combat-map-clean.png"
+
+
 def combat_snapshot(camp, render_png=True):
     """Player-safe state of the current fight, or None. Renders the PNG map when asked."""
     if not camp:
@@ -332,26 +337,32 @@ def combat_snapshot(camp, render_png=True):
         cm = _combat_module()
     except Exception:
         return None
-    png = REPO / "campaigns" / camp / "players" / "combat-map.png"
+    png = map_png_path(camp)
     if render_png:
         try:
-            cm.render_image(st, png)
+            cm.render_image(st, png, panel=False)
         except Exception:
             pass
     rows = []
     for c in cm.order(st):
         if c.get("removed") or c.get("hidden"):
             continue
-        friendly = c["side"] in cm.FRIENDLY
+        conditions = list(c.get("conditions") or [])
+        if c.get("nonlethal"):
+            conditions.append(f"{c['nonlethal']} nonlethal" if c["side"] in cm.FRIENDLY else "hurt (nonlethal)")
         rows.append({
             "name": c["name"], "token": c["token"], "side": c["side"], "init": c["init"],
-            "status": cm.status(c) if hasattr(cm, "status") else (f"{c['hp']}/{c['max_hp']} HP" if friendly else cm.health(c)),
+            "status": cm.status(c), "conditions": conditions,
+            "fallen": c["hp"] <= 0 and c["side"] not in cm.FRIENDLY,
             "current": c["token"] == st.get("turn"),
         })
+    used = {ch for row in st["grid"] for ch in row}
+    terrain = [name for ch, name in cm.TERRAIN_NAMES.items() if ch in used]
     turn = next((r["name"] for r in rows if r["current"]), None)
     return {
         "active": True, "round": st.get("round", 1), "turn": turn, "initiative": rows,
         "events": [{"round": e.get("round"), "text": e.get("text", "")} for e in st.get("events", [])],
+        "terrain": terrain,
         "image": int(png.stat().st_mtime * 1000) if png.exists() else None,
     }
 

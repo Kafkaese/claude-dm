@@ -90,11 +90,22 @@ body.combat #divider { display: block; }
 .panel .turn { color: var(--muted); font-size: 14px; }
 #map { width: 100%; border-radius: 8px; display: block; }
 .section-label { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding-bottom: 6px; }
-.initrow { display: grid; grid-template-columns: 16px 1fr 40px 130px; align-items: center; column-gap: 10px; min-height: 34px; padding: 0 8px; font-size: 14px; border-radius: 8px; }
-.initrow.current { background: var(--accent-soft); font-weight: 600; }
-.initrow .dot { width: 10px; height: 10px; border-radius: 50%; }
-.initrow .init { color: var(--muted); text-align: right; }
-.initrow.current .init { color: inherit; }
+#init { display: flex; flex-direction: column; gap: 2px; }
+.initrow { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto 34px; grid-template-areas: "tok name status init" "tok cond cond cond"; align-items: center; column-gap: 12px; padding: 7px 10px; border-radius: 10px; font-size: 14px; }
+.initrow.current { background: var(--accent-soft); }
+.initrow.current .name { font-weight: 600; }
+.initrow .tok { grid-area: tok; align-self: start; width: 30px; height: 30px; border-radius: 50%; border: 2px solid #FFFFFF; display: flex; align-items: center; justify-content: center; color: #FFFFFF; font: 600 12px var(--sans); box-shadow: 0 0 0 1px var(--border); }
+.initrow.current .tok { box-shadow: 0 0 0 3px #E0A21C; }
+.initrow.fallen .tok { background: #8A8A8A !important; text-decoration: line-through; }
+.initrow .name { grid-area: name; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.initrow .status { grid-area: status; color: var(--muted); white-space: nowrap; }
+.initrow.current .status { color: inherit; }
+.initrow .init { grid-area: init; color: var(--muted); text-align: right; font-variant-numeric: tabular-nums; }
+.initrow .cond { grid-area: cond; color: var(--accent-soft-ink); font-size: 12.5px; margin-top: 2px; }
+.initrow.current .cond { color: var(--accent-soft-ink); }
+.init-head { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto 34px; column-gap: 12px; padding: 0 10px 4px; color: var(--muted); font-size: 11.5px; }
+.init-head span:last-child { text-align: right; }
+#legend { color: var(--muted); font-size: 12px; margin-top: -8px; }
 #log { display: flex; flex-direction: column; gap: 4px; }
 
 .drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); display: none; }
@@ -160,7 +171,8 @@ body.drawer-open .drawer-backdrop { display: block; }
     <div class="panel">
       <div class="top"><span class="round" id="round">Round 1</span><span class="turn" id="turn"></span></div>
       <img id="map" alt="Battle map">
-      <div><div class="section-label">Initiative</div><div id="init"></div></div>
+      <div id="legend"></div>
+      <div><div class="section-label">Initiative</div><div class="init-head" aria-hidden="true"><span></span><span>Name</span><span>Health</span><span>Init</span></div><div id="init"></div></div>
       <div><div class="section-label">Combat log</div><div id="log"></div></div>
     </div>
   </aside>
@@ -262,9 +274,16 @@ function setCombat(c) {
   document.getElementById("round").textContent = `Round ${c.round}`;
   document.getElementById("turn").textContent = c.turn ? `${c.turn}’s turn` : "";
   if (c.image) document.getElementById("map").src = `/map.png?v=${c.image}`;
-  const color = side => side === "pc" ? "var(--pc)" : side === "ally" ? "var(--ally)" : "var(--enemy)";
-  document.getElementById("init").innerHTML = c.initiative.map(r =>
-    `<div class="initrow${r.current ? " current" : ""}"><span class="dot" style="background:${color(r.side)}"></span><span>${esc(r.name)}</span><span class="init">${r.init}</span><span>${esc(r.status)}</span></div>`).join("");
+  // token colors match the map image (fixed, not themed)
+  const color = side => side === "pc" ? "#3A6CC8" : side === "ally" ? "#42945C" : "#BC3A34";
+  const fmtInit = n => Number.isInteger(n) ? n : Number(n).toFixed(1).replace(/\.0$/, "");
+  document.getElementById("init").innerHTML = c.initiative.map(r => {
+    const cls = "initrow" + (r.current ? " current" : "") + (r.fallen ? " fallen" : "");
+    const cond = r.conditions && r.conditions.length ? `<span class="cond">${r.conditions.map(esc).join(" · ")}</span>` : "";
+    const label = `${r.name}${r.current ? ", current turn" : ""}: ${r.status}${cond ? ", " + r.conditions.join(", ") : ""}, initiative ${fmtInit(r.init)}`;
+    return `<div class="${cls}" aria-label="${esc(label)}"><span class="tok" style="background:${color(r.side)}">${esc(r.token)}</span><span class="name">${esc(r.name)}</span><span class="status">${esc(r.status)}</span><span class="init">${fmtInit(r.init)}</span>${cond}</div>`;
+  }).join("");
+  document.getElementById("legend").textContent = (c.terrain && c.terrain.length) ? "Terrain: " + c.terrain.join(" · ") : "";
   const log = document.getElementById("log");
   log.innerHTML = c.events.map(e => `<div class="logline"><span class="r">R${e.round ?? "?"}</span>${esc(e.text)}</div>`).join("");
   log.lastElementChild && log.parentElement.parentElement.scrollTo({ top: 1e9 });

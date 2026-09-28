@@ -22,7 +22,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from dm_engine import (EFFORTS, REPO, Engine, active_campaign, campaign_title, combat_snapshot,
-                       last_combat_events, last_session, load_history)
+                       last_combat_events, last_session, load_history, map_png_path)
 
 WEB = REPO / "web"
 
@@ -207,7 +207,7 @@ def make_handler(hub):
                 return self._events()
             if url.path == "/map.png":
                 camp = hub.campaign()
-                png = REPO / "campaigns" / camp / "players" / "combat-map.png" if camp else None
+                png = map_png_path(camp) if camp else None
                 if png and png.exists():
                     return self._send(200, png.read_bytes(), "image/png")
                 return self._send(404, "{}")

@@ -381,7 +381,12 @@ def tile(ch):
     return _TILES[ch]
 
 
-def render_image(st, path):
+TERRAIN_NAMES = {"#": "wall", "+": "door", "^": "difficult", "~": "water", "T": "trees", "_": "pit", "=": "bridge"}
+
+
+def render_image(st, path, panel=True):
+    """The player view as a PNG. panel=False draws only the map (transparent margins, no round
+    title, no initiative panel or legend), for interfaces that show those themselves."""
     try:
         from PIL import Image, ImageDraw
     except ImportError:
@@ -389,14 +394,17 @@ def render_image(st, path):
     c = COLORS
     map_w, map_h = st["w"] * CELL, st["h"] * CELL
     shown = [t for t in order(st) if not t.get("removed") and not t.get("hidden")]
-    panel_h = 70 + 34 * len(shown) + 140
-    W = LABEL + map_w + 20 + PANEL
-    H = max(map_h + 20, panel_h) + 76
-    img = Image.new("RGB", (W, H), c["bg"])
-    d = ImageDraw.Draw(img)
     f_lab, f_tok, f_txt, f_head = font(15), font(20), font(16), font(22)
-    top = 76
-    d.text((LABEL, 12), f"Round {st['round']}", font=f_head, fill=c["text"])
+    if not panel:
+        top = 30
+        img = Image.new("RGBA", (LABEL + map_w + 6, top + map_h + 6), (0, 0, 0, 0))
+    else:
+        top = 76
+        panel_h = 70 + 34 * len(shown) + 140
+        img = Image.new("RGB", (LABEL + map_w + 20 + PANEL, max(map_h + 20, panel_h) + 76), c["bg"])
+    d = ImageDraw.Draw(img)
+    if panel:
+        d.text((LABEL, 12), f"Round {st['round']}", font=f_head, fill=c["text"])
     for i in range(st["w"]):
         d.text((LABEL + i * CELL + CELL // 2, top - 12), chr(ord("A") + i), font=f_lab, fill=c["dim"], anchor="mm")
     for j in range(st["h"]):
@@ -418,6 +426,10 @@ def render_image(st, path):
         else:
             d.text(((box[0] + box[2]) / 2, (box[1] + box[3]) / 2), t["token"], font=f_tok,
                    fill=(255, 255, 255), anchor="mm")
+    if not panel:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        img.save(path)
+        return path
     # initiative panel
     px, py = LABEL + map_w + 20, top
     d.text((px, 12), "Initiative", font=f_head, fill=c["text"])
@@ -439,8 +451,7 @@ def render_image(st, path):
     # terrain legend
     used = {ch for row in st["grid"] for ch in row}
     py += 16
-    names = {"#": "wall", "+": "door", "^": "difficult", "~": "water", "T": "trees", "_": "pit", "=": "bridge"}
-    for ch, name in names.items():
+    for ch, name in TERRAIN_NAMES.items():
         if ch in used:
             img.paste(tile(ch).resize((22, 22)), (px + 18, py))
             d.text((px + 48, py + 11), name, font=f_lab, fill=c["dim"], anchor="lm")
