@@ -11,6 +11,10 @@
   --bg: #F4F1EA; --surface: #FBF9F4; --border: #E1DACB; --field-border: #D9D1C0;
   --text: #1F1D1A; --muted: #5F594F; --bubble: #E6E0D2; --accent: #A0552A; --accent-ink: #FFFFFF;
   --accent-soft: #F3DCCB; --accent-soft-ink: #7E3F1C; --pc: #2F5FB3; --ally: #2E7D4F; --enemy: #B23A32;
+  --map-floor: #EDE4CF; --map-grid: #CFC3A8; --map-wall: #4A4640; --map-wall-edge: #36332F;
+  --map-hatch: #B89B6E; --map-difficult: #DCCDAE; --map-water: #8DB4D6; --map-wave: #D2E3F1;
+  --map-trees: #A9C79A; --map-tree: #5E8E52; --map-door: #8C5E32; --map-pit: #1B1A1E;
+  --map-bridge: #C29A68; --map-plank: #8E6436; --map-hover: #A0552A;
   --serif: 'Literata', Georgia, serif; --sans: 'IBM Plex Sans', system-ui, sans-serif; --mono: 'IBM Plex Mono', ui-monospace, monospace;
 }
 @media (prefers-color-scheme: dark) {
@@ -18,6 +22,10 @@
     --bg: #141317; --surface: #1C1B20; --border: #2C2A31; --field-border: #34323A;
     --text: #ECE7DF; --muted: #A9A296; --bubble: #26252B; --accent: #D9965F; --accent-ink: #141317;
     --accent-soft: #3A2A1E; --accent-soft-ink: #E8B283; --pc: #6D96E0; --ally: #4CAF78; --enemy: #D65A50;
+    --map-floor: #CDBF9F; --map-grid: #AA9C7D; --map-wall: #2F2D2A; --map-wall-edge: #1F1E1C;
+    --map-hatch: #957A4F; --map-difficult: #BDAC89; --map-water: #6F97BA; --map-wave: #A9C4DB;
+    --map-trees: #8EAE7E; --map-tree: #4B7442; --map-door: #7A5028; --map-pit: #0E0E10;
+    --map-bridge: #A8835A; --map-plank: #7A5530; --map-hover: #E8B283;
   }
 }
 * { box-sizing: border-box; }
@@ -88,7 +96,15 @@ body.combat #divider { display: block; }
 .panel .top { display: flex; align-items: baseline; justify-content: space-between; }
 .panel .round { font-family: var(--serif); font-size: 18px; font-weight: 600; }
 .panel .turn { color: var(--muted); font-size: 14px; }
-#map { width: 100%; border-radius: 8px; display: block; }
+#map { position: relative; width: 100%; }
+#map svg { width: 100%; height: auto; display: block; user-select: none; }
+#map .cell { cursor: pointer; }
+#map .label { fill: var(--muted); font: 500 11px var(--mono); }
+#map .tok-text { fill: #FFFFFF; font: 600 14px var(--sans); pointer-events: none; }
+#tip { position: absolute; pointer-events: none; z-index: 3; max-width: 240px; padding: 8px 10px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 12.5px; line-height: 1.4; box-shadow: 0 4px 14px rgba(0,0,0,.18); }
+#tip[hidden] { display: none; }
+#tip .t-name { font-weight: 600; }
+#tip .t-hint { opacity: .7; font-size: 11.5px; margin-top: 2px; }
 .section-label { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding-bottom: 6px; }
 #init { display: flex; flex-direction: column; gap: 2px; }
 .initrow { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto 34px; grid-template-areas: "tok name status init" "tok cond cond cond"; align-items: center; column-gap: 12px; padding: 7px 10px; border-radius: 10px; font-size: 14px; }
@@ -170,7 +186,7 @@ body.drawer-open .drawer-backdrop { display: block; }
   <aside aria-label="Battle map">
     <div class="panel">
       <div class="top"><span class="round" id="round">Round 1</span><span class="turn" id="turn"></span></div>
-      <img id="map" alt="Battle map">
+      <div id="map"><div id="svgwrap"></div><div id="tip" hidden></div></div>
       <div id="legend"></div>
       <div><div class="section-label">Initiative</div><div class="init-head" aria-hidden="true"><span></span><span>Name</span><span>Health</span><span>Init</span></div><div id="init"></div></div>
       <div><div class="section-label">Combat log</div><div id="log"></div></div>
@@ -265,6 +281,115 @@ function tickStatus() {
 }
 setInterval(tickStatus, 500);
 
+// ---------- battle map (SVG, drawn from the player-safe grid) ----------
+const CELL = 40, LAB = 22;
+const TOKEN_COLOR = side => side === "pc" ? "#3A6CC8" : side === "ally" ? "#42945C" : "#BC3A34";
+let mapData = null;
+const coord = (x, y) => String.fromCharCode(65 + x) + (y + 1);
+
+function terrainShape(ch, px, py) {
+  const r = (fill, extra = "") => `<rect x="${px}" y="${py}" width="${CELL}" height="${CELL}" fill="${fill}" ${extra}/>`;
+  switch (ch) {
+    case "#": return r("var(--map-wall)", `stroke="var(--map-wall-edge)" stroke-width="1"`);
+    case "_": return r("var(--map-pit)");
+    case "^": return r("url(#p-hatch)");
+    case "~": return r("url(#p-water)");
+    case "T": return r("var(--map-trees)") +
+      `<circle cx="${px + 13}" cy="${py + 14}" r="8" fill="var(--map-tree)"/><circle cx="${px + 27}" cy="${py + 24}" r="9" fill="var(--map-tree)"/><circle cx="${px + 13}" cy="${py + 30}" r="5" fill="var(--map-tree)"/>`;
+    case "+": return r("var(--map-floor)") + `<rect x="${px + 6}" y="${py + CELL / 2 - 5}" width="${CELL - 12}" height="10" rx="2" fill="var(--map-door)"/>`;
+    case "=": return r("url(#p-bridge)");
+    default: return r("var(--map-floor)");
+  }
+}
+
+function renderMap(m) {
+  mapData = m;
+  const W = LAB + m.w * CELL + 2, H = LAB + m.h * CELL + 2;
+  let s = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Battle map, ${m.w} by ${m.h} squares. The initiative list below has the same information.">`;
+  s += `<defs>
+    <pattern id="p-hatch" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="10" height="10" fill="var(--map-difficult)"/><rect width="3" height="10" fill="var(--map-hatch)"/></pattern>
+    <pattern id="p-water" width="20" height="12" patternUnits="userSpaceOnUse"><rect width="20" height="12" fill="var(--map-water)"/><path d="M0 8 q5 -5 10 0 t10 0" fill="none" stroke="var(--map-wave)" stroke-width="1.5"/></pattern>
+    <pattern id="p-bridge" width="40" height="10" patternUnits="userSpaceOnUse"><rect width="40" height="10" fill="var(--map-bridge)"/><rect y="8" width="40" height="2" fill="var(--map-plank)"/></pattern>
+  </defs>`;
+  for (let x = 0; x < m.w; x++) s += `<text class="label" x="${LAB + x * CELL + CELL / 2}" y="${LAB - 7}" text-anchor="middle">${String.fromCharCode(65 + x)}</text>`;
+  for (let y = 0; y < m.h; y++) s += `<text class="label" x="${LAB / 2}" y="${LAB + y * CELL + CELL / 2 + 4}" text-anchor="middle">${y + 1}</text>`;
+  for (let y = 0; y < m.h; y++) {
+    const row = m.grid[y] || "";
+    for (let x = 0; x < m.w; x++) {
+      const ch = row[x] || " ";
+      if (ch === " ") continue;
+      s += terrainShape(ch, LAB + x * CELL, LAB + y * CELL);
+      if (ch !== "#" && ch !== "_") s += `<rect x="${LAB + x * CELL}" y="${LAB + y * CELL}" width="${CELL}" height="${CELL}" fill="none" stroke="var(--map-grid)" stroke-width="1"/>`;
+    }
+  }
+  for (const t of m.tokens) {
+    const span = t.size * CELL, cx = LAB + t.x * CELL + span / 2, cy = LAB + t.y * CELL + span / 2, rad = span / 2 - 6;
+    if (t.current) s += `<circle cx="${cx}" cy="${cy}" r="${rad + 4}" fill="none" stroke="#E0A21C" stroke-width="4"/>`;
+    s += `<circle cx="${cx}" cy="${cy}" r="${rad}" fill="${t.fallen ? "#8A8A8A" : TOKEN_COLOR(t.side)}" stroke="#FFFFFF" stroke-width="2.5"/>`;
+    if (t.fallen) {
+      const k = rad * 0.5;
+      s += `<path d="M${cx - k} ${cy - k} L${cx + k} ${cy + k} M${cx - k} ${cy + k} L${cx + k} ${cy - k}" stroke="#3C3C3C" stroke-width="3.5" stroke-linecap="round"/>`;
+    } else {
+      s += `<text class="tok-text" x="${cx}" y="${cy + 5}" text-anchor="middle" style="font-size:${t.size > 1 ? 18 : 14}px">${esc(t.token)}</text>`;
+    }
+  }
+  s += `<rect id="hover" width="${CELL}" height="${CELL}" fill="none" stroke="var(--map-hover)" stroke-width="2.5" rx="3" visibility="hidden" pointer-events="none"/>`;
+  s += `</svg>`;
+  document.getElementById("svgwrap").innerHTML = s;
+}
+
+function mapHit(evt) {
+  if (!mapData) return null;
+  const svg = document.querySelector("#svgwrap svg");
+  if (!svg) return null;
+  const box = svg.getBoundingClientRect();
+  const W = LAB + mapData.w * CELL + 2;
+  const k = W / box.width;
+  const x = Math.floor(((evt.clientX - box.left) * k - LAB) / CELL);
+  const y = Math.floor(((evt.clientY - box.top) * k - LAB) / CELL);
+  if (x < 0 || y < 0 || x >= mapData.w || y >= mapData.h) return null;
+  const tok = mapData.tokens.find(t => x >= t.x && x < t.x + t.size && y >= t.y && y < t.y + t.size);
+  const ch = (mapData.grid[y] || "")[x] || " ";
+  return { x, y, tok, terrain: (mapData.terrain_names || {})[ch] || (ch === " " ? "outside" : "floor"), box, k };
+}
+
+const mapEl = document.getElementById("map"), tip = document.getElementById("tip");
+mapEl.addEventListener("mousemove", e => {
+  const h = mapHit(e), hover = document.getElementById("hover");
+  if (!h) { tip.hidden = true; if (hover) hover.setAttribute("visibility", "hidden"); return; }
+  if (hover) {
+    const t = h.tok, size = t ? t.size : 1, x = t ? t.x : h.x, y = t ? t.y : h.y;
+    hover.setAttribute("x", LAB + x * CELL); hover.setAttribute("y", LAB + y * CELL);
+    hover.setAttribute("width", size * CELL); hover.setAttribute("height", size * CELL);
+    hover.setAttribute("visibility", "visible");
+  }
+  let html;
+  if (h.tok) {
+    const t = h.tok, cond = t.conditions && t.conditions.length ? `<div>${t.conditions.map(esc).join(" · ")}</div>` : "";
+    html = `<div class="t-name">${esc(t.name)} (${esc(t.token)})</div><div>${esc(t.status)}</div>${cond}<div class="t-hint">${coord(t.x, t.y)} · click to insert ${esc(t.token)}</div>`;
+  } else {
+    html = `<div class="t-name">${coord(h.x, h.y)}</div><div>${esc(h.terrain)}</div><div class="t-hint">click to insert ${coord(h.x, h.y)}</div>`;
+  }
+  tip.innerHTML = html;
+  tip.hidden = false;
+  const mb = mapEl.getBoundingClientRect();
+  let left = e.clientX - mb.left + 14, top = e.clientY - mb.top + 14;
+  if (left + tip.offsetWidth > mb.width) left = e.clientX - mb.left - tip.offsetWidth - 10;
+  tip.style.left = left + "px"; tip.style.top = top + "px";
+});
+mapEl.addEventListener("mouseleave", () => { tip.hidden = true; const hv = document.getElementById("hover"); if (hv) hv.setAttribute("visibility", "hidden"); });
+mapEl.addEventListener("click", e => {
+  const h = mapHit(e);
+  if (!h) return;
+  const text = h.tok ? h.tok.token : coord(h.x, h.y);
+  const start = msg.selectionStart ?? msg.value.length, end = msg.selectionEnd ?? start;
+  const before = msg.value.slice(0, start), after = msg.value.slice(end);
+  const ins = (before && !/\s$/.test(before) ? " " : "") + text + (after && !/^\s/.test(after) ? " " : "");
+  msg.value = before + ins + after;
+  const pos = before.length + ins.length;
+  msg.focus(); msg.setSelectionRange(pos, pos); autosize();
+});
+
 // ---------- combat panel ----------
 function setCombat(c) {
   const active = !!(c && c.active);
@@ -273,7 +398,7 @@ function setCombat(c) {
   if (!active) return;
   document.getElementById("round").textContent = `Round ${c.round}`;
   document.getElementById("turn").textContent = c.turn ? `${c.turn}’s turn` : "";
-  if (c.image) document.getElementById("map").src = `/map.png?v=${c.image}`;
+  if (c.map) renderMap(c.map);
   // token colors match the map image (fixed, not themed)
   const color = side => side === "pc" ? "#3A6CC8" : side === "ally" ? "#42945C" : "#BC3A34";
   const fmtInit = n => Number.isInteger(n) ? n : Number(n).toFixed(1).replace(/\.0$/, "");
@@ -283,7 +408,9 @@ function setCombat(c) {
     const label = `${r.name}${r.current ? ", current turn" : ""}: ${r.status}${cond ? ", " + r.conditions.join(", ") : ""}, initiative ${fmtInit(r.init)}`;
     return `<div class="${cls}" aria-label="${esc(label)}"><span class="tok" style="background:${color(r.side)}">${esc(r.token)}</span><span class="name">${esc(r.name)}</span><span class="status">${esc(r.status)}</span><span class="init">${fmtInit(r.init)}</span>${cond}</div>`;
   }).join("");
-  document.getElementById("legend").textContent = (c.terrain && c.terrain.length) ? "Terrain: " + c.terrain.join(" · ") : "";
+  document.getElementById("legend").textContent =
+    ((c.terrain && c.terrain.length) ? "Terrain: " + c.terrain.join(" · ") + ". " : "") +
+    "Hover for details, click a square or token to add it to your message.";
   const log = document.getElementById("log");
   log.innerHTML = c.events.map(e => `<div class="logline"><span class="r">R${e.round ?? "?"}</span>${esc(e.text)}</div>`).join("");
   log.lastElementChild && log.parentElement.parentElement.scrollTo({ top: 1e9 });

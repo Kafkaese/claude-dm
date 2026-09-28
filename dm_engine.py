@@ -325,8 +325,9 @@ def map_png_path(camp):
     return REPO / "campaigns" / camp / "players" / "combat-map-clean.png"
 
 
-def combat_snapshot(camp, render_png=True):
-    """Player-safe state of the current fight, or None. Renders the PNG map when asked."""
+def combat_snapshot(camp, render_png=False):
+    """Player-safe state of the current fight, or None. The web UI draws the map itself from
+    `map`; render_png=True also writes a map-only PNG (for other frontends)."""
     if not camp:
         return None
     state = REPO / "campaigns" / camp / "dm" / "combat" / "current.json"
@@ -358,11 +359,21 @@ def combat_snapshot(camp, render_png=True):
         })
     used = {ch for row in st["grid"] for ch in row}
     terrain = [name for ch, name in cm.TERRAIN_NAMES.items() if ch in used]
+    # Player-safe map data for the browser to draw: terrain plus visible tokens only.
+    by_token = {r["token"]: r for r in rows}
+    tokens = []
+    for c in st["tokens"]:
+        r = by_token.get(c["token"])
+        if r:
+            tokens.append(dict(r, x=c["x"], y=c["y"], size=c.get("size", 1)))
+    grid_map = {"w": st["w"], "h": st["h"], "grid": st["grid"], "tokens": tokens,
+                "terrain_names": cm.TERRAIN_NAMES}
     turn = next((r["name"] for r in rows if r["current"]), None)
     return {
         "active": True, "round": st.get("round", 1), "turn": turn, "initiative": rows,
         "events": [{"round": e.get("round"), "text": e.get("text", "")} for e in st.get("events", [])],
         "terrain": terrain,
+        "map": grid_map,
         "image": int(png.stat().st_mtime * 1000) if png.exists() else None,
     }
 
