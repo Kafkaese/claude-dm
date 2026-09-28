@@ -1,9 +1,39 @@
 .play/
 
-# campaigns, rules and lore
-campaigns
-library
-~library/general
-
 # python
 **/__pycache__
+
+# --- Campaigns ---------------------------------------------------------------
+# Your campaigns are personal play data. Only the template is part of the tool.
+campaigns/*
+!campaigns/README.md
+!campaigns/_template/
+
+# --- Library -----------------------------------------------------------------
+# Tracked: our own files (READMEs, sources.md, house rules, sheet templates, general table rules).
+# Not tracked: content drawn from third-party sources (rules text, stat blocks, spells, items,
+# character options, creature templates, tables, setting lore). These patterns are written for
+# every system and setting folder, not just pf1e/golarion.
+
+# System folders (library/<system>/): content subfolders are local only, except their README
+library/*/bestiary/*
+library/*/npcs/*
+library/*/spells/*
+library/*/items/*
+library/*/character-options/*
+library/*/templates/*
+library/*/tables/*
+library/*/rules/*
+!library/*/*/README.md
+
+# Setting folders (library/settings/<setting>/): lore is local only; README and sources.md are ours
+library/settings/*/*
+!library/settings/*/README.md
+!library/settings/*/sources.md
+
+# library/general/ is entirely our own and always tracked
+!library/general/**
+
+# Personal: which published adventures you have played (spoiler handling). Local only;
+# player-profile.example.md shows the format.
+library/general/player-profile.md

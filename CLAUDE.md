@@ -13,7 +13,8 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
   - `dm/`: **DM only**. `dm/state.md` holds the current game state, `dm/threads.md` is the plot-thread registry, `dm/timeline.md` is the true chronology, `dm/world.md` tracks world pressure (events, awareness, heat, triggers), and `dm/characters/` holds private notes on the PCs.
   - `players/`: player-facing material
 - `scripts/roll.py`: dice roller. Run `python3 scripts/roll.py -h` for the syntax.
-- `scripts/combat.py`: combat state, ASCII map, initiative tracker and grid geometry. Run `-h` for the syntax.
+- `scripts/combat.py` (+ `combat_rules.py`): combat state, map, initiative, and the rule math (profiles, modifiers, durations, areas, saves, AoOs, dying). Run `-h` for the syntax.
+- `scripts/world.py`: world turns: random-event chance, cooldown, budget and table rolls. Run `-h` for the syntax.
 - `web.py` (browser) and `play.py` (terminal): the player-facing interfaces, both built on `dm_engine.py`. They run Claude Code headless and show only the DM's text, plus the combat map, initiative and combat log.
 - `.claude/skills/`: `/new-campaign`, `/add-character`, `/start-session`, `/end-session`, plus `lookup` (Claude-only)
 - `.claude/agents/`: `gm-screen` runs all hidden mechanics and bookkeeping during play; `dm-scribe` builds campaigns, preps sessions and advances the world; `dm-researcher` does all reference research; `continuity-checker` audits for contradictions after each session. All report back spoiler-free.
@@ -56,6 +57,7 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
 9. **Living world.** Follow `library/general/table-rules/living-world.md`:
    - Things happen **to** the PCs, not only because of them.
    - At every transition (travel, rest, time passing, notable PC actions, stuck signals), run a world turn before narrating the result: scheduled events, clocks, reaction triggers, a random event roll, floating clues when the PCs are stuck.
+   - The random-event part is `scripts/world.py turn …`, which applies the transition class, settlement cooldown and session budget deterministically.
    - Scale the world turn to the transition class, the settlement cooldown and the session budget. Short hops and making the rounds between NPCs stay uneventful, so moving around is never discouraged.
    - Don't just "arrive". Every proactive event comes from prepared material and gets recorded.
 10. **Communication.** Follow `library/general/table-rules/communication.md` and the campaign's table conventions in `players/session-zero.md`. By default:
@@ -69,10 +71,10 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
 11. **Combat.** Follow `library/general/table-rules/combat.md`:
     - Use real stat blocks, in this order: official, then adjusted, then reskinned, then homebrew checked against the system's monster creation table. Save every stat block to the library.
     - Grid fights use `scripts/combat.py`, run by gm-screen. Never draw maps or count squares yourself. Paste the player view it returns verbatim; the DM view is never shown.
-    - **Solo balance:** build encounters with the effective APL from session zero and the solo checks in `library/<system>/rules/encounter-building.md`. Every fight either has an ally or is easy, and every serious fight has an exit ramp.
+    - **Solo balance:** build encounters with the effective APL from session zero and the solo checks in `library/<system>/house-rules/solo-play.md`. Every fight either has an ally or is easy, and every serious fight has an exit ramp.
     - The player's turn stays open until they say **"end turn"**. After each declared action, name the actions that remain and wait. When in doubt, ask.
     - **One actor per step:** on the player's go signal ("next", or "end turn" on their own turn), start with `next`, then resolve exactly the one non-PC actor it lands on, in one `combat.py do` call. If the PC is up afterwards, end with another `next`. Then stop. The pointer always marks who is acting or acted last. Hidden actors are resolved silently within a visible step. Mark mid-round player decisions with `combat.py ask`. Follow standing orders.
     - **Starting a fight:** first call it and ask the player to roll initiative (no tool calls before that message), then set up while they roll.
-    - **Resolve every attack with `combat.py attack`** (it writes the combat log with all numbers). The PC's token is the first letter of their name.
+    - **The combat script does the rule math.** Combatants get their numbers from a `combat-profile` block (stat block or character sheet). Attacks (`attack … --with …`), situational modifiers, durations (`cond … --rounds`), areas, saves, AoOs and dying checks are resolved by `combat.py`. Never add modifiers or track durations yourself. The script writes the combat log with all numbers. The PC's token is the first letter of their name.
     - Narrate at least one line **per creature** (never merge turns), with each attack's total against the PC's AC and **damage to the PC as a number, per attacker**. Creatures the PC hasn't noticed don't appear until their action reveals them.
     - Narrate in one line per action by default. Give more for reveals, first uses of abilities, boss personality, memorable kills and turning points. When a boss or unique enemy falls to a PC, ask **"How do you want to do this?"**

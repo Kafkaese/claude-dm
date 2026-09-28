@@ -47,8 +47,14 @@ python3 scripts/combat.py -c <camp> add g1 "Goblin" --pos D4 --init 15 --hp 6 --
 python3 scripts/combat.py -c <camp> move C E5      # path, feet used, AoO warning
 python3 scripts/combat.py -c <camp> dist C g1      # feet, also squares: dist C D4
 python3 scripts/combat.py -c <camp> threat g1      # who threatens / flanks it
-python3 scripts/combat.py -c <camp> attack g1 C --roll "1d20+4" --dmg "1d6+1" --name spear [--crit 19 --mult 2]
-python3 scripts/combat.py -c <camp> attack C g1 --total 17 --damage 9 --name rapier [--nat 20 --confirm 18]
+python3 scripts/combat.py -c <camp> add g1 "Goblin" --pos D4 --ref library/pf1e/bestiary/goblin.md --init roll [--hidden]
+python3 scripts/combat.py -c <camp> attack g1 C --with spear [--full] [--charge] [--touch] [--aoo]   # modifiers are automatic
+python3 scripts/combat.py -c <camp> attack C g1 --total 17 --damage 9 --name rapier [--nat 20 --confirm 18] [--ranged]
+python3 scripts/combat.py -c <camp> cond g1 add shaken --rounds 1      # also: --atk/--ac/--save/--dmg N, --ongoing 1d4
+python3 scripts/combat.py -c <camp> area burst 10 --at D4 --save ref --dc 13 --dmg 2d6 --half --name "burning hands"
+python3 scripts/combat.py -c <camp> save C --total 17          # a PC's pending save; NPC: save g1 will --dc 14
+python3 scripts/combat.py -c <camp> stabilize C --total 12     # a dying PC's check (NPCs roll their own on `next`)
+python3 scripts/combat.py -c <camp> move C C4 --step           # 5-foot step; normal moves roll NPC AoOs automatically
 python3 scripts/combat.py -c <camp> log "The goblin drops its spear and begs."
 python3 scripts/combat.py -c <camp> events         # player-safe combat log lines since last call (paste these)
 python3 scripts/combat.py -c <camp> hp g1 -7       # or +5 [--why "cure light wounds"]
@@ -57,7 +63,10 @@ python3 scripts/combat.py -c <camp> next | reveal g1 | hide g1 | remove g1 | ini
 python3 scripts/combat.py -c <camp> show           # player view (paste this)
 python3 scripts/combat.py -c <camp> show --dm      # never paste
 python3 scripts/combat.py -c <camp> image on       # live PNG, if session zero wants it
-python3 scripts/combat.py -c <camp> end            # summary + XP, archives the state
+python3 scripts/combat.py -c <camp> end            # summary + XP, PC HP to sheets, log to session log, archives
+# world turns (living-world.md section 5, deterministic)
+python3 scripts/world.py -c <camp> turn trip --table dm/tables/<region>.md [--settlement] [--route "inn>market"]
+python3 scripts/world.py -c <camp> turn journey|night-camp|night-safe|skip|hop …   # also: planned "…", day "…", session, status
 python3 scripts/combat.py -c <camp> do "move g1 D4" "hp C -6" "next" "show"   # several steps, ONE call
 ```
 

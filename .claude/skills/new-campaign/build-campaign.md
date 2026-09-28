@@ -30,6 +30,7 @@ Fill in the template files in `campaigns/<slug>/`:
 - `dm/state.md`: the starting situation
 - `dm/timeline.md`: the true chronology leading up to the campaign. Tag everything `[flex]`, except facts already stated in the pitch or setting primer, which are `[locked S00]`.
 - `dm/threads.md`: T01 for the main plot (truth, clues available, clock, 1–3 floating clues) and any planned side threads, each with its connection to the main plot. Set the side-thread budget from session zero.
+- World pressure for `scripts/world.py`: run `python3 scripts/world.py -c <slug> config --pressure <from session zero>` and `day "<start date>"`.
 - `dm/world.md`: world pressure and base event chance, scheduled events, awareness and heat tracks (all at 0), reaction triggers for the opening adventure, and agendas in motion
 - `dm/factions/`: a file for each antagonist group with an agenda (`_faction-template.md`), with its next moves and its reactions at each awareness level
 - `dm/tables/<starting-region>.md`: a random event table for the starting region (`_region-template.md`)
@@ -39,7 +40,7 @@ Fill in the template files in `campaigns/<slug>/`:
 ## 3. Design principles
 - **Addressable files.** Give every scene, room, handout, encounter and NPC section its own heading (`###`), with an ID where it helps (e.g. `### H2. Tally-stele`). Agents read files section by section, so clear headings make every call during play faster and cheaper. Prefer several focused files over one huge one.
 - **Original content.** Invent the campaign's NPCs, villains and mysteries yourself. Use published-adventure material only as far as the "Published adventures" section of session zero allows, e.g. easter eggs or connections to adventures the player has played.
-- **Balanced fights:** build every encounter with the solo and small-party rules in `library/<system>/rules/encounter-building.md` and `combat.md`: effective APL, the solo checks, worst-case allies, and an exit ramp.
+- **Balanced fights:** build every encounter with the solo guideline in `library/<system>/house-rules/solo-play.md` and `combat.md`: effective APL, the solo checks, worst-case allies, and an exit ramp.
 - **Robust mystery.** Every important conclusion needs several clues, so the plot survives improvisation.
 - **Match the structure the table chose:**
   - **Sandbox:** factions with goals, locations, rumors and clocks rather than plot.

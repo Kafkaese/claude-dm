@@ -20,7 +20,7 @@ Setting up a fight takes a moment. Use it: give the player something to do while
 4. **Surprise:** if the enemies strike first from hiding, it's fine to narrate the ambush and then ask for initiative in the same message.
 
 ## Solo and small parties
-Balance is the hardest part of solo play, and challenge ratings underestimate how dangerous enemies are to a lone character. Use the system's solo guideline (for PF1e: section 5 of `library/pf1e/rules/encounter-building.md`), plus these principles:
+Balance is the hardest part of solo play, and challenge ratings underestimate how dangerous enemies are to a lone character. Use the system's solo guideline (for PF1e: `library/pf1e/house-rules/solo-play.md`), plus these principles:
 - **Every fight either has an ally or is easy.** Give the PC help (a companion, a temporary ally like a turned henchman, a guard who joins in, a summoned creature, or terrain that works like an ally) or keep the encounter at the easy end of the scale. A challenging or hard solo fight without any help is only for a climax, and only if session zero's lethality allows it.
 - **Build for the worst plausible case,** e.g. an ally who might not join, or reinforcements who might arrive.
 - **Plan an exit ramp for every serious fight:** morale, surrender, bargaining, escape routes, or capture instead of death. Know it before the fight starts, not only once the PC is dying.
@@ -38,19 +38,52 @@ Never draw the map by hand, and never count squares in your head. `scripts/comba
 
 **In `play.py` mode,** run the script yourself. The interface prints the player view and the image after each turn, so don't paste them. **In the Claude Code UI, the gm-screen agent runs the script.** The narrator only pastes the player view it returns (see "Behind the screen" in `running-the-game.md`). Combat commands reveal stats (`add … --ac 17`) and hidden tokens, so they never run in the main session.
 
+**The script knows the rules, so don't do the math yourself.** Profiles, modifiers, durations, areas, saves and dying checks are deterministic code (`scripts/combat_rules.py`). Your job is the decisions (what each creature does) and the narration. Don't add modifiers by hand, and don't track durations in your head.
+
+**Combat profiles.** Every combatant gets its numbers from a ` ```combat-profile ` JSON block in its stat block (`library/<system>/bestiary/…`, a campaign NPC file) or character sheet (`players/characters/…`):
+```combat-profile
+{"init": 6, "hp": 6, "ac": 16, "touch": 13, "ff": 14, "cmb": 1, "cmd": 13,
+ "saves": {"fort": 3, "ref": 2, "will": -1}, "speed": 30, "size": 1, "reach": 5, "dr": 0,
+ "con": 12, "dex": 15, "feats": ["Improved Initiative"], "uncanny_dodge": false,
+ "attacks": {"short sword": {"bonus": 2, "damage": "1d4", "crit": 19, "mult": 2, "type": "melee"},
+             "shortbow": {"bonus": 4, "damage": "1d4", "crit": 20, "mult": 3, "type": "ranged", "range": 60}},
+ "full_attack": ["short sword"]}
+```
+Iterative attacks use a list: `"bonus": [10, 5]`. Natural attacks go in `full_attack`, e.g. `["bite", "claw", "claw"]`. A PC's profile only needs the defensive numbers (AC, touch, flat-footed, saves, Con, init), because the player rolls their own attacks. **If a stat block has no profile yet, add one before the fight,** taken exactly from the stat block. That's a one-time cost that makes every attack after it cheaper and error-free.
+
 **Setup:**
 - Use a prepared map from `dm/combat/maps/` if the prep has one, or write a quick map file. Otherwise use `--blank WxH`.
-- Add every combatant with its real initiative roll (from `roll.py`), HP, AC, CR, size, reach, speed, and `--ref` pointing to its stat block file.
-- Add enemies the PCs can't see yet with `--hidden`, and `reveal` them when they're spotted.
+- `add TOKEN NAME --pos D4 --ref <stat block or sheet> --init roll` (the PC gets the player's rolled initiative instead: `--init 17`). Add `--hidden` for enemies the PC hasn't noticed, and `reveal` them when they're spotted.
 
-**Attacks go through the script:** `combat.py attack`. It rolls NPC attacks (`--roll "1d20+9" --dmg "1d8+5" --crit 19 --mult 2`), or takes the player's numbers for PC attacks (`--total 17 --damage 9`, plus `--nat 20 --confirm 18` for crits). It confirms criticals, rolls damage only on a hit, applies hardness or DR (`add … --dr 5`), updates HP and writes the **combat log**, the player-safe record of every attack, hit, miss and damage number. Never roll attacks with `roll.py` during a grid fight. Use `log "…"` for anything else the player should see in the log (a spell's effect, a surrender). Give PCs and allies `--con` so the log shows "dead" correctly.
+**Attacks:** `attack g1 C --with "short sword"` (add `--full` for a full attack, `--charge`, `--touch`, `--aoo`). For a PC: `attack C g1 --total 17 --damage 9` (plus `--nat 20 --confirm 18` for crits, `--ranged` for ranged attacks). The script applies what it can see:
+- **flanking**
+- **conditions** (shaken, sickened, prone, entangled, grappled, fighting defensively, …)
+- **charge**
+- **flat-footed AC** before a creature's first turn (unless it has uncanny dodge), and **touch AC**
+- **range increments**
+- **firing into melee**, unless the attacker has Precise Shot
+- **cover** from walls, and **soft cover** from creatures for ranged attacks
+- **concealment**, with the miss chance rolled
 
-**During play:**
-- `move` for every movement. It finds the cheapest legal path, reports the feet used, and warns about leaving threatened squares (AoO).
-- `dist` for ranges.
-- `threat` for flanking and threatened squares.
-- `hp` and `cond` after every hit, heal or condition.
-- `next` to advance the turn, at the **start** of each step (see "Flow").
+It confirms crits, rolls damage only on a hit, applies DR, and writes the **combat log**, the player-safe record the interface shows. For PC attacks it applies the target side, and lists attacker-side modifiers as reminders so you can check the player included them. Never roll attacks with `roll.py`. Use `log "…"` for anything else the player should see in the log.
+
+**Conditions and effects:** `cond g1 add shaken --rounds 1`, `cond C add bless --atk 1 --rounds 30`, `cond g1 add bleeding --ongoing 1d4`. Known conditions carry their modifiers. Timed ones end by themselves, and ongoing damage is rolled at the start of the creature's turn.
+
+**Areas and saves:**
+- `area burst 10 --at D4 --save ref --dc 13 --dmg 2d6 --half --name "burning hands"`, or `area cone 15 --from C --toward E5 …`, or `line`. The damage is rolled once, and NPC saves come from their profiles.
+- A PC's save becomes a pending question. Resolve it with `save C --total 17` when the player answers.
+- A single save: `save g1 will --dc 14`.
+
+**Movement:** `move g1 D4`, or `move C C4 --step` for a 5-foot step. The script tracks feet per turn.
+- **Leaving a threatened square:** NPCs' attacks of opportunity are rolled automatically, and the mover stops if they drop it (use `--no-aoo` only for a deliberate exception). A PC's chance to take an AoO opens a question, unless its standing order says otherwise (`order C aoo never|always|ask`).
+
+**`next`** moves the pointer at the **start** of each step (see "Flow"), and handles the start of that creature's turn:
+- ends expiring conditions and applies ongoing damage
+- resets its AoOs and movement
+- makes a dying NPC's stabilization check
+- for a dying PC, opens a question asking for their check. Resolve it with `stabilize C --total N`
+
+**Also:** `dist` for ranges, `threat` for who threatens or flanks, and `hp` for healing and other HP changes. **`end`** writes the XP, puts the PC's HP back on their sheet, and appends the combat log to the session log.
 
 **The two views:**
 - `show` is the **player view**. Paste it verbatim in a code block. It hides hidden tokens and shows enemy health as words.

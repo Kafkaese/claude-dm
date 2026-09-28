@@ -7,7 +7,7 @@ What the table agreed on. The DM follows this, and anyone can ask to revisit it.
 - **Content:** original / published (which)
 - **Players:**
 - **Solo support:** companion NPC / gestalt / both / neither. Companion played by: player / DM. Built by: player / DM.
-- **Encounter scaling:** effective APL = APL − N (see `library/<system>/rules/encounter-building.md`)
+- **Encounter scaling:** effective APL = APL − N (see `library/<system>/house-rules/solo-play.md`)
 
 ## Published Adventures
 The DM avoids spoilers for published adventures, except for those listed here. See `library/general/table-rules/published-content.md`.

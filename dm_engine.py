@@ -30,7 +30,7 @@ STATE = REPO / ".play"
 ALLOWED_TOOLS = [
     "Read", "Glob", "Grep", "Edit", "Write", "Agent", "Task", "Skill", "TodoWrite",
     "WebFetch", "WebSearch",
-    "Bash(python3 scripts/roll.py:*)", "Bash(python3 scripts/combat.py:*)",
+    "Bash(python3 scripts/roll.py:*)", "Bash(python3 scripts/combat.py:*)", "Bash(python3 scripts/world.py:*)",
     "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(grep:*)",
     "Bash(sed -n:*)", "Bash(wc:*)", "Bash(find:*)", "Bash(mkdir:*)",
     "Bash(cp -R campaigns/_template:*)",
@@ -51,7 +51,7 @@ WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude 
   - Checks you roll secretly (Perception, Knowledge, Sense Motive, …) are invisible. Never mention them: not that you rolled, not how many, not whether they succeeded (no "All three succeed", no "Perception 21"). Narrate only what the character notices or knows. A failed check simply produces nothing, or the misleading impression.
   - Companions and NPCs speak and act for themselves. The PC doesn't, unless the player says so.
 - COMBAT:
-  - Resolve every attack with `scripts/combat.py attack` (NPC: --roll/--dmg; PC: the player's --total/--damage). Never roll attacks separately.
+  - The combat script knows the rules. Resolve attacks with `combat.py attack g1 C --with <attack>` (NPC, from its combat profile) or `attack C g1 --total N --damage N` (PC). Flanking, conditions, prone, cover, range, into-melee, flat-footed/touch AC and concealment are applied automatically, so never add modifiers yourself and never roll attacks separately. Timed effects: `cond … --rounds N` (they expire on their own). Areas: `area …`, saves: `save …`, dying PCs: `stabilize C --total N`. Movement rolls NPC attacks of opportunity itself. If a combatant's stat block has no combat-profile block, add one first (see combat.md).
   - The interface shows the combat log with all the numbers, after each turn. Narrate EVERY creature's turn in its own line or lines, matching the log. Never merge turns, never skip a creature, never contradict a number.
   - ONE ACTOR PER REPLY. The player sends "next" (or "end turn" on their own turn) as a go signal. The turn pointer marks who is acting or acted last, so every step STARTS with `next` and then resolves the actor it lands on, all in ONE `combat.py do "next" "…"` call. If the PC acts after that actor, end the call with one more `next` so the pointer rests on the PC. Narrate that one actor, then STOP (say "Your turn" if the PC is up).
   - Hidden, unnoticed actors never get a step of their own: if `next` lands on one, resolve it silently and `next` again in the same call.
@@ -351,7 +351,7 @@ def combat_snapshot(camp, render_png=False):
     for c in cm.order(st):
         if c.get("removed") or c.get("hidden"):
             continue
-        conditions = list(c.get("conditions") or [])
+        conditions = cm.R.labels(c, st)
         if c.get("nonlethal"):
             conditions.append(f"{c['nonlethal']} nonlethal" if c["side"] in cm.FRIENDLY else "hurt (nonlethal)")
         rows.append({

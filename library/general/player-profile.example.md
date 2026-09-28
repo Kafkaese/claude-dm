@@ -1,4 +1,6 @@
-# Player Profile
+# Player Profile (example)
+Copy to `player-profile.md` (kept local, not tracked). `/new-campaign` creates it if it's missing.
+
 
 Standing information about the player that holds across all campaigns. `/new-campaign` reads this, confirms it with the player, and copies what's relevant into the new campaign's session zero. Update it whenever the player mentions something new.
 
@@ -8,5 +10,4 @@ Spoilers for these are fine. Include each one's outcome at the player's table if
 |---|---|---|---|
 
 ## Notes
-- 2026-09-26: confirmed at session zero (sandpoint-delve): no published adventures played or read.
-- 2026-09-28: created `test-campaign`, a throwaway one-shot for testing table tooling, reusing Corin (level 3) from `sandpoint-delve` as-is. Expect it to be reused and overwritten.
+-

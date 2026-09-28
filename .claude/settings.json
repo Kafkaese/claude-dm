@@ -13,7 +13,8 @@
       "Edit(library/settings/**)",
       "Write(library/settings/**)",
       "Bash(python3 scripts/roll.py:*)",
-      "Bash(python3 scripts/combat.py:*)"
+      "Bash(python3 scripts/combat.py:*)",
+      "Bash(python3 scripts/world.py:*)"
     ]
   },
   "hooks": {

@@ -27,7 +27,7 @@ The procedure:
 2. **Scheduled events:** check `dm/world.md` for anything that happens now or has already happened.
 3. **Clocks:** does any clock in `dm/world.md` or `dm/threads.md` advance or fire?
 4. **Reaction triggers:** did anything the PCs did match a trigger in `dm/world.md`? Check the awareness and heat tracks too.
-5. **Random event:** only if the transition class allows it and the cooldown and budget permit (section 5). Roll the chance with `roll.py -H "Event check (N%): d%"`. On a result ≤ N, roll on the region's table:
+5. **Random event:** run `python3 scripts/world.py -c <campaign> turn CLASS --table dm/tables/<region>.md` (add `--settlement` in a town, and `--route "inn>market"` for trips between places). The script applies section 5 deterministically (class, region modifier, cooldown, repeated routes, budget), rolls, and on an event rolls the table. Don't do this math yourself. Count planned proactive events with `world.py planned "…"`. The old manual way, for reference:
    `python3 scripts/roll.py -c <campaign> -H --table campaigns/<campaign>/dm/tables/<region>.md`
 6. **Stuck?** If so, apply the stall response (section 4).
 7. **Pick at most one or two interruptions** per transition, and on a hop at most one. If several fire, prioritize the main plot's clocks and the reactions to the PCs, and queue the rest as scheduled events.
@@ -77,6 +77,8 @@ It rises with crimes that have witnesses or evidence: murder, theft, trespassing
 Stuck isn't the same as exploring. If the player is happily exploring or roleplaying, let them. Only stuck plus frustration calls for this ladder.
 
 ## 5. Frequency
+`scripts/world.py` implements this section (`config`, `session`, `day`, `turn`, `planned`, `status`); the rules below explain what it does.
+
 The goal is a world that feels alive **without discouraging movement**. Walking to the market or making the rounds between NPCs should never feel like running a gauntlet. Four things together set the frequency.
 
 ### a) World pressure (session zero)

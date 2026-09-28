@@ -63,7 +63,7 @@ Never write "from my calculation, correct me if I'm wrong" for official content.
 ## Step 4: Write the player sheet
 The file slug is the character's name in kebab-case.
 
-**`players/characters/<slug>.md`:** fill in `library/<system>/templates/character-sheet.md`. Include only what the player is allowed to see. If the player wanted DM-filled blanks **revealed now**, leave them out for the moment: the scribe adds them (step 5).
+**`players/characters/<slug>.md`:** fill in `library/<system>/character-sheet.md`. Include only what the player is allowed to see. **Fill in its `combat-profile` block** from the same numbers (current and max HP, AC, touch, flat-footed, CMD, saves, Con and Dex scores, init, speed, reach, uncanny dodge, and relevant feats like Combat Reflexes). `combat.py` reads it, so it must match the sheet. On an update (level-up, new gear), update the block too. If the player wanted DM-filled blanks **revealed now**, leave them out for the moment: the scribe adds them (step 5).
 
 ## Step 5: DM notes behind the screen
 Everything else is secret: inventing blanks, assessing abilities, and weaving the character into the plot. It may also need lore research. Delegate it to the **dm-scribe** agent (wait for the result: `run_in_background: false`):

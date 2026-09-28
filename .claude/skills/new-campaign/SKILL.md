@@ -27,7 +27,7 @@ When the interview is done, show a compact summary of all choices. Ask for corre
 3. Write the player-facing basics yourself. They came from the interview, so they're no spoilers:
    - `players/session-zero.md`: every choice the table agreed on, including "Published adventures"
    - `campaign.md`: name, system, setting, status `planning` and starting level
-   - Update `library/general/player-profile.md` with any published adventures the player mentioned.
+   - Update `library/general/player-profile.md` with any published adventures the player mentioned. If it doesn't exist yet, create it from `player-profile.example.md`. It stays local and isn't tracked.
 4. **Homebrew setting from the user's material:** collect the files, paths, URLs or pasted text now, and save them raw to `library/settings/<setting-slug>/source/`.
 
 ## Step 3: Build behind the screen

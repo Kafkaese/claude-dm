@@ -25,6 +25,8 @@ Session number: `NN` = "Sessions played" in `campaign.md` + 1, zero-padded to tw
 - **Description:** "Prepare the DM brief"
 - **Prompt:** "campaign `<slug>`, session NN: `brief`. Create `dm/session-log/session-NN.md` from `.claude/skills/start-session/session-log-template.md` if it doesn't exist, and set `campaign.md` status to `active`."
 
+Run `python3 scripts/world.py -c <slug> session` to reset the session's interruption count (and `day "<in-game date>"` if the date changed).
+
 Keep the brief in mind for the whole session. It replaces reading the DM files.
 
 ## Step 3: Out-of-character check-in
