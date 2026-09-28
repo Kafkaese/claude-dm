@@ -22,6 +22,8 @@ Usage: python3 scripts/world.py -c CAMPAIGN COMMAND [args]
 
 Every roll goes to dm/roll-log.md as a hidden roll.
 """
+from __future__ import annotations
+
 import argparse
 import json
 import re
@@ -31,6 +33,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from roll import append_log, evaluate, roll_table  # noqa: E402
+from typing import Any
+
+WorldState = dict[str, Any]   # the contents of dm/world-state.json
 
 PROJECT = Path(__file__).resolve().parents[1]
 PRESSURE = {"calm": (10, 1), "lively": (20, 2), "relentless": (35, 3)}   # base chance %, session budget
@@ -39,17 +44,24 @@ ALWAYS_ROLL = ("journey", "night-camp")   # still roll when the session budget i
 
 
 class WorldError(ValueError):
+    """A world-turn command that can't run (missing campaign, table, …)."""
     pass
 
 
-def state_file(camp):
+def state_file(camp: str) -> Path:
+    """The path of the campaign's world-state.json.
+
+    Raises:
+        WorldError: if the campaign folder doesn't exist.
+    """
     dm = PROJECT / "campaigns" / camp / "dm"
     if not dm.is_dir():
         raise WorldError(f"no such campaign: {camp}")
     return dm / "world-state.json"
 
 
-def load(camp):
+def load(camp: str) -> WorldState:
+    """Load the world state, or return lively defaults if the campaign has none yet."""
     f = state_file(camp)
     if f.exists():
         return json.loads(f.read_text(encoding="utf-8"))
@@ -57,23 +69,32 @@ def load(camp):
             "day": None, "day_events": 0, "routes": []}
 
 
-def save(camp, st):
+def save(camp: str, st: WorldState) -> None:
+    """Write the world state back to dm/world-state.json."""
     state_file(camp).write_text(json.dumps(st, indent=1), encoding="utf-8")
 
 
-def d100():
+def d100() -> int:
+    """Roll a d%, with the same random source as roll.py."""
     total, _, _ = evaluate("1d100", secrets.SystemRandom())
     return total
 
 
-def region_mod_from_table(path):
+def region_mod_from_table(path: Path) -> int:
+    """Read the '**Region modifier:** +10%' line from an event table (0 if there is none)."""
     m = re.search(r"Region modifier:\*?\*?\s*([+\-−±]?\s*\d+)", path.read_text(encoding="utf-8"))
     if not m:
         return 0
     return int(m.group(1).replace("−", "-").replace("±", "").replace(" ", ""))
 
 
-def cmd_turn(args, st):
+def cmd_turn(args: argparse.Namespace, st: WorldState) -> tuple[str, bool]:
+    """Run one world turn: work out the event chance for the transition class, apply the
+    repeated-route rule, settlement cooldown and session budget, roll, and roll the table on an event.
+
+    Returns:
+        (the report for the DM, whether any event happened). Updates `st` in place.
+    """
     klass = args.klass
     notes = []
     if args.route:
@@ -135,7 +156,8 @@ def cmd_turn(args, st):
     return "\n".join([head] + lines), any_event
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
+    """Command-line entry point. Returns the process exit code."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("-c", "--campaign", required=True)
     sub = p.add_subparsers(dest="command", required=True)

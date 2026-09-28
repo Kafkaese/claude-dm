@@ -19,6 +19,8 @@ In-game commands (not sent to the DM):
 End a line with \\ to continue your message on the next line.
 During a fight, press Enter on an empty line to play the next actor's turn ("next").
 """
+from __future__ import annotations
+
 import argparse
 import base64
 import json
@@ -29,6 +31,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 from dm_engine import EFFORTS, REPO, Engine, last_session
 
@@ -38,7 +41,8 @@ BOLD, ITAL, DIM, CYAN, RESET = "\033[1m", "\033[3m", "\033[2m", "\033[36m", "\03
 CLEAR_LINE = "\r\033[K"
 
 
-def inline_md(s):
+def inline_md(s: str) -> str:
+    """Convert inline markdown (code, bold, italic, bold italic) to ANSI escape codes."""
     s = re.sub(r"`([^`]+)`", CYAN + r"\1" + RESET, s)
     s = re.sub(r"\*\*\*(.+?)\*\*\*", BOLD + ITAL + r"\1" + RESET, s)
     s = re.sub(r"\*\*(.+?)\*\*", BOLD + r"\1" + RESET, s)
@@ -50,22 +54,25 @@ def inline_md(s):
 class Renderer:
     """Line-buffered markdown-to-ANSI renderer for streamed text."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.buf = ""
         self.in_code = False
 
-    def feed(self, text):
+    def feed(self, text: str) -> None:
+        """Add streamed text; every completed line is rendered right away."""
         self.buf += text
         while "\n" in self.buf:
             line, self.buf = self.buf.split("\n", 1)
             self._line(line)
 
-    def flush(self):
+    def flush(self) -> None:
+        """Render whatever is left of an unfinished line."""
         if self.buf:
             self._line(self.buf)
             self.buf = ""
 
-    def _line(self, line):
+    def _line(self, line: str) -> None:
+        """Render one markdown line (headings, quotes, lists, code fences, tables) as ANSI text."""
         if line.strip().startswith("```"):
             self.in_code = not self.in_code
             return
@@ -86,28 +93,32 @@ class Renderer:
 
 
 class Spinner:
+    """A status line with an animated spinner and elapsed seconds, drawn by a background thread."""
     FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 
-    def __init__(self):
-        self.label = None
+    def __init__(self) -> None:
+        self.label: str | None = None
         self.start = 0.0
         self.lock = threading.Lock()
         threading.Thread(target=self._run, daemon=True).start()
 
-    def show(self, label):
+    def show(self, label: str) -> None:
+        """Show the spinner with this label (the timer keeps running if it's already visible)."""
         with self.lock:
             if self.label is None:
                 self.start = time.time()
             self.label = label
 
-    def hide(self):
+    def hide(self) -> None:
+        """Clear the spinner line."""
         with self.lock:
             if self.label is not None:
                 sys.stdout.write(CLEAR_LINE)
                 sys.stdout.flush()
             self.label = None
 
-    def _run(self):
+    def _run(self) -> None:
+        """Background loop that redraws the spinner."""
         i = 0
         while True:
             time.sleep(0.12)
@@ -122,19 +133,27 @@ class Spinner:
 
 # ---------- map ----------
 
-def in_iterm():
+def in_iterm() -> bool:
+    """Whether the terminal is iTerm2 (which can show images inline)."""
     return os.environ.get("TERM_PROGRAM") == "iTerm.app" or os.environ.get("LC_TERMINAL") == "iTerm2"
 
 
 class MapWatcher:
-    def __init__(self, campaign, images):
+    """Prints the fight to the terminal after turns: new combat-log lines, the player view,
+    and the PNG map inline in iTerm2. Only what changed since the last call is printed."""
+
+    def __init__(self, campaign: str | None, images: bool) -> None:
+        """Args:
+            campaign: the campaign to watch, or None for the one with an active fight.
+            images: show the PNG inline (only has an effect in iTerm2).
+        """
         self.campaign = campaign
         self.images = images and in_iterm()
-        self.seen = {}
-        self.events_shown = None   # combat-log lines already printed for the current fight
-        self.last_state = None
+        self.seen: dict[str, float] = {}
+        self.events_shown: int | None = None   # combat-log lines already printed for the current fight
+        self.last_state: Path | None = None
 
-    def _events(self, state):
+    def _events(self, state: Path) -> None:
         """Print combat-log lines added since the last call (also after `end` archived the state)."""
         path = state
         if not path.exists():
@@ -161,13 +180,15 @@ class MapWatcher:
         else:
             self.last_state = state
 
-    def _campaign(self):
+    def _campaign(self) -> str | None:
+        """The watched campaign, or the one whose fight changed most recently."""
         if self.campaign:
             return self.campaign
         states = sorted(REPO.glob("campaigns/*/dm/combat/current.json"), key=lambda p: p.stat().st_mtime)
         return states[-1].parents[2].name if states else None
 
-    def _changed(self, path):
+    def _changed(self, path: Path) -> bool:
+        """Whether the file changed since the last check (and remember its new mtime)."""
         if not path.exists():
             self.seen.pop(str(path), None)
             return False
@@ -177,11 +198,12 @@ class MapWatcher:
         self.seen[str(path)] = m
         return True
 
-    def in_combat(self):
+    def in_combat(self) -> bool:
+        """Whether the watched campaign has an active fight."""
         camp = self._campaign()
-        return bool(camp) and (REPO / "campaigns" / camp / "dm" / "combat" / "current.json").exists()
+        return camp is not None and (REPO / "campaigns" / camp / "dm" / "combat" / "current.json").exists()
 
-    def prime(self):
+    def prime(self) -> None:
         """Remember the current map files without printing (so only later changes show)."""
         camp = self._campaign()
         if camp:
@@ -195,7 +217,8 @@ class MapWatcher:
                 except (OSError, ValueError):
                     pass
 
-    def show(self, force=False):
+    def show(self, force: bool = False) -> None:
+        """Print new combat-log lines and, if the fight changed (or force), the player view and the image."""
         camp = self._campaign()
         if not camp:
             if force:
@@ -226,7 +249,7 @@ class MapWatcher:
 class Terminal:
     """Turns engine events into terminal output."""
 
-    def __init__(self, spinner, maps):
+    def __init__(self, spinner: Spinner, maps: MapWatcher) -> None:
         self.spinner = spinner
         self.maps = maps
         self.r = Renderer()
@@ -234,7 +257,8 @@ class Terminal:
         self.idle_output = False
         self.blocks = 0
 
-    def on_event(self, ev):
+    def on_event(self, ev: dict[str, Any]) -> None:
+        """Handle one engine event (see dm_engine's module docstring)."""
         t = ev["type"]
         if t == "status":
             if ev["label"]:
@@ -270,15 +294,18 @@ class Terminal:
             self.spinner.hide()
             print(f"{DIM}{ev['line']}{RESET}")
 
-    def before_turn(self):
+    def before_turn(self) -> None:
+        """Reset the display state before sending the player's message."""
         self.at_prompt, self.idle_output, self.blocks = False, False, 0
         self.r = Renderer()
 
-    def after_turn(self):
+    def after_turn(self) -> None:
+        """Mark that the player is back at the prompt (replies arriving now need a fresh line)."""
         self.at_prompt = True
 
 
-def read_input():
+def read_input() -> str:
+    """Read the player's message; lines ending in a backslash continue on the next line."""
     lines = []
     prompt = f"\n{BOLD}>{RESET} "
     while True:
@@ -291,7 +318,8 @@ def read_input():
         return "\n".join(lines).strip()
 
 
-def main():
+def main() -> None:
+    """Command-line entry point: start the engine and run the input loop."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--resume", nargs="?", const="last", help="continue the last session, or a given session ID")
     ap.add_argument("--model", help="model alias or ID (default: your Claude Code default)")

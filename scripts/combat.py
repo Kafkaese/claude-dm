@@ -90,6 +90,8 @@ The combat log (events) is what the player sees about attacks, damage and condit
 new lines after every turn. The numbers shown: attack totals (against AC only for PCs and allies),
 damage per hit (and what hardness/DR absorbed), PC/ally HP, enemy health in words.
 """
+from __future__ import annotations
+
 import argparse
 import json
 import math
@@ -97,9 +99,15 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import combat_rules as R  # noqa: E402
+
+Token = R.Token    # one combatant in the combat state
+State = R.State    # the whole combat state (dm/combat/current.json)
+Square = R.Square  # (x, y) grid coordinates, 0-based
+Args = argparse.Namespace
 
 PROJECT = Path(__file__).resolve().parents[1]
 TERRAIN = {
@@ -115,32 +123,49 @@ FRIENDLY = {"pc", "ally"}
 
 
 class CombatError(ValueError):
+    """A combat command that can't be carried out; the message explains why."""
     pass
 
 
 # ---------- state ----------
 
-def state_path(campaign):
+def state_path(campaign: str) -> Path:
+    """The path of the campaign's current.json.
+
+    Raises:
+        CombatError: if the campaign doesn't exist.
+    """
     dm = PROJECT / "campaigns" / campaign / "dm"
     if not dm.is_dir():
         raise CombatError(f"no such campaign: {campaign}")
     return dm / "combat" / "current.json"
 
 
-def load(campaign):
+def load(campaign: str) -> State:
+    """Load the active encounter.
+
+    Raises:
+        CombatError: if there is none.
+    """
     path = state_path(campaign)
     if not path.exists():
         raise CombatError("no active encounter; start one with 'new'")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def save(campaign, st):
+def save(campaign: str, st: State) -> None:
+    """Write the encounter state back to current.json."""
     path = state_path(campaign)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(st, indent=1), encoding="utf-8")
 
 
-def token(st, tok):
+def token(st: State, tok: str) -> Token:
+    """The token with this id.
+
+    Raises:
+        CombatError: if there is no such token.
+    """
     for c in st["tokens"]:
         if c["token"] == tok:
             return c
@@ -149,7 +174,8 @@ def token(st, tok):
 
 # ---------- geometry ----------
 
-def parse_pos(s, st=None):
+def parse_pos(s: str, st: State | None = None) -> Square:
+    """Parse a square like 'D4' into 0-based (x, y), checking it's on the map if `st` is given."""
     s = s.strip().upper()
     if len(s) < 2 or not s[0].isalpha() or not s[1:].isdigit():
         raise CombatError(f"bad square '{s}', expected e.g. D4")
@@ -159,39 +185,47 @@ def parse_pos(s, st=None):
     return x, y
 
 
-def fmt_pos(x, y):
+def fmt_pos(x: int, y: int) -> str:
+    """Format 0-based coordinates as a square name like 'D4'."""
     return f"{chr(ord('A') + x)}{y + 1}"
 
 
-def cells(c, at=None):
+def cells(c: Token, at: Square | None = None) -> list[Square]:
+    """The squares a token occupies, at its position or at `at`."""
     x, y = at or (c["x"], c["y"])
     return [(x + i, y + j) for i in range(c["size"]) for j in range(c["size"])]
 
 
-def sq_dist(a, b):
+def sq_dist(a: Square, b: Square) -> int:
+    """Distance in squares, PF1e style (every second diagonal counts double)."""
     dx, dy = abs(a[0] - b[0]), abs(a[1] - b[1])
     return max(dx, dy) + min(dx, dy) // 2
 
 
-def feet_between(c1, c2):
+def feet_between(c1: Token, c2: Token) -> int:
+    """Shortest distance in feet between two tokens."""
     return 5 * min(sq_dist(a, b) for a in cells(c1) for b in cells(c2))
 
 
-def cost(st, x, y):
+def cost(st: State, x: int, y: int) -> int | None:
+    """Movement cost multiplier of a square (1 or 2), or None if it blocks movement or is off the map."""
     if not (0 <= x < st["w"] and 0 <= y < st["h"]):
         return None
     return TERRAIN.get(st["grid"][y][x], ("?", 1))[1]
 
 
-def label(c):
+def label(c: Token) -> str:
+    """The token id for DM output, tagged [HIDDEN] if the players can't see it."""
     return c["token"] + (" [HIDDEN]" if c.get("hidden") else "")
 
 
-def active(c):
+def active(c: Token) -> bool:
+    """Whether the token is still in the fight (not removed, above 0 HP)."""
     return not c.get("removed") and c["hp"] > 0
 
 
-def blocked_by_hostile(st, mover, x, y):
+def blocked_by_hostile(st: State, mover: Token, x: int, y: int) -> bool:
+    """Whether an active enemy of the mover stands on the square."""
     for o in st["tokens"]:
         if o is mover or not active(o):
             continue
@@ -200,16 +234,18 @@ def blocked_by_hostile(st, mover, x, y):
     return False
 
 
-def occupied(st, mover, x, y):
+def occupied(st: State, mover: Token, x: int, y: int) -> bool:
+    """Whether any other token stands on the square."""
     return any(o is not mover and not o.get("removed") and (x, y) in cells(o) for o in st["tokens"])
 
 
-def path_cost(st, mover, dest):
+def path_cost(st: State, mover: Token, dest: Square) -> int:
     """Cheapest legal move in feet (Dijkstra over (x, y, diagonal parity))."""
     import heapq
     start = (mover["x"], mover["y"])
 
-    def footprint_ok(x, y, final):
+    def footprint_ok(x: int, y: int, final: bool) -> bool:
+        """Whether the mover's whole footprint fits at (x, y); the final square must also be unoccupied."""
         for cx, cy in cells(mover, (x, y)):
             if cost(st, cx, cy) is None or blocked_by_hostile(st, mover, cx, cy):
                 return False
@@ -217,8 +253,9 @@ def path_cost(st, mover, dest):
                 return False
         return True
 
-    def step_cost(x, y):
-        return max(cost(st, cx, cy) for cx, cy in cells(mover, (x, y)))
+    def step_cost(x: int, y: int) -> int:
+        """The highest movement cost under the mover's footprint at (x, y)."""
+        return max(cost(st, cx, cy) or 1 for cx, cy in cells(mover, (x, y)))   # footprint_ok ruled out None
 
     if not footprint_ok(*dest, final=True):
         raise CombatError(f"{fmt_pos(*dest)} is blocked or occupied")
@@ -253,7 +290,8 @@ def path_cost(st, mover, dest):
     raise CombatError(f"no legal path to {fmt_pos(*dest)}")
 
 
-def threatens(a, t):
+def threatens(a: Token, t: Token) -> bool:
+    """Whether `a` threatens `t`: active, hostile to it, and within reach (reach-10 diagonal rule included)."""
     if not active(a) or a is t or a.get("no_threat"):
         return False
     if (a["side"] in FRIENDLY) == (t["side"] in FRIENDLY):
@@ -267,7 +305,7 @@ def threatens(a, t):
     return False
 
 
-def flanks(a, b, t):
+def flanks(a: Token, b: Token, t: Token) -> bool:
     """PF1e: the line between attacker centres passes through opposite borders/corners of t."""
     s = t["size"]
     x0, y0, x1, y1 = t["x"], t["y"], t["x"] + s, t["y"] + s
@@ -289,7 +327,8 @@ def flanks(a, b, t):
         return False
     eps = 1e-9
 
-    def edges(tt):
+    def edges(tt: float) -> set[str]:
+        """Which borders of the target's space (L, R, T, B) the line touches at parameter tt."""
         px, py = ax + tt * dx, ay + tt * dy
         return {e for e, hit in (("L", abs(px - x0) < eps), ("R", abs(px - x1) < eps),
                                  ("T", abs(py - y0) < eps), ("B", abs(py - y1) < eps)) if hit}
@@ -300,7 +339,8 @@ def flanks(a, b, t):
 
 # ---------- rendering ----------
 
-def health(c):
+def health(c: Token) -> str:
+    """Health as a word for the players: unhurt, scratched, hurt, bloodied, barely standing, down."""
     if c.get("removed"):
         return "gone"
     if c["hp"] <= 0:
@@ -310,11 +350,13 @@ def health(c):
             else "bloodied" if r > 0.25 else "barely standing")
 
 
-def order(st):
+def order(st: State) -> list[Token]:
+    """Tokens in initiative order (ties: the higher initiative modifier first)."""
     return sorted(st["tokens"], key=lambda c: (-c["init"], -c.get("init_tb", 0)))
 
 
-def render(st, dm=False):
+def render(st: State, dm: bool = False) -> str:
+    """The ASCII map and initiative list. The player view hides hidden tokens and exact enemy HP."""
     visible = [c for c in st["tokens"] if not c.get("removed") and (dm or not c.get("hidden"))]
     board = [list(row) for row in st["grid"]]
     for c in visible:
@@ -350,9 +392,9 @@ def render(st, dm=False):
         if dm:
             extra += [f"AC {c['ac']}" if c.get("ac") else "", "hidden" if c.get("hidden") else "",
                       f"CR {c['cr']}" if c.get("cr") else "", f"ref {c['ref']}" if c.get("ref") else ""]
-        extra = "  ".join(e for e in extra if e)
+        extras = "  ".join(e for e in extra if e)
         init = f"{c['init']:g}"
-        out.append(f"{mark} {c['token']:<2} {c['name']:<18} {init:>4}  {hp:<16}{extra}".rstrip())
+        out.append(f"{mark} {c['token']:<2} {c['name']:<18} {init:>4}  {hp:<16}{extras}".rstrip())
     return "\n".join(out)
 
 
@@ -372,7 +414,8 @@ FONT_PATHS = ["/System/Library/Fonts/Supplemental/Arial Bold.ttf", "/System/Libr
               "/Library/Fonts/Arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "DejaVuSans.ttf"]
 
 
-def font(size):
+def font(size: int) -> Any:
+    """A TrueType font at this size for the PNG renderer (falls back to Pillow's default font)."""
     from PIL import ImageFont
     for path in FONT_PATHS:
         try:
@@ -385,11 +428,13 @@ def font(size):
         return ImageFont.load_default()
 
 
-def image_path(campaign):
+def image_path(campaign: str) -> Path:
+    """Where the PNG player view is written (players/combat-map.png)."""
     return PROJECT / "campaigns" / campaign / "players" / "combat-map.png"
 
 
-def draw_square(d, ch, x0, y0):
+def draw_square(d: Any, ch: str, x0: int, y0: int) -> None:
+    """Draw one terrain square with its pattern onto a Pillow ImageDraw."""
     c, x1, y1 = COLORS, x0 + CELL, y0 + CELL
     base = {"#": "wall", "_": "pit", " ": "outside", "^": "difficult", "~": "water",
             "T": "trees", "=": "bridge"}.get(ch, "floor")
@@ -415,10 +460,10 @@ def draw_square(d, ch, x0, y0):
         d.rectangle([x0, y0, x1, y1], outline=c["grid"], width=1)
 
 
-_TILES = {}
+_TILES: dict[str, Any] = {}
 
 
-def tile(ch):
+def tile(ch: str) -> Any:
     """One square as its own image, so patterns can't bleed into neighbours."""
     if ch not in _TILES:
         from PIL import Image, ImageDraw
@@ -431,7 +476,7 @@ def tile(ch):
 TERRAIN_NAMES = {"#": "wall", "+": "door", "^": "difficult", "~": "water", "T": "trees", "_": "pit", "=": "bridge"}
 
 
-def render_image(st, path, panel=True):
+def render_image(st: State, path: Path, panel: bool = True) -> Path:
     """The player view as a PNG. panel=False draws only the map (transparent margins, no round
     title, no initiative panel or legend), for interfaces that show those themselves."""
     try:
@@ -508,22 +553,26 @@ def render_image(st, path, panel=True):
     return path
 
 
-def maybe_image(args, st):
+def maybe_image(args: Args, st: State) -> None:
+    """Re-render the PNG if the table turned the image view on."""
     if st.get("image"):
         render_image(st, image_path(args.campaign))
 
 
 # ---------- combat log ----------
 
-def event(st, text):
+def event(st: State, text: str) -> None:
+    """Add a player-safe line to the combat log."""
     st.setdefault("events", []).append({"round": st.get("round", 1), "text": text})
 
 
-def who(c):
+def who(c: Token) -> str:
+    """The name the players see for a token."""
     return c["name"]
 
 
-def status(c):
+def status(c: Token) -> str:
+    """Health for the log: exact HP (with disabled/dying/dead) for PCs and allies, a word for enemies."""
     if c["side"] in FRIENDLY:
         s = f"{c['hp']}/{c['max_hp']} HP"
         if c["hp"] == 0:
@@ -536,7 +585,7 @@ def status(c):
     return health(c)
 
 
-def apply_damage(c, dmg, nonlethal=False):
+def apply_damage(c: Token, dmg: int, nonlethal: bool = False) -> tuple[int, int]:
     """Apply damage after hardness/DR. Returns (dealt, absorbed)."""
     dr = c.get("dr") or 0
     dealt = max(0, dmg - dr)
@@ -548,7 +597,8 @@ def apply_damage(c, dmg, nonlethal=False):
     return dealt, absorbed
 
 
-def _roll(expr):
+def _roll(expr: str) -> tuple[int, str, list[str]]:
+    """Roll a dice expression with roll.py's evaluator. Returns (total, detail, flags)."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import secrets
     from roll import evaluate
@@ -556,14 +606,15 @@ def _roll(expr):
     return total, detail, flags
 
 
-def _natural(detail):
+def _natural(detail: str) -> int | None:
     """The d20 face from a roll.py detail string like '[17]+9'."""
     import re
     m = re.match(r"\[(\d+)\]", detail)
     return int(m.group(1)) if m else None
 
 
-def cmd_attack(args, st):
+def cmd_attack(args: Args, st: State) -> str:
+    """The attack command: resolve the attack(s) and keep the roll log complete."""
     out = _attack(args, st)
     try:  # keep the roll log complete
         sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -574,7 +625,7 @@ def cmd_attack(args, st):
     return out
 
 
-def attack_mods(st, a, t, kind, touch=False, charge=False, weapon=None):
+def attack_mods(st: State, a: Token, t: Token, kind: str, touch: bool = False, charge: bool = False, weapon: dict[str, Any] | None = None) -> tuple[int, int, list[str], list[str], int]:
     """Situational modifiers for one attack. Returns (attacker delta, target AC, log notes,
     DM notes, miss chance %). kind is 'melee' or 'ranged'."""
     atk, notes, dmnotes = 0, [], []
@@ -644,10 +695,12 @@ def attack_mods(st, a, t, kind, touch=False, charge=False, weapon=None):
     return atk, ac, notes, dmnotes, miss
 
 
-def _attack(args, st):
+def _attack(args: Args, st: State) -> str:
+    """Work out which attacks are made (profile --with/--full, raw --roll, or the PC's --total) and resolve each."""
     a, t = token(st, args.attacker), token(st, args.target)
     prof = a.get("profile") or {}
-    entries = []   # (label, bonus, damage expr, crit, mult, kind, weapon dict)
+    # (label, bonus, damage expr, crit, mult, kind, weapon dict)
+    entries: list[tuple[str | None, int | None, str | None, int, int, str, dict[str, Any] | None]] = []
     if args.total is not None:
         entries.append((args.name, None, None, 20, 2, "ranged" if args.ranged else "melee", None))
     elif args.roll:
@@ -658,7 +711,7 @@ def _attack(args, st):
         entries.append((args.name, bonus, args.dmg, args.crit, args.mult,
                         "ranged" if args.ranged else "melee", {"range": args.range_inc}))
     else:
-        names = prof.get("full_attack") if args.full and prof.get("full_attack") else [args.with_]
+        names: list[str] = prof["full_attack"] if args.full and prof.get("full_attack") else [args.with_]
         for n in names:
             key, w = R.find_attack(prof, n)
             if not w:
@@ -684,7 +737,10 @@ def _attack(args, st):
     return "\n".join(out)
 
 
-def _attack_once(args, st, a, t, name, bonus, dmg_expr, crit_at, mult, kind, weapon):
+def _attack_once(args: Args, st: State, a: Token, t: Token, name: str | None, bonus: int | None, dmg_expr: str | None, crit_at: int, mult: int, kind: str, weapon: dict[str, Any] | None) -> str:
+    """Resolve one attack: situational modifiers, the roll (or the PC's total) against the adjusted AC,
+    crit confirmation, concealment, damage and DR. Writes the combat log line; returns the DM report.
+    """
     atk_delta, ac, notes, dmnotes, miss = attack_mods(st, a, t, kind, args.touch, args.charge, weapon)
     if args.ac is not None:
         ac = args.ac
@@ -760,7 +816,8 @@ def _attack_once(args, st, a, t, name, bonus, dmg_expr, crit_at, mult, kind, wea
     return "\n".join(dm + [f"HIT. HP {t['hp']}/{t['max_hp']}. Log: {line}{res}"])
 
 
-def cmd_ask(args, st):
+def cmd_ask(args: Args, st: State) -> str:
+    """Set (or clear) the open question that pauses auto-combat."""
     if args.clear or not args.question:
         st.pop("awaiting", None)
         return "No open question."
@@ -768,12 +825,14 @@ def cmd_ask(args, st):
     return f"Waiting for the player: {args.question}"
 
 
-def cmd_log(args, st):
+def cmd_log(args: Args, st: State) -> str:
+    """Add a free-text line to the combat log."""
     event(st, args.text)
     return f"Logged: {args.text}"
 
 
-def cmd_events(args, st):
+def cmd_events(args: Args, st: State) -> str:
+    """Print combat-log lines not shown yet (or all with --all)."""
     evs = st.get("events", [])
     start = 0 if args.all else st.get("events_shown", 0)
     st["events_shown"] = len(evs)
@@ -783,7 +842,8 @@ def cmd_events(args, st):
 
 # ---------- commands ----------
 
-def cmd_new(args):
+def cmd_new(args: Args) -> str:
+    """Start an encounter from a map file or a blank grid."""
     path = state_path(args.campaign)
     if path.exists() and not args.force:
         raise CombatError("an encounter is already active; 'end' it first or pass --force")
@@ -812,7 +872,8 @@ def cmd_new(args):
     return render(st, dm=True)
 
 
-def cmd_add(args, st):
+def cmd_add(args: Args, st: State) -> str:
+    """Add a combatant, taking its numbers from a validated combat profile (and a PC's HP from its sheet)."""
     if len(args.token) > 2:
         raise CombatError("tokens are at most 2 characters")
     if any(c["token"] == args.token for c in st["tokens"]):
@@ -832,7 +893,8 @@ def cmd_add(args, st):
             raise CombatError(f"the combat profile for {args.token} has errors (fix the stat block's block, "
                               f"see library/<system>/combat-profile-guide.md):\n  " + "\n  ".join(errs))
 
-    def pick(arg, key, default=None):
+    def pick(arg: Any, key: str, default: Any = None) -> Any:
+        """The command-line value if given, else the profile's, else the default."""
         return arg if arg is not None else prof.get(key, default)
 
     notes = []
@@ -840,7 +902,7 @@ def cmd_add(args, st):
         if "init" not in prof:
             raise CombatError("give --init N, or a profile with 'init' to roll it")
         total_i, detail, _ = _roll(f"1d20{prof['init']:+d}")
-        init = total_i
+        init: float = total_i
         notes.append(f"initiative 1d20{prof['init']:+d} → {detail} = {total_i}")
     else:
         init = float(args.init)
@@ -872,7 +934,10 @@ def cmd_add(args, st):
         f" ({'; '.join(notes)})" if notes else "")
 
 
-def cmd_next(args, st):
+def cmd_next(args: Args, st: State) -> str:
+    """Advance the turn pointer and handle the start of that creature's turn: expiring conditions,
+    ongoing damage, AoO and movement resets, and dying checks (NPCs roll; a dying PC opens a question).
+    """
     live = [c for c in order(st) if not c.get("removed") and (c["hp"] > 0 or c["side"] in FRIENDLY)]
     if not live:
         raise CombatError("no combatants")
@@ -914,7 +979,8 @@ def cmd_next(args, st):
     return "\n".join(out)
 
 
-def aoo_left(o):
+def aoo_left(o: Token) -> int:
+    """How many attacks of opportunity the token has left this round (1, or 1 + Dex with Combat Reflexes)."""
     prof = o.get("profile") or {}
     allowed = prof.get("aoo")
     if allowed is None:
@@ -923,7 +989,7 @@ def aoo_left(o):
     return allowed - o.get("aoo_used", 0)
 
 
-def provoke_aoos(st, c, no_aoo=False, reason="provoking"):
+def provoke_aoos(st: State, c: Token, no_aoo: bool = False, reason: str = 'provoking') -> tuple[list[str], int]:
     """Resolve the attacks of opportunity that `c` provokes right now. NPC and ally threateners
     attack automatically (first melee attack in their profile); a PC's chance opens a question
     (unless its standing order says never). Returns (lines, damage c took)."""
@@ -962,7 +1028,8 @@ def provoke_aoos(st, c, no_aoo=False, reason="provoking"):
     return out, max(0, hp_before - c["hp"])
 
 
-def cmd_provoke(args, st):
+def cmd_provoke(args: Args, st: State) -> str:
+    """Resolve the AoOs a creature provokes now; a PC casting who takes damage gets a concentration question."""
     c = token(st, args.token)
     out, dmg = provoke_aoos(st, c, args.no_aoo, args.reason)
     if dmg and c["side"] == "pc" and c["hp"] > 0 and "cast" in args.reason.lower():
@@ -974,17 +1041,19 @@ def cmd_provoke(args, st):
 
 # ---------- spellcasting ----------
 
-def _spent(c):
+def _spent(c: Token) -> dict[str, Any]:
+    """The token's record of used spell slots, cast prepared spells and SLA uses (created if missing)."""
     return c.setdefault("spent", {"slots": {}, "prepared": {}, "sla": {}})
 
 
-def _concentration(st, c, bonus, dc, why):
+def _concentration(st: State, c: Token, bonus: int, dc: int, why: str) -> tuple[bool, str]:
+    """Roll a concentration check. Returns (success, report line)."""
     total_c, detail, _ = _roll(f"1d20{bonus:+d}")
     ok = total_c >= dc
     return ok, f"concentration ({why}) 1d20{bonus:+d} → {detail} = {total_c} vs DC {dc}: {'success' if ok else 'FAILED, the spell is lost'}"
 
 
-def _cast_common(st, c, name, level, conc_bonus, args):
+def _cast_common(st: State, c: Token, name: str, level: int, conc_bonus: int, args: Args) -> tuple[list[str], bool]:
     """Provoking, defensive casting and concentration. Returns (lines, success)."""
     out = []
     threatened = any(threatens(o, c) for o in st["tokens"])
@@ -1005,7 +1074,8 @@ def _cast_common(st, c, name, level, conc_bonus, args):
     return out, True
 
 
-def cmd_cast(args, st):
+def cmd_cast(args: Args, st: State) -> str:
+    """An NPC casts a spell: check and spend the slot or prepared copy, provoke or cast defensively, then the effect."""
     c = token(st, args.token)
     spell = args.spell.lower()
     casters = (c.get("profile") or {}).get("spellcasting") or []
@@ -1054,7 +1124,7 @@ def cmd_cast(args, st):
     return "\n".join([head] + ([f"  {left_note}"] if left_note else []) + lines + effect)
 
 
-def _spell_effect(args, st, c, name, dc):
+def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) -> list[str]:
     """The effect part of cast/sla: an area template or a single target, with save and damage.
     The player's log and questions say "the spell" / "the ability": naming it is a Spellcraft matter."""
     out = []
@@ -1074,6 +1144,8 @@ def _spell_effect(args, st, c, name, dc):
             dmg, detail, _ = _roll(args.dmg)
             out.append(f"{name}: damage {args.dmg} → {detail} = {dmg}")
         if args.save:
+            if dc is None:
+                raise CombatError("--save needs a DC: pass --dc")
             if t["side"] == "pc":
                 st.setdefault("pending_saves", {})[t["token"]] = {
                     "kind": args.save, "dc": dc, "dmg": dmg, "half": args.half, "name": shown}
@@ -1096,7 +1168,8 @@ def _spell_effect(args, st, c, name, dc):
     return out
 
 
-def cmd_sla(args, st):
+def cmd_sla(args: Args, st: State) -> str:
+    """An NPC uses a spell-like ability: check and spend a use, provoke or use it defensively, then the effect."""
     c = token(st, args.token)
     name = args.name.lower()
     entry = next((s for s in (c.get("profile") or {}).get("sla") or [] if s["name"].lower() == name), None)
@@ -1126,7 +1199,8 @@ def cmd_sla(args, st):
     return "\n".join([head] + ([f"  {note}"] if note else []) + lines + effect)
 
 
-def cmd_spells(args, st):
+def cmd_spells(args: Args, st: State) -> str:
+    """The remaining slots, prepared spells and SLA uses of a token (DM view)."""
     c = token(st, args.token)
     prof = c.get("profile") or {}
     sp = _spent(c)
@@ -1158,7 +1232,8 @@ def cmd_spells(args, st):
     return "\n".join(out) or f"{c['token']} has no spells or spell-like abilities"
 
 
-def campaign_system(campaign):
+def campaign_system(campaign: str) -> str:
+    """The campaign's system from the '**System:**' line of campaign.md (default 'pf1e')."""
     f = PROJECT / "campaigns" / campaign / "campaign.md"
     if f.exists():
         m = re.search(r"\*\*System:\*\*\s*([a-z0-9]+)", f.read_text(encoding="utf-8"))
@@ -1167,7 +1242,7 @@ def campaign_system(campaign):
     return "pf1e"
 
 
-def cmd_profile(args):
+def cmd_profile(args: Args) -> int:
     """profile check FILE [FILE …]: validate the combat-profile blocks in stat block files."""
     system = campaign_system(args.campaign)
     bad = 0
@@ -1194,8 +1269,15 @@ def cmd_profile(args):
     return 1 if bad else 0
 
 
-def cmd_move(args, st):
+def cmd_move(args: Args, st: State) -> str:
+    """Move a token along the cheapest legal path. Tracks feet per turn and the 5-foot step, and resolves
+    the attacks of opportunity for leaving threatened squares (the mover stops if it drops).
+    """
     c = token(st, args.token)
+    if c["hp"] <= 0 and c["side"] not in FRIENDLY:
+        raise CombatError(f"{c['token']} is down (HP {c['hp']}) and can't move")
+    if c["hp"] < 0:
+        raise CombatError(f"{c['token']} is dying (HP {c['hp']}) and can't move")
     dest = parse_pos(args.pos, st)
     feet = path_cost(st, c, dest)
     frm = fmt_pos(c["x"], c["y"])
@@ -1228,7 +1310,8 @@ def cmd_move(args, st):
     return "\n".join(out)
 
 
-def resolve(st, ref):
+def resolve(st: State, ref: str) -> Token:
+    """A token by id, or a 1x1 pseudo-token for a square name (for distances)."""
     try:
         return token(st, ref)
     except CombatError:
@@ -1236,12 +1319,14 @@ def resolve(st, ref):
         return {"x": x, "y": y, "size": 1}
 
 
-def cmd_dist(args, st):
+def cmd_dist(args: Args, st: State) -> str:
+    """Distance in feet between two tokens or squares."""
     a, b = resolve(st, args.a), resolve(st, args.b)
     return f"{args.a} ↔ {args.b}: {feet_between(a, b)} ft"
 
 
-def cmd_threat(args, st):
+def cmd_threat(args: Args, st: State) -> str:
+    """Who threatens a token, and which pairs flank it."""
     t = token(st, args.token)
     th = [o for o in st["tokens"] if threatens(o, t)]
     if not th:
@@ -1253,7 +1338,8 @@ def cmd_threat(args, st):
     return "\n".join(out)
 
 
-def cmd_hp(args, st):
+def cmd_hp(args: Args, st: State) -> str:
+    """Change a token's HP (healing or damage outside an attack) and log it."""
     c = token(st, args.token)
     delta = int(args.delta)
     c["hp"] = min(c["max_hp"], c["hp"] + delta)
@@ -1267,7 +1353,8 @@ def cmd_hp(args, st):
     return f"{c['token']}: HP {c['hp']}/{c['max_hp']} ({state})"
 
 
-def cmd_cond(args, st):
+def cmd_cond(args: Args, st: State) -> str:
+    """Add a condition or effect (optionally timed, with modifiers or ongoing damage), or remove one."""
     c = token(st, args.token)
     if args.action == "add":
         mods = {k: v for k, v in (("atk", args.atk), ("ac", args.ac), ("save", args.save),
@@ -1287,7 +1374,7 @@ def cmd_cond(args, st):
     return f"{c['token']}: {', '.join(R.labels(c, st)) or 'no conditions'}{note}"
 
 
-def _stabilize(st, c, total_reported):
+def _stabilize(st: State, c: Token, total_reported: int | None) -> str:
     """PF1e dying check: DC 10 Constitution check, with a penalty equal to the negative HP total."""
     if total_reported is None:
         mod = R.ability_mod(c.get("con"))
@@ -1307,7 +1394,8 @@ def _stabilize(st, c, total_reported):
     return f"stabilization: {how}, penalty → {final} vs DC 10: fails, loses 1 HP (now {c['hp']})"
 
 
-def cmd_stabilize(args, st):
+def cmd_stabilize(args: Args, st: State) -> str:
+    """A dying token's stabilization check (a PC's total is required; NPCs roll)."""
     c = token(st, args.token)
     if c["hp"] >= 0:
         return f"{c['token']} isn't dying (HP {c['hp']})"
@@ -1318,7 +1406,8 @@ def cmd_stabilize(args, st):
     return _stabilize(st, c, args.total)
 
 
-def _save(st, c, kind, dc, total_reported=None):
+def _save(st: State, c: Token, kind: str, dc: int, total_reported: int | None = None) -> tuple[bool, int, str]:
+    """Roll (or take) a saving throw. Returns (success, total, how it was rolled). Natural 1 fails, 20 succeeds."""
     if total_reported is None:
         bonus = R.save_bonus(c, kind)
         if bonus is None:
@@ -1332,7 +1421,8 @@ def _save(st, c, kind, dc, total_reported=None):
     return ok, total_s, how
 
 
-def cmd_save(args, st):
+def cmd_save(args: Args, st: State) -> str:
+    """A single save, or the resolution of a PC's pending area or spell save."""
     c = token(st, args.token)
     if c["side"] == "pc" and args.total is None:
         raise CombatError("a PC's save is the player's roll: pass --total N")
@@ -1358,7 +1448,10 @@ def cmd_save(args, st):
     return "\n".join(out)
 
 
-def cmd_area(args, st):
+def cmd_area(args: Args, st: State) -> str:
+    """Resolve an area template: which tokens it covers and, with --save, damage and saves (NPCs roll,
+    PCs get a pending question). Refuses a name that's the caster's spell or SLA (use cast/sla).
+    """
     if args.frm and args.name and not getattr(args, "no_slot", False):
         # safety net: a spell or SLA of the caster must go through cast/sla so its use is spent
         prof = token(st, args.frm).get("profile") or {}
@@ -1384,6 +1477,8 @@ def cmd_area(args, st):
            + (", ".join(label(o) for o in hit) or "none")]
     if not args.save:
         return "\n".join(out)
+    if args.dc is None:
+        raise CombatError("--save needs --dc")
     name = args.name or f"the {args.shape}"
     shown_name = getattr(args, "log_name", None) or name   # what the player's log and questions say
     dmg, detail, _ = _roll(args.dmg) if args.dmg else (0, "no damage", None)
@@ -1412,18 +1507,21 @@ def cmd_area(args, st):
     return "\n".join(out)
 
 
-def cmd_order(args, st):
+def cmd_order(args: Args, st: State) -> str:
+    """Set a PC's standing order for attacks of opportunity."""
     c = token(st, args.token)
     st.setdefault("orders", {}).setdefault(c["token"], {})[args.kind] = args.value
     return f"{c['token']} standing order: {args.kind} {args.value}"
 
 
-def cmd_init(args, st):
+def cmd_init(args: Args, st: State) -> str:
+    """Change a token's initiative (delay, ready)."""
     token(st, args.token)["init"] = args.value
     return f"{args.token} initiative → {args.value:g}"
 
 
-def cmd_flag(args, st):
+def cmd_flag(args: Args, st: State) -> str:
+    """Reveal, hide or remove a token."""
     c = token(st, args.token)
     if args.command == "remove":
         c["removed"] = True
@@ -1434,7 +1532,8 @@ def cmd_flag(args, st):
     return f"{c['token']}: {args.command}"
 
 
-def cmd_image(args, st):
+def cmd_image(args: Args, st: State) -> str:
+    """Render the PNG player view now, and optionally turn auto-rendering on or off."""
     if args.mode:
         st["image"] = args.mode == "on"
     path = render_image(st, image_path(args.campaign))
@@ -1442,7 +1541,10 @@ def cmd_image(args, st):
     return f"Rendered {rel}" + (f" (auto-render {args.mode})" if args.mode else "")
 
 
-def cmd_end(args, st):
+def cmd_end(args: Args, st: State) -> str:
+    """End the encounter: summary and XP, PC HP back onto their sheets, the combat log into the session log,
+    and archive the state.
+    """
     defeated = [c for c in st["tokens"] if c["side"] not in FRIENDLY and (c["hp"] <= 0 or c.get("removed"))]
     xp = sum(XP_BY_CR.get(str(c.get("cr")), 0) for c in defeated)
     out = [f"Encounter over after {st['round']} round(s)."]
@@ -1475,7 +1577,8 @@ def cmd_end(args, st):
     return "\n".join(out)
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
+    """Command-line entry point. Returns the process exit code."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("-c", "--campaign", required=True)
     sub = p.add_subparsers(dest="command", required=True)

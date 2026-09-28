@@ -5,10 +5,17 @@ saves. Everything here is plain calculation on the combat state; combat.py calls
 bookkeeping. Rules sources: Core Rulebook, Combat chapter and Conditions appendix (see
 library/pf1e/rules/combat-quick-reference.md). Approximations are marked as such.
 """
+from __future__ import annotations
+
 import json
 import math
 import re
 from pathlib import Path
+from typing import Any
+
+Token = dict[str, Any]    # one combatant in the combat state
+State = dict[str, Any]    # the whole combat state (dm/combat/current.json)
+Square = tuple[int, int]  # (x, y) grid coordinates, 0-based
 
 PROJECT = Path(__file__).resolve().parents[1]
 FRIENDLY = {"pc", "ally"}
@@ -21,7 +28,7 @@ FRIENDLY = {"pc", "ally"}
 #   prone                           +4 AC vs ranged, -4 AC vs melee; -4 on its own melee attacks
 #   helpless                        melee attacks against it get +4 (Dex 0 is approximated by flat-footed AC)
 # Conditions not listed here are tracked by name only (the DM applies them).
-CONDITIONS = {
+CONDITIONS: dict[str, dict[str, Any]] = {
     "shaken": {"atk": -2, "save": -2, "check": -2},
     "frightened": {"atk": -2, "save": -2, "check": -2},
     "panicked": {"atk": -2, "save": -2, "check": -2},
@@ -46,7 +53,7 @@ CONDITIONS = {
 }
 
 
-def conditions(c):
+def conditions(c: Token) -> list[dict[str, Any]]:
     """The token's conditions as dicts (older states stored plain strings)."""
     out = []
     for x in c.get("conditions") or []:
@@ -55,26 +62,30 @@ def conditions(c):
     return out
 
 
-def cond_effects(cond):
+def cond_effects(cond: dict[str, Any]) -> dict[str, Any]:
+    """The effects of one condition: the catalog's built-in ones plus its own `mods`."""
     eff = dict(CONDITIONS.get(cond["name"].lower(), {}))
     for k, v in (cond.get("mods") or {}).items():
         eff[k] = eff.get(k, 0) + v if isinstance(v, (int, float)) and not isinstance(v, bool) else v
     return eff
 
 
-def total(c, key):
+def total(c: Token, key: str) -> int:
+    """Sum of a numeric effect (atk, dmg, save, check, ac) over all of the token's conditions."""
     return sum(cond_effects(x).get(key, 0) for x in conditions(c) if not isinstance(cond_effects(x).get(key, 0), bool))
 
 
-def flag(c, key):
+def flag(c: Token, key: str) -> bool:
+    """Whether any of the token's conditions has a boolean effect (flatfooted, prone, helpless)."""
     return any(cond_effects(x).get(key) for x in conditions(c))
 
 
-def has(c, name):
+def has(c: Token, name: str) -> bool:
+    """Whether the token has a condition with this name (case-insensitive)."""
     return any(x["name"].lower() == name.lower() for x in conditions(c))
 
 
-def labels(c, st=None):
+def labels(c: Token, st: State | None = None) -> list[str]:
     """Display labels, e.g. ['shaken (1 rd)', 'bless']."""
     out = []
     for x in conditions(c):
@@ -86,11 +97,11 @@ def labels(c, st=None):
     return out
 
 
-def add_condition(st, c, name, rounds=None, mods=None, ongoing=None):
+def add_condition(st: State, c: Token, name: str, rounds: int | None = None, mods: dict[str, int] | None = None, ongoing: str | None = None) -> dict[str, Any]:
     """Add (or refresh) a condition. With rounds, it ends just before the current actor's turn
     comes around again that many rounds later (the usual PF1e 'N rounds' convention)."""
     conds = [x for x in conditions(c) if x["name"].lower() != name.lower()]
-    cond = {"name": name}
+    cond: dict[str, Any] = {"name": name}
     if rounds:
         cond["expires"] = {"round": st.get("round", 1) + rounds, "token": st.get("turn") or c["token"]}
     if mods:
@@ -102,13 +113,14 @@ def add_condition(st, c, name, rounds=None, mods=None, ongoing=None):
     return cond
 
 
-def remove_condition(c, name):
+def remove_condition(c: Token, name: str) -> bool:
+    """Remove a condition by name. Returns whether it was there."""
     before = len(conditions(c))
     c["conditions"] = [x for x in conditions(c) if x["name"].lower() != name.lower()]
     return len(c["conditions"]) < before
 
 
-def expire(st, token_now, round_now):
+def expire(st: State, token_now: str, round_now: int) -> list[tuple[Token, str]]:
     """Remove conditions that end as `token_now` starts its turn in `round_now`."""
     gone = []
     for c in st["tokens"]:
@@ -125,7 +137,8 @@ def expire(st, token_now, round_now):
 
 # ---------- profile validation ----------
 
-def schema_for(system="pf1e"):
+def schema_for(system: str = 'pf1e') -> dict[str, Any] | None:
+    """Load library/<system>/combat-profile.schema.json, or None if the system has no schema."""
     path = PROJECT / "library" / system / "combat-profile.schema.json"
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
@@ -133,7 +146,8 @@ def schema_for(system="pf1e"):
 _TYPES = {"object": dict, "array": list, "string": str, "boolean": bool, "null": type(None)}
 
 
-def _is_type(v, t):
+def _is_type(v: Any, t: str) -> bool:
+    """Whether `v` has JSON Schema type `t` (booleans are not integers)."""
     if t == "integer":
         return isinstance(v, int) and not isinstance(v, bool)
     if t == "number":
@@ -141,7 +155,7 @@ def _is_type(v, t):
     return isinstance(v, _TYPES[t])
 
 
-def _validate(v, s, path, errs):
+def _validate(v: Any, s: dict[str, Any], path: str, errs: list[str]) -> list[str]:
     """A small JSON Schema subset: type, enum, required, properties, additionalProperties,
     patternProperties, items, minItems, minimum, maximum, pattern, anyOf."""
     if "anyOf" in s:
@@ -186,7 +200,7 @@ def _validate(v, s, path, errs):
     return errs
 
 
-def check_profile(p, system="pf1e"):
+def check_profile(p: Any, system: str = 'pf1e') -> tuple[list[str], list[str]]:
     """Returns (errors, warnings) for a combat profile: the schema plus checks it can't express."""
     schema = schema_for(system)
     errs = _validate(p, schema, "profile", []) if schema else []
@@ -238,13 +252,14 @@ def check_profile(p, system="pf1e"):
     return errs, warns
 
 
-def profile_text_blocks(text):
+def profile_text_blocks(text: str) -> list[str]:
+    """The raw JSON text of every ```combat-profile block in a markdown file."""
     return re.findall(r"```combat-profile\s*\n(.*?)\n```", text, re.S)
 
 
 # ---------- profiles ----------
 
-def load_profile(ref):
+def load_profile(ref: str) -> dict[str, Any] | None:
     """The ```combat-profile JSON block from a stat block or character sheet file."""
     path = Path(ref)
     if not path.is_absolute():
@@ -257,7 +272,11 @@ def load_profile(ref):
     return json.loads(m.group(1))
 
 
-def find_attack(profile, name):
+def find_attack(profile: dict[str, Any] | None, name: str | None) -> tuple[str | None, dict[str, Any] | None]:
+    """Find an attack in a profile by exact name, unique prefix or unique substring.
+
+    With no name, returns the first attack. Returns (None, None) if nothing or more than one matches.
+    """
     attacks = (profile or {}).get("attacks") or {}
     if not name:
         if not attacks:
@@ -276,44 +295,51 @@ def find_attack(profile, name):
     return None, None
 
 
-def save_bonus(c, kind):
+def save_bonus(c: Token, kind: str) -> int | None:
+    """The token's save bonus ('fort', 'ref', 'will') from its profile plus condition modifiers, or None."""
     saves = (c.get("profile") or {}).get("saves") or {}
     if kind not in saves:
         return None
     return saves[kind] + total(c, "save")
 
 
-def ability_mod(score):
+def ability_mod(score: int | None) -> int:
+    """The ability modifier for a score (0 for None, e.g. a construct's Con)."""
     return (score - 10) // 2 if score is not None else 0
 
 
 # ---------- geometry helpers ----------
 
-def cells(c, at=None):
+def cells(c: Token, at: Square | None = None) -> list[Square]:
+    """The squares a token occupies (size x size), at its position or at `at`."""
     x, y = at or (c["x"], c["y"])
     return [(x + i, y + j) for i in range(c["size"]) for j in range(c["size"])]
 
 
-def sq_dist(a, b):
+def sq_dist(a: Square, b: Square) -> int:
+    """Distance in squares between two squares, PF1e style (every second diagonal counts double)."""
     dx, dy = abs(a[0] - b[0]), abs(a[1] - b[1])
     return max(dx, dy) + min(dx, dy) // 2
 
 
-def feet_between(c1, c2):
+def feet_between(c1: Token, c2: Token) -> int:
+    """Shortest distance in feet between any squares of two tokens."""
     return 5 * min(sq_dist(a, b) for a in cells(c1) for b in cells(c2))
 
 
-def center(c):
+def center(c: Token) -> tuple[float, float]:
+    """The center point of a token's space, in grid units."""
     return (c["x"] + c["size"] / 2, c["y"] + c["size"] / 2)
 
 
-def blocks_line(st, x, y):
+def blocks_line(st: State, x: int, y: int) -> bool:
+    """Whether the square blocks line of effect (a wall, outside the map, or off the grid)."""
     if not (0 <= x < st["w"] and 0 <= y < st["h"]):
         return True
     return st["grid"][y][x] in "# "
 
 
-def segment_cells(p, q, step=0.05):
+def segment_cells(p: tuple[float, float], q: tuple[float, float], step: float = 0.05) -> list[Square]:
     """Squares a segment passes through (sampled; endpoints excluded)."""
     n = max(2, int(math.dist(p, q) / step))
     seen = []
@@ -326,12 +352,13 @@ def segment_cells(p, q, step=0.05):
     return seen
 
 
-def corners(c):
+def corners(c: Token) -> list[tuple[int, int]]:
+    """The four grid-intersection corners of a token's space."""
     xs, ys = (c["x"], c["x"] + c["size"]), (c["y"], c["y"] + c["size"])
     return [(x, y) for x in xs for y in ys]
 
 
-def cover(st, a, t):
+def cover(st: State, a: Token, t: Token) -> bool:
     """PF1e cover from walls: pick the attacker's best corner; if any line from it to a corner
     of the target's space passes through a blocking square, the target has cover (+4 AC)."""
     a_cells, t_cells = set(cells(a)), set(cells(t))
@@ -353,7 +380,7 @@ def cover(st, a, t):
     return bool(best_blocked)
 
 
-def soft_cover(st, a, t):
+def soft_cover(st: State, a: Token, t: Token) -> bool:
     """Creatures between attacker and target give soft cover against ranged attacks (+4 AC)."""
     occupied = {}
     for o in st["tokens"]:
@@ -364,7 +391,7 @@ def soft_cover(st, a, t):
     return any(cell in occupied for cell in segment_cells(center(a), center(t)))
 
 
-def in_melee_with_friend_of(st, t, attacker):
+def in_melee_with_friend_of(st: State, t: Token, attacker: Token) -> bool:
     """Is the target adjacent to a creature on the attacker's side (firing into melee)?"""
     friendly = attacker["side"] in FRIENDLY
     for o in st["tokens"]:
@@ -377,19 +404,23 @@ def in_melee_with_friend_of(st, t, attacker):
 
 # ---------- area templates (approximations on the square grid) ----------
 
-def area_cells(st, shape, size_ft, origin=None, frm=None, toward=None):
+def area_cells(st: State, shape: str, size_ft: int, origin: Square | None = None, frm: Token | None = None, toward: Square | None = None) -> list[Square]:
     """Squares covered by a burst (radius around a square), a cone (90 degrees, from a creature
     toward a square) or a line (from a creature toward a square). Approximation: distances use
     the 5-10-5 rule from square centers."""
     n = size_ft // 5
     out = []
     if shape == "burst":
+        if origin is None:
+            raise ValueError("a burst needs an origin square")
         ox, oy = origin
         for y in range(st["h"]):
             for x in range(st["w"]):
                 if sq_dist((x, y), (ox, oy)) <= n:
                     out.append((x, y))
         return out
+    if frm is None or toward is None:
+        raise ValueError(f"a {shape} needs a source creature and a target square")
     src = frm
     sx, sy = center(src)
     tx, ty = toward[0] + 0.5, toward[1] + 0.5
@@ -415,6 +446,7 @@ def area_cells(st, shape, size_ft, origin=None, frm=None, toward=None):
     raise ValueError(shape)
 
 
-def tokens_in(st, squares):
+def tokens_in(st: State, squares: list[Square]) -> list[Token]:
+    """The tokens (not removed) with at least one square inside `squares`."""
     sq = set(squares)
     return [o for o in st["tokens"] if not o.get("removed") and any(cell in sq for cell in cells(o))]

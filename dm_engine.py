@@ -15,6 +15,8 @@ Events passed to `on_event(ev)` (dicts):
   {"type": "error", "message": str}
   {"type": "debug", "line": str}              only when debug is on
 """
+from __future__ import annotations
+
 import importlib.util
 import json
 import os
@@ -23,6 +25,11 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from types import ModuleType
+from typing import Any, Callable
+
+Event = dict[str, Any]                  # one engine event, see the module docstring
+EventHandler = Callable[[Event], None]
 
 REPO = Path(__file__).resolve().parent
 STATE = REPO / ".play"
@@ -70,7 +77,8 @@ WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 
-def flavor(tool_name, sub):
+def flavor(tool_name: str | None, sub: bool) -> str:
+    """The status-line label shown to the player while a tool runs (never the tool itself)."""
     if sub:
         return "working behind the screen"
     return {
@@ -79,10 +87,11 @@ def flavor(tool_name, sub):
         "Agent": "working behind the screen", "Task": "working behind the screen",
         "WebFetch": "consulting references", "WebSearch": "consulting references",
         "Skill": "getting ready", "TodoWrite": "planning",
-    }.get(tool_name, "thinking")
+    }.get(tool_name or "", "thinking")
 
 
-def save_session(sid):
+def save_session(sid: str | None) -> None:
+    """Remember a session id in .play/last-session and append it to .play/sessions.log."""
     if not sid:
         return
     STATE.mkdir(exist_ok=True)
@@ -91,7 +100,8 @@ def save_session(sid):
         f.write(f"{time.strftime('%Y-%m-%d %H:%M')} {sid}\n")
 
 
-def last_session():
+def last_session() -> str | None:
+    """The id of the most recently saved session, or None."""
     f = STATE / "last-session"
     return f.read_text().strip() if f.exists() else None
 
@@ -99,37 +109,47 @@ def last_session():
 class Engine:
     """One headless DM session. `send()` blocks until the reply to that message is complete."""
 
-    def __init__(self, on_event, model=None, effort="medium", debug=False):
+    def __init__(self, on_event: EventHandler, model: str | None = None, effort: str = 'medium', debug: bool = False) -> None:
+        """Args:
+            on_event: called with every event (from a reader thread).
+            model: model alias or id for `claude --model`, or None for the default.
+            effort: thinking effort for `claude --effort`.
+            debug: also emit debug events for tools and subagents.
+        """
         self.on_event = on_event
         self.model = model
         self.effort = effort
         self.debug = debug
-        self.proc = None
-        self.session_id = None
-        self.stderr_lines = []
+        self.proc: subprocess.Popen[str] | None = None
+        self.session_id: str | None = None
+        self.stderr_lines: list[str] = []
         self.lock = threading.RLock()
         self.done = threading.Event()
         self.waiting = False   # a player turn is in progress
         self.armed = False     # the echo of the player's message has been seen
         self._reset()
 
-    def _reset(self):
-        self.streamed = set()
+    def _reset(self) -> None:
+        """Forget the per-reply streaming state."""
+        self.streamed: set[str | None] = set()
         self.current_msg = None
         self.in_text = False
 
-    def emit(self, **ev):
+    def emit(self, **ev: Any) -> None:
+        """Send an event to the frontend; errors in the handler never reach the reader thread."""
         try:
             self.on_event(ev)
         except Exception:
             pass
 
     @property
-    def busy(self):
+    def busy(self) -> bool:
+        """Whether a player turn is in progress."""
         return self.waiting
 
     # --- process ---
-    def start(self, resume=None):
+    def start(self, resume: str | None = None) -> None:
+        """Start `claude -p` with stream-json in/out, optionally resuming a session, plus the reader threads."""
         cmd = ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json",
                "--verbose", "--include-partial-messages", "--replay-user-messages",
                "--permission-mode", "dontAsk",
@@ -148,49 +168,58 @@ class Engine:
         threading.Thread(target=self._drain_stderr, args=(self.proc,), daemon=True).start()
         threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
 
-    def _drain_stderr(self, proc):
+    def _drain_stderr(self, proc: subprocess.Popen[str]) -> None:
+        """Collect the process's stderr (and emit it in debug mode)."""
+        assert proc.stderr is not None
         for line in proc.stderr:
             self.stderr_lines.append(line.rstrip())
             if self.debug:
                 self.emit(type="debug", line=f"[stderr] {line.rstrip()}")
 
-    def alive(self):
+    def alive(self) -> bool:
+        """Whether the claude process is running."""
         return self.proc is not None and self.proc.poll() is None
 
-    def stop(self):
-        if self.alive():
+    def stop(self) -> None:
+        """Close stdin and wait for the process to exit (kill it after 10 s)."""
+        proc = self.proc
+        if proc is not None and proc.poll() is None:
             try:
-                self.proc.stdin.close()
-                self.proc.wait(timeout=10)
+                assert proc.stdin is not None
+                proc.stdin.close()
+                proc.wait(timeout=10)
             except Exception:
-                self.proc.kill()
+                proc.kill()
 
-    def restart(self):
-        if self.alive():
+    def restart(self) -> None:
+        """Kill the process and start it again, resuming the same session."""
+        if self.proc is not None and self.proc.poll() is None:
             self.proc.kill()
         self.emit(type="status", label=None)
         self._reset()
         self.done.set()
         self.start(resume=self.session_id)
 
-    def set_effort(self, level):
+    def set_effort(self, level: str) -> None:
+        """Change the thinking effort; restarts the process and resumes the session."""
         if level not in EFFORTS:
             raise ValueError(level)
         self.effort = level
         self.restart()
 
     # --- turns ---
-    def send(self, text):
+    def send(self, text: str) -> bool:
         """Send one player message and block until its reply is complete. False if the process died."""
-        if not self.alive():
+        proc = self.proc
+        if proc is None or proc.poll() is not None or proc.stdin is None:
             return False
         with self.lock:
             self.done.clear()
             self.waiting, self.armed = True, False
             self._reset()
             self.emit(type="status", label="thinking")
-        self.proc.stdin.write(json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n")
-        self.proc.stdin.flush()
+        proc.stdin.write(json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n")
+        proc.stdin.flush()
         while not self.done.wait(0.2):
             if not self.alive():
                 break
@@ -200,7 +229,9 @@ class Engine:
         return self.alive()
 
     # --- stream handling ---
-    def _read(self, proc):
+    def _read(self, proc: subprocess.Popen[str]) -> None:
+        """Reader thread: parse the stdout event stream and handle each event."""
+        assert proc.stdout is not None
         for line in proc.stdout:
             try:
                 m = json.loads(line)
@@ -210,18 +241,23 @@ class Engine:
                 self._handle(m)
         self.done.set()
 
-    def _text_start(self):
+    def _text_start(self) -> None:
+        """Open a new block of DM text (once per block)."""
         if not self.in_text:
             self.in_text = True
             self.emit(type="status", label=None)
             self.emit(type="text_start")
 
-    def _text_end(self):
+    def _text_end(self) -> None:
+        """Close the current block of DM text, if one is open."""
         if self.in_text:
             self.in_text = False
             self.emit(type="text_end")
 
-    def _handle(self, m):
+    def _handle(self, m: dict[str, Any]) -> None:
+        """Turn one stream-json message into frontend events. Only the main agent's text is passed on;
+        tool calls become status labels, and subagent activity is dropped unless debug is on.
+        """
         t = m.get("type")
         top = m.get("parent_tool_use_id") is None
         if t == "system" and m.get("subtype") == "init":
@@ -291,18 +327,21 @@ class Engine:
 
 # ---------- campaigns and combat (player-safe views) ----------
 
-def _combat_module():
+def _combat_module() -> ModuleType:
+    """Import scripts/combat.py as a module (it isn't a package)."""
     spec = importlib.util.spec_from_file_location("combat", REPO / "scripts" / "combat.py")
+    assert spec is not None and spec.loader is not None
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
-def active_campaign(explicit=None):
+def active_campaign(explicit: str | None = None) -> str | None:
     """The given campaign, or the one touched most recently (fight, session log, campaign file)."""
     if explicit:
         return explicit
-    best, best_t = None, 0
+    best: str | None = None
+    best_t = 0.0
     for camp in (REPO / "campaigns").iterdir():
         if not camp.is_dir() or camp.name.startswith("_"):
             continue
@@ -314,7 +353,8 @@ def active_campaign(explicit=None):
     return best
 
 
-def campaign_title(camp):
+def campaign_title(camp: str | None) -> str:
+    """The campaign's title from the '# …' line of campaign.md, or a fallback."""
     f = REPO / "campaigns" / camp / "campaign.md" if camp else None
     if f and f.exists():
         for line in f.read_text(encoding="utf-8").splitlines():
@@ -323,12 +363,12 @@ def campaign_title(camp):
     return camp or "Claude DM"
 
 
-def map_png_path(camp):
+def map_png_path(camp: str) -> Path:
     """The clean map image (map only, no initiative panel) that the web UI shows."""
     return REPO / "campaigns" / camp / "players" / "combat-map-clean.png"
 
 
-def combat_snapshot(camp, render_png=False):
+def combat_snapshot(camp: str | None, render_png: bool = False) -> dict[str, Any] | None:
     """Player-safe state of the current fight, or None. The web UI draws the map itself from
     `map`; render_png=True also writes a map-only PNG (for other frontends)."""
     if not camp:
@@ -398,7 +438,7 @@ def combat_snapshot(camp, render_png=False):
     }
 
 
-def last_combat_events(camp):
+def last_combat_events(camp: str) -> list[dict[str, Any]]:
     """Events of the most recently archived fight (for the 'fight is over' summary)."""
     arch = REPO / "campaigns" / camp / "dm" / "combat" / "archive"
     files = sorted(arch.glob("*.json"), key=lambda p: p.stat().st_mtime) if arch.exists() else []
@@ -413,12 +453,13 @@ def last_combat_events(camp):
 
 # ---------- history of a resumed session ----------
 
-def transcript_path(session_id):
+def transcript_path(session_id: str) -> Path:
+    """Where Claude Code keeps the transcript of a session in this repo."""
     slug = re.sub(r"[^A-Za-z0-9]", "-", str(REPO))
     return Path.home() / ".claude" / "projects" / slug / f"{session_id}.jsonl"
 
 
-def load_history(session_id):
+def load_history(session_id: str | None) -> list[dict[str, str]]:
     """The player's messages and the DM's text from a session transcript, oldest first."""
     path = transcript_path(session_id) if session_id else None
     if not path or not path.exists():

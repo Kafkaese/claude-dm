@@ -4,16 +4,20 @@
 Each sources.md has a "## Allowed domains" section with one "- domain" bullet per line.
 Subdomains of a listed domain are allowed. Exit code 2 blocks the call and shows stderr to Claude.
 """
+from __future__ import annotations
+
 import json
 import os
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
+from typing import NoReturn
 
 PROJECT = Path(os.environ.get("CLAUDE_PROJECT_DIR", Path(__file__).resolve().parents[2]))
 
 
-def load_allowlist():
+def load_allowlist() -> set[str]:
+    """Collect the domains listed under '## Allowed domains' in every library/**/sources.md."""
     domains = set()
     for path in PROJECT.glob("library/**/sources.md"):
         in_section = False
@@ -25,12 +29,14 @@ def load_allowlist():
     return domains
 
 
-def is_allowed(host, allowlist):
+def is_allowed(host: str, allowlist: set[str]) -> bool:
+    """Whether a host (port stripped) is an allowed domain or a subdomain of one."""
     host = host.lower().split(":")[0]
     return any(host == d or host.endswith("." + d) for d in allowlist)
 
 
-def block(reason, allowlist):
+def block(reason: str, allowlist: set[str]) -> NoReturn:
+    """Explain the refusal on stderr and exit with code 2, which blocks the tool call."""
     listed = ", ".join(sorted(allowlist)) or "(none)"
     print(
         f"{reason} Allowed domains: {listed}. "
@@ -40,7 +46,8 @@ def block(reason, allowlist):
     sys.exit(2)
 
 
-def main():
+def main() -> None:
+    """Read the hook event from stdin and block WebFetch/WebSearch calls outside the allowlist."""
     event = json.load(sys.stdin)
     tool, tool_input = event.get("tool_name"), event.get("tool_input", {})
     allowlist = load_allowlist()
