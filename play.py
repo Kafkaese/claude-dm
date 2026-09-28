@@ -17,6 +17,7 @@ Then type as a player, e.g. `/start-session sandpoint-delve`.
 In-game commands (not sent to the DM):
   :help  :map  :debug  :effort low|medium|high  :quit
 End a line with \\ to continue your message on the next line.
+During a fight, press Enter on an empty line to play the next actor's turn ("next").
 """
 import argparse
 import base64
@@ -176,6 +177,10 @@ class MapWatcher:
         self.seen[str(path)] = m
         return True
 
+    def in_combat(self):
+        camp = self._campaign()
+        return bool(camp) and (REPO / "campaigns" / camp / "dm" / "combat" / "current.json").exists()
+
     def prime(self):
         """Remember the current map files without printing (so only later changes show)."""
         camp = self._campaign()
@@ -330,7 +335,10 @@ def main():
             break
         term.idle_output = False
         if not text:
-            continue
+            if not maps.in_combat():
+                continue
+            text = "next"   # during a fight, an empty Enter is the go signal for the next actor
+            print(f"{DIM}(next turn){RESET}")
         if text in (":q", ":quit", ":exit"):
             break
         if text == ":help":

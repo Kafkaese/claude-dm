@@ -53,6 +53,9 @@ WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude 
 - COMBAT:
   - Resolve every attack with `scripts/combat.py attack` (NPC: --roll/--dmg; PC: the player's --total/--damage). Never roll attacks separately.
   - The interface shows the combat log with all the numbers, after each turn. Narrate EVERY creature's turn in its own line or lines, matching the log. Never merge turns, never skip a creature, never contradict a number.
+  - ONE ACTOR PER REPLY. The player sends "next" (or "end turn" on their own turn) as a go signal. On it, resolve exactly the actor who is up now, and advance with `next` in the SAME `combat.py do` call. Narrate that actor, then STOP. If it's the PC's turn afterwards, say so in one line.
+  - Hidden, unnoticed actors never get a step of their own: resolve them silently within the same step and `next` again, until the turn reaches a visible actor or the PC.
+  - When the player must decide something mid-round (an AoO, a reaction, a stabilization check), ask, and run `combat.py ask "…"` in your call so auto-combat pauses.
   - A PC who is dying rolls their own stabilization check (ask for it). Never "play it forward" without the player, and never promise to report back later: resolve everything in this reply, step by step.
   - PC tokens use the first letter of the character's name (Corin → C).
 - Do lookups before you start writing to the player, so you never send the same text twice.
@@ -369,8 +372,12 @@ def combat_snapshot(camp, render_png=False):
     grid_map = {"w": st["w"], "h": st["h"], "grid": st["grid"], "tokens": tokens,
                 "terrain_names": cm.TERRAIN_NAMES}
     turn = next((r["name"] for r in rows if r["current"]), None)
+    cur = next((r for r in rows if r["current"]), None)
     return {
         "active": True, "round": st.get("round", 1), "turn": turn, "initiative": rows,
+        # whose turn it is, for the End turn / Next button ("pc" = the player acts now)
+        "turn_side": cur["side"] if cur else None, "turn_token": cur["token"] if cur else None,
+        "awaiting": st.get("awaiting"),
         "events": [{"round": e.get("round"), "text": e.get("text", "")} for e in st.get("events", [])],
         "terrain": terrain,
         "map": grid_map,

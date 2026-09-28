@@ -10,6 +10,7 @@ During play there are three voices at the table: the **player**, the **character
 | Plain text, indirect | **Indirect speech** in the player's voice | `I tell him we're looking for his brother.` |
 | [Square brackets] | **User input:** instructions to the system, not to the DM | `[Less description in combat, please.]` |
 | "End turn" | **Combat:** the player is done with their turn. Until then, the turn stays open. | `Attack g2, 18 to hit, 7 damage. End turn.` |
+| "next" | **Combat:** the go signal for the next non-PC actor's turn. The web UI's button sends it, and in the terminal an empty Enter does. | `next` |
 
 ## Authority
 - **Player ↔ DM: the DM has the last word.** Like a real DM: fair, humane and on the player's side, but in charge.

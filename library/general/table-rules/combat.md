@@ -16,7 +16,7 @@ Setting up a fight takes a moment. Use it: give the player something to do while
 
 1. **Call it and stop.** In one short message, with **no tool calls** before it: narrate the moment violence breaks out (only what the PC perceives), then ask the player to **roll initiative** (give their modifier from the sheet) and to get their attack and damage dice ready. Example: *"Steel clears leather. **Roll initiative** (d20+5), and get your dice ready."* End the message there.
 2. **Set up while they roll.** When the answer comes in, do the whole setup in as few calls as possible: one `roll.py` call for all enemy initiatives and surprise checks, then one `combat.py do "new …" "add …" "add …" "show"` call. Hidden enemies get `--hidden`.
-3. **Open the fight:** give the initiative order (only combatants the PC knows about), the map (in `play.py` the interface prints it), and a one-line reminder of the turn convention: *"(Declare your actions, and say **end turn** when you're done.)"* Give the reminder at every fight in the first sessions, and later only when it helps.
+3. **Open the fight** without resolving any turn yet (unnoticed enemies who act before the first visible actor are the exception: resolve them silently): give the initiative order (only combatants the PC knows about), say who acts first, then stop. The player's "next" (or their declarations, if they're first) starts the first step. Include the map (in `play.py` the interface prints it), and a one-line reminder of the turn convention: *"(Declare your actions, and say **end turn** when you're done.)"* Give the reminder at every fight in the first sessions, and later only when it helps.
 4. **Surprise:** if the enemies strike first from hiding, it's fine to narrate the ambush and then ask for initiative in the same message.
 
 ## Solo and small parties
@@ -61,22 +61,33 @@ Never draw the map by hand, and never count squares in your head. `scripts/comba
 
 **Map symbols:** each PC uses the uppercase first letter of their name (Corin → `C`; pick another letter if two PCs share one), allies and enemies are lowercase plus a number (`g1`, `o1`), and `x` marks fallen enemies. Coordinates work like chess: columns A…, rows 1…. The player can use them ("I move to D4 and attack g2").
 
-## Flow
-After each message you wait for the player, so a message per enemy turn would make the player type "continue" constantly. Instead:
-1. **Resolve every consecutive non-PC turn in one gm-screen call** (`enemy-turns`) **and one message.** Give each one a line or two from the PLAYER-SAFE report, e.g. *g1 charges Valeros: 17 vs your AC 16, hit, 6 damage.* Never state enemy AC, bonuses or HP numbers.
-2. **End with the player view** (map plus tracker) **and whose turn it is.** Show the map when positions changed since the last one; the tracker always shows. Then say "Valeros, your turn."
-3. **Pause mid-batch only when the player could react,** e.g. a readied action, an immediate action, or a choice they must make, such as an attack of opportunity they haven't set a standing order for. gm-screen stops and reports NEEDS PLAYER INPUT. Ask, then continue the batch with the answer.
-4. **Standing orders** avoid pauses. The player can set them any time, e.g. "always take AoOs", "Feather Fall if anyone falls", or "hold the door". Record them in the live log and apply them without asking.
-5. **The player's turn is open until they say "end turn".** That's the default convention; session zero can set a different phrase.
-   - Never assume that a declared action is the whole turn. "I attack, 20 to hit, 5 damage" resolves the attack, and then the player may still want to move, take a 5-foot step, draw a weapon, use a swift action or speak.
-   - After resolving what they declared, say briefly which actions remain and wait, e.g. *"Hit, 5 damage; the goblin staggers. You still have a move and a swift action."*
-   - Only a full-round action, or the player saying "end turn" (or "done", "that's it"), ends the turn. **When in doubt, ask.**
-   - The player can declare a whole turn at once, e.g. "Move to D4, attack g2, 17 to hit, 9 damage. End turn." Send it to gm-screen as `resolve`, including the movement, and ask for `enemy-turns` in the same call, so a round costs one wait.
-   - Without "end turn", send only `resolve` for the declared actions, report what remains, and wait.
-   - Delaying and readying are declared the same way.
-   - Free actions like speaking or dropping an item are fine outside the PC's turn when the rules allow them.
-6. **Step mode:** if the player asks for `[step mode]`, e.g. for a boss fight, resolve one actor per message instead.
-7. **In a surprise round,** only aware combatants act, with one standard or move action each.
+## Flow: one actor per step
+Combat runs **one actor at a time**. Each non-PC actor's turn is its own reply, and the player gives a short go signal before the next one. The map, initiative and combat log update after every step, and the player can react between actors.
+
+**The signals** (the web UI has a button for both; in the terminal an empty Enter sends "next"):
+- **"next":** resolve the turn of the actor who is up now (the current turn in `combat.py`).
+- **"end turn":** the PC is done. Then resolve the next actor, if it isn't the PC.
+
+**One step (one non-PC actor):**
+1. Resolve exactly that actor's turn: movement, attacks (`combat.py attack`), conditions. Use **one** `combat.py do "…" "…" "next"` call if you can. Every extra tool round trip is waiting time for the player.
+2. Advance the turn with `next` **in that same call.** The state must always show who acts next. That's what the UI's button reads.
+3. **Hidden actors don't get their own step.** A "next" that reveals nothing would give them away. If the next actor is a creature the PC hasn't noticed and it stays unnoticed, resolve it silently in the same step and `next` again, until the turn is at a visible actor or the PC.
+4. Narrate that actor in a line or a few (see Narration), then **stop**. No "What do you do?" unless it's the PC's turn now.
+5. **If it's the PC's turn now,** say so in one line ("Your turn, Corin.") and wait for their declarations.
+6. **If the player must decide something mid-round** (an attack of opportunity without a standing order, a readied or immediate action, a stabilization check), ask. Also run `combat.py ask "…"` so the UI pauses auto-combat. The next state-changing command clears it.
+
+**The PC's turn** stays open until the player says "end turn". That's the default convention; session zero can set a different phrase.
+- Never assume that a declared action is the whole turn. "I attack, 20 to hit, 5 damage" resolves the attack, and then the player may still want to move, take a 5-foot step, draw a weapon, use a swift action or speak.
+- After resolving what they declared, say briefly which actions remain and wait, e.g. *"Hit, 5 damage; the goblin staggers. You still have a move and a swift action."*
+- Only a full-round action, or the player saying "end turn" (or "done", "that's it"), ends the turn. **When in doubt, ask.**
+- A whole turn declared at once ("Move to D4, attack g2, 17 to hit, 9 damage. End turn.") is resolved in one step, including `next`. Then the next actor goes as a separate step, after the next go signal, unless the next actor is hidden (see above).
+- Delaying and readying are declared the same way. Free actions like speaking are fine outside the PC's turn when the rules allow them.
+
+**Standing orders** avoid pauses. The player can set them any time, e.g. "always take AoOs", "Feather Fall if anyone falls", or "hold the door". Record them in the live log and apply them without asking.
+
+**Surprise round:** only aware combatants act, with one standard or move action each, and each one is still its own step.
+
+**In the Claude Code UI** (gm-screen mode), send one `enemy-turns` call per step, asking for exactly one actor.
 
 ## Narration
 **The default is one line per action,** with the key rolls: *The bandit leader charges you: 17 vs your AC 16, hit, **6 damage**.* Quick and readable, so combat keeps moving.

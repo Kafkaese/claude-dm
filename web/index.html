@@ -82,6 +82,21 @@ body.combat .dm { font-size: 18px; line-height: 1.6; }
 #send { width: 44px; height: 44px; flex-shrink: 0; border: 0; border-radius: 12px; background: var(--accent); display: flex; align-items: center; justify-content: center; }
 #send:disabled { opacity: .45; cursor: default; }
 .hints { display: flex; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 12.5px; }
+.inputrow { display: flex; align-items: stretch; gap: 10px; }
+.inputrow .field { flex: 1; min-width: 0; }
+.turnbtn { flex-shrink: 0; min-width: 132px; max-width: 220px; min-height: 66px; padding: 0 18px; border-radius: 16px; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600; font-size: 14.5px; border: 1px solid var(--field-border); background: var(--surface); color: var(--text); }
+.turnbtn[hidden] { display: none; }
+.turnbtn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.turnbtn.end { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.turnbtn:not(:disabled):hover { filter: brightness(1.05); border-color: var(--accent); }
+.turnbtn:disabled { opacity: .45; cursor: default; }
+.combatrow { display: flex; justify-content: space-between; align-items: center; gap: 16px; font-size: 13px; color: var(--muted); }
+.combatrow[hidden] { display: none; }
+.combatrow .auto { display: flex; align-items: center; gap: 8px; cursor: pointer; min-height: 32px; }
+.combatrow input { width: 16px; height: 16px; accent-color: var(--accent); }
+#awaiting { color: var(--accent-soft-ink); font-weight: 600; text-align: right; }
+.signal { align-self: center; display: flex; align-items: center; gap: 12px; width: 100%; color: var(--muted); font-size: 12.5px; letter-spacing: .04em; }
+.signal::before, .signal::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
 
 aside { width: 0; flex-shrink: 0; overflow: hidden; background: var(--surface); transition: width .25s; }
 body.combat aside { width: var(--panel-w, 540px); }
@@ -174,10 +189,17 @@ body.drawer-open .drawer-backdrop { display: block; }
     </div>
     <form id="composer">
       <div id="status" hidden><span class="dot"></span><span id="status-text"></span></div>
-      <div class="field">
-        <label class="sr-only" for="msg">Your message to the DM</label>
-        <textarea id="msg" rows="1" placeholder="What do you do?"></textarea>
-        <button id="send" type="submit" aria-label="Send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="color: var(--accent-ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+      <div class="inputrow">
+        <div class="field">
+          <label class="sr-only" for="msg">Your message to the DM</label>
+          <textarea id="msg" rows="1" placeholder="What do you do?"></textarea>
+          <button id="send" type="submit" aria-label="Send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="color: var(--accent-ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+        </div>
+        <button id="turn-btn" class="turnbtn" type="button" hidden><span id="turn-label">Next</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+      </div>
+      <div class="combatrow" id="combatrow" hidden>
+        <label class="auto"><input type="checkbox" id="auto"> Auto-combat: play non-player turns one after another</label>
+        <span id="awaiting"></span>
       </div>
       <div class="hints"><span>Enter to send · Shift+Enter for a new line</span><span>"quotes" = speech · [brackets] = talk to the system</span></div>
     </form>
@@ -256,7 +278,17 @@ let current = null, currentText = "", busy = false, statusSince = null, statusLa
 function nearBottom() { return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 120; }
 function stick(fn) { const b = nearBottom(); fn(); if (b) scroller.scrollTop = scroller.scrollHeight; }
 function add(cls, html) { const d = document.createElement("div"); d.className = cls; d.innerHTML = html; stick(() => chat.appendChild(d)); return d; }
-function addPlayer(text) { const d = document.createElement("div"); d.className = "player"; d.textContent = text; stick(() => chat.appendChild(d)); }
+function addPlayer(text) {
+  const t = text.trim().toLowerCase();
+  const d = document.createElement("div");
+  if (t === "next" || t === "end turn") {           // go signals render as quiet dividers
+    d.className = "signal";
+    d.textContent = t === "next" ? "next turn" : "end of your turn";
+  } else {
+    d.className = "player"; d.textContent = text;
+  }
+  stick(() => chat.appendChild(d));
+}
 function addLog(title, events) {
   if (!events || !events.length) return;
   add("logcard", `<div class="head">${esc(title)}</div>` + events.map(e => `<div class="logline"><span class="r">R${e.round ?? "?"}</span>${esc(e.text)}</div>`).join(""));
@@ -269,7 +301,53 @@ function renderItem(m) {
   else if (m.role === "log") addLog(m.title, m.events);
 }
 
-function setBusy(b) { busy = b; sendBtn.disabled = b; }
+function setBusy(b) { busy = b; sendBtn.disabled = b; updateTurnButton(); if (!b) maybeAuto(); }
+
+// ---------- turn button & auto-combat ----------
+const turnBtn = document.getElementById("turn-btn"), autoBox = document.getElementById("auto");
+let combatState = { active: false }, autoTimer = null, lastAutoKey = null;
+try { autoBox.checked = localStorage.getItem("dm-auto-combat") === "1"; } catch (e) {}
+autoBox.addEventListener("change", () => {
+  try { localStorage.setItem("dm-auto-combat", autoBox.checked ? "1" : "0"); } catch (e) {}
+  lastAutoKey = null; maybeAuto();
+});
+function turnSignal() {
+  const c = combatState;
+  if (!c.active || c.awaiting) return null;
+  // no visible actor is up (a hidden one the DM should have skipped): offer a neutral "Next turn"
+  return c.turn_side === "pc" ? "end turn" : "next";
+}
+function updateTurnButton() {
+  const c = combatState, sig = turnSignal();
+  document.getElementById("combatrow").hidden = !c.active;
+  document.getElementById("awaiting").textContent = c.active && c.awaiting ? `The DM is waiting for you: ${c.awaiting}` : "";
+  turnBtn.hidden = !c.active;
+  if (!c.active) return;
+  const label = document.getElementById("turn-label");
+  turnBtn.classList.toggle("end", sig === "end turn");
+  if (c.awaiting) label.textContent = "Answer the DM";
+  else if (sig === "end turn") label.textContent = "End turn";
+  else label.textContent = c.turn ? `Next: ${c.turn}` : "Next turn";
+  turnBtn.disabled = busy || !sig;
+  turnBtn.setAttribute("aria-label", sig === "end turn" ? "End your turn" : (c.turn ? `Play ${c.turn}'s turn` : "Play the next turn"));
+}
+turnBtn.addEventListener("click", () => {
+  const sig = turnSignal();
+  if (!sig || busy) return;
+  clearTimeout(autoTimer);
+  send(sig);
+});
+function maybeAuto() {
+  clearTimeout(autoTimer);
+  if (!autoBox.checked || busy || turnSignal() !== "next") return;
+  const key = `${combatState.round}:${combatState.turn_token}`;
+  if (key === lastAutoKey) return;   // the turn didn't advance since the last auto signal: don't loop
+  autoTimer = setTimeout(() => {
+    if (!autoBox.checked || busy || turnSignal() !== "next") return;
+    lastAutoKey = key;
+    send("next");
+  }, 1500);
+}
 function setStatus(label, since) {
   statusLabel = label; statusSince = label ? (since ? since * 1000 : Date.now()) : null;
   document.getElementById("status").hidden = !label; tickStatus();
@@ -392,6 +470,9 @@ mapEl.addEventListener("click", e => {
 
 // ---------- combat panel ----------
 function setCombat(c) {
+  combatState = c && c.active ? c : { active: false };
+  if (!combatState.active) lastAutoKey = null;
+  updateTurnButton();
   const active = !!(c && c.active);
   document.body.classList.toggle("combat", active);
   document.getElementById("combat-badge").hidden = !active;
@@ -511,6 +592,7 @@ document.getElementById("composer").addEventListener("submit", async e => {
   e.preventDefault();
   const text = msg.value.trim();
   if (!text || busy) return;
+  clearTimeout(autoTimer);
   msg.value = ""; autosize();
   if (!(await send(text)) && !text.startsWith(":")) msg.value = text;
 });

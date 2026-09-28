@@ -26,6 +26,9 @@ Play
                                   PC attack with the player's reported numbers, against the hidden AC
        both: [--no-crit] (mercy: treat a crit as a normal hit)  [--ac N] (override)
   log "TEXT"                      add a player-safe line to the combat log
+  ask "QUESTION"                  mark that the DM waits for a player decision mid-round (a reaction,
+                                  an AoO, a stabilization check). Pauses auto-combat in the web UI;
+                                  cleared by the next state-changing command (or: ask --clear)
   events                          print combat log lines not shown yet (Claude Code UI mode)
   hp TOKEN DELTA                  e.g. hp g2 -7, hp V +5
   cond TOKEN add|remove TEXT      conditions, e.g. cond g2 add prone
@@ -589,6 +592,14 @@ def _attack(args, st):
     return "\n".join(dm + [f"HIT. HP {t['hp']}/{t['max_hp']}. Log: {line}{res}"])
 
 
+def cmd_ask(args, st):
+    if args.clear or not args.question:
+        st.pop("awaiting", None)
+        return "No open question."
+    st["awaiting"] = args.question
+    return f"Waiting for the player: {args.question}"
+
+
 def cmd_log(args, st):
     event(st, args.text)
     return f"Logged: {args.text}"
@@ -795,6 +806,7 @@ def main(argv=None):
     at.add_argument("--confirm", type=int); at.add_argument("--name"); at.add_argument("--ac", type=int)
     at.add_argument("--nonlethal", action="store_true"); at.add_argument("--no-crit", action="store_true")
     lg = sub.add_parser("log"); lg.add_argument("text")
+    ak = sub.add_parser("ask"); ak.add_argument("question", nargs="?"); ak.add_argument("--clear", action="store_true")
     ev = sub.add_parser("events"); ev.add_argument("--all", action="store_true")
     s = sub.add_parser("show"); s.add_argument("--dm", action="store_true")
     sub.add_parser("next")
@@ -814,7 +826,8 @@ def main(argv=None):
     handlers = {"add": cmd_add, "next": cmd_next, "move": cmd_move, "dist": cmd_dist,
                 "threat": cmd_threat, "hp": cmd_hp, "cond": cmd_cond, "init": cmd_init,
                 "reveal": cmd_flag, "hide": cmd_flag, "remove": cmd_flag, "end": cmd_end,
-                "image": cmd_image, "attack": cmd_attack, "log": cmd_log, "events": cmd_events}
+                "image": cmd_image, "attack": cmd_attack, "log": cmd_log, "events": cmd_events,
+                "ask": cmd_ask}
     if args.command == "do":
         import shlex
         for c in args.cmds:
@@ -833,6 +846,8 @@ def main(argv=None):
         if args.command == "show":
             print(render(st, dm=args.dm))
             return 0
+        if args.command not in ("ask", "dist", "threat", "events", "image"):
+            st.pop("awaiting", None)   # any real change answers an open question
         result = handlers[args.command](args, st)
         if args.command != "end":
             if args.command not in ("image", "dist", "threat"):

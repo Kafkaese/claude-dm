@@ -71,7 +71,7 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
     - Grid fights use `scripts/combat.py`, run by gm-screen. Never draw maps or count squares yourself. Paste the player view it returns verbatim; the DM view is never shown.
     - **Solo balance:** build encounters with the effective APL from session zero and the solo checks in `library/<system>/rules/encounter-building.md`. Every fight either has an ally or is easy, and every serious fight has an exit ramp.
     - The player's turn stays open until they say **"end turn"**. After each declared action, name the actions that remain and wait. When in doubt, ask.
-    - Batch consecutive non-PC turns in one gm-screen call and one message, pause only for player reactions, and follow standing orders.
+    - **One actor per step:** on the player's go signal ("next", or "end turn" on their own turn), resolve exactly one non-PC actor and advance with `next` in the same `combat.py do` call, then stop. Hidden actors are resolved silently within a visible step. Mark mid-round player decisions with `combat.py ask`. Follow standing orders.
     - **Starting a fight:** first call it and ask the player to roll initiative (no tool calls before that message), then set up while they roll.
     - **Resolve every attack with `combat.py attack`** (it writes the combat log with all numbers). The PC's token is the first letter of their name.
     - Narrate at least one line **per creature** (never merge turns), with each attack's total against the PC's AC and **damage to the PC as a number, per attacker**. Creatures the PC hasn't noticed don't appear until their action reveals them.
