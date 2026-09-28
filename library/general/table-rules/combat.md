@@ -54,7 +54,15 @@ Iterative attacks use a list: `"bonus": [10, 5]`. Natural attacks go in `full_at
 **The format is fixed by a schema** (`library/<system>/combat-profile.schema.json`: required and optional fields, types, allowed values). **The translation rules** are in `library/<system>/combat-profile-guide.md`: the stat block line by line, crit ranges, iterative and natural attacks, riders, range increments, spellcasting and spell-like abilities. Check every new or edited profile with `combat.py profile check <file>`. `add` validates too, and rejects a broken profile with a list of what to fix.
 
 **Spellcasters:** their `spellcasting` and `sla` entries are tracked per fight.
-- `cast s1 "magic missile"` spends a slot (spontaneous) or a prepared copy.
+- **Every NPC spell or SLA goes through `cast` / `sla`,** including area spells. That's what spends the slot. Write the effect into the same command:
+  - area: `cast s1 "burning hands" --area "cone 15" --toward C4 --save ref --dmg 1d4 --half`
+  - single target: `cast s1 sleep --target C --save will`
+  - no save: `cast s1 "magic missile" --target C --dmg 1d4+1`
+
+  The DC comes from the profile (DC base + spell level, or the SLA's DC). `area` refuses a name that's one of the caster's spells. A non-spell area like a breath weapon uses `area … --no-slot`.
+- **Effects beyond damage** (sleep, hold, fear) aren't automated: after a failed save, add the condition with `cond … --rounds N`.
+- **Rays and touch spells** are attacks: `cast s1 "scorching ray"` (spends the slot and provokes as usual), then `attack s1 C --roll "1d20+N" --dmg 4d6 --touch --ranged --name ray` in the same `do` call.
+- `cast` alone (no effect options) spends a slot (spontaneous) or a prepared copy.
 - **Casting while threatened provokes AoOs.** NPC attacks are rolled, and a PC's AoO opens a question. Damage from them forces a concentration check.
 - `--defensive` casts defensively (concentration DC 15 + 2 × spell level).
 - `sla s1 darkness` does the same for spell-like abilities.

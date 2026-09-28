@@ -1046,11 +1046,54 @@ def cmd_cast(args, st):
             sp["prepared"][key].append(spell)
             left_note = f"prepared {args.spell!r} left: {prepared - cast_n - 1}"
     lines, ok = _cast_common(st, c, args.spell, lvl, sc["concentration"], args)
-    dc = sc["dc_base"] + lvl
+    dc = args.dc or (sc["dc_base"] + lvl)
     if not c.get("hidden"):
         event(st, f"{who(c)} casts a spell" + ("" if ok else ", but loses it"))
     head = f"{c['token']} casts {args.spell} ({sc['class']} {lvl}, CL {sc['cl']}, save DC {dc}): {'OK' if ok else 'LOST'}"
-    return "\n".join([head] + ([f"  {left_note}"] if left_note else []) + lines)
+    effect = _spell_effect(args, st, c, args.spell, dc) if ok else []
+    return "\n".join([head] + ([f"  {left_note}"] if left_note else []) + lines + effect)
+
+
+def _spell_effect(args, st, c, name, dc):
+    """The effect part of cast/sla: an area template or a single target, with save and damage.
+    The player's log and questions say "the spell" / "the ability": naming it is a Spellcraft matter."""
+    out = []
+    shown = "the ability" if args.command == "sla" else "the spell"
+    if args.area:
+        m = re.match(r"^\s*(burst|cone|line)\s+(\d+)\s*$", args.area)
+        if not m:
+            raise CombatError('--area must look like "cone 15", "burst 20" or "line 60"')
+        ns = argparse.Namespace(shape=m.group(1), feet=int(m.group(2)), at=args.at, frm=c["token"],
+                                toward=args.toward, save=args.save, dc=dc, dmg=args.dmg, half=args.half,
+                                name=name, no_slot=True, log_name=shown)
+        out.append(cmd_area(ns, st))
+    elif args.target:
+        t = token(st, args.target)
+        dmg = 0
+        if args.dmg:
+            dmg, detail, _ = _roll(args.dmg)
+            out.append(f"{name}: damage {args.dmg} → {detail} = {dmg}")
+        if args.save:
+            if t["side"] == "pc":
+                st.setdefault("pending_saves", {})[t["token"]] = {
+                    "kind": args.save, "dc": dc, "dmg": dmg, "half": args.half, "name": shown}
+                st["awaiting"] = f"{t['name']}: roll a {args.save.capitalize()} save against {shown}"
+                out.append(f"  {t['name']}'s save is pending: ask the player, then `save {t['token']} --total N` (question set)")
+            else:
+                ok, total_s, how = _save(st, t, args.save, dc)
+                taken = (dmg // 2 if args.half else 0) if ok else dmg
+                out.append(f"  {label(t)} {args.save} {how} vs DC {dc}: {'success' if ok else 'failure'}"
+                           + (f", {taken} damage" if args.dmg else ""))
+                if taken:
+                    apply_damage(t, taken)
+                if not t.get("hidden"):
+                    event(st, f"{shown}: {who(t)} {args.save} save {total_s} — {'success' if ok else 'failure'}"
+                              + (f", {taken} damage [{who(t)}: {status(t)}]" if args.dmg else ""))
+        elif dmg:
+            apply_damage(t, dmg)
+            if not t.get("hidden"):
+                event(st, f"{shown}: {who(t)} takes {dmg} damage [{who(t)}: {status(t)}]")
+    return out
 
 
 def cmd_sla(args, st):
@@ -1074,9 +1117,13 @@ def cmd_sla(args, st):
     lines, ok = _cast_common(st, c, args.name, lvl, entry.get("concentration", entry.get("cl", 0)), args)
     if not c.get("hidden"):
         event(st, f"{who(c)} uses a spell-like ability" + ("" if ok else ", but loses it"))
-    dc = f", DC {entry['dc']}" if entry.get("dc") else ""
+    dc_val = args.dc or entry.get("dc")
+    dc = f", DC {dc_val}" if dc_val else ""
     head = f"{c['token']} uses {args.name} (SLA, CL {entry.get('cl', '?')}{dc}): {'OK' if ok else 'LOST'}"
-    return "\n".join([head] + ([f"  {note}"] if note else []) + lines)
+    if ok and (args.area or args.target) and args.save and not dc_val:
+        raise CombatError(f"{args.name} has no DC in the profile: pass --dc")
+    effect = _spell_effect(args, st, c, args.name, dc_val) if ok else []
+    return "\n".join([head] + ([f"  {note}"] if note else []) + lines + effect)
 
 
 def cmd_spells(args, st):
@@ -1312,6 +1359,17 @@ def cmd_save(args, st):
 
 
 def cmd_area(args, st):
+    if args.frm and args.name and not getattr(args, "no_slot", False):
+        # safety net: a spell or SLA of the caster must go through cast/sla so its use is spent
+        prof = token(st, args.frm).get("profile") or {}
+        nm = args.name.lower().replace("-", " ")
+        spells = [s.lower() for sc in prof.get("spellcasting") or [] for lst in (sc.get("spells") or {}).values() for s in lst]
+        slas = [s["name"].lower() for s in prof.get("sla") or []]
+        if nm in spells or nm in slas:
+            kind = "cast" if nm in spells else "sla"
+            raise CombatError(f"{args.name!r} is a {'spell' if kind == 'cast' else 'spell-like ability'} of {args.frm}: "
+                              f"use `{kind} {args.frm} \"{nm}\" --area \"{args.shape} {args.feet}\" …` so it's spent "
+                              f"(or --no-slot if this isn't that spell)")
     if args.shape == "burst":
         if not args.at:
             raise CombatError("a burst needs --at SQUARE")
@@ -1327,15 +1385,16 @@ def cmd_area(args, st):
     if not args.save:
         return "\n".join(out)
     name = args.name or f"the {args.shape}"
+    shown_name = getattr(args, "log_name", None) or name   # what the player's log and questions say
     dmg, detail, _ = _roll(args.dmg) if args.dmg else (0, "no damage", None)
     out.append(f"{name}: damage {args.dmg} → {detail} = {dmg}")
     if not any(not o.get("hidden") for o in hit):
-        event(st, f"{name} hits no one")
+        event(st, f"{shown_name} hits no one")
     pcs = []
     for o in hit:
         if o["side"] == "pc":
             st.setdefault("pending_saves", {})[o["token"]] = {
-                "kind": args.save, "dc": args.dc, "dmg": dmg, "half": args.half, "name": name}
+                "kind": args.save, "dc": args.dc, "dmg": dmg, "half": args.half, "name": shown_name}
             pcs.append(o)
             continue
         ok, total_s, how = _save(st, o, args.save, args.dc)
@@ -1345,10 +1404,10 @@ def cmd_area(args, st):
             apply_damage(o, taken)
         if not o.get("hidden"):
             shown = f"{who(o)} {args.save} save {total_s}" + (f" vs DC {args.dc}" if o["side"] in FRIENDLY else "")
-            event(st, f"{name}: {shown} — {'success' if ok else 'failure'}, {taken} damage [{who(o)}: {status(o)}]")
+            event(st, f"{shown_name}: {shown} — {'success' if ok else 'failure'}, {taken} damage [{who(o)}: {status(o)}]")
     if pcs:
         names = ", ".join(o["name"] for o in pcs)
-        st["awaiting"] = f"{names}: roll a {args.save.capitalize()} save against {name}"
+        st["awaiting"] = f"{names}: roll a {args.save.capitalize()} save against {shown_name}"
         out.append(f"  PC saves pending ({names}): ask the player, then `save TOKEN --total N` (question set)")
     return "\n".join(out)
 
@@ -1459,6 +1518,7 @@ def main(argv=None):
     ar.add_argument("--at"); ar.add_argument("--from", dest="frm"); ar.add_argument("--toward")
     ar.add_argument("--save", choices=["fort", "ref", "will"]); ar.add_argument("--dc", type=int)
     ar.add_argument("--dmg"); ar.add_argument("--half", action="store_true"); ar.add_argument("--name")
+    ar.add_argument("--no-slot", action="store_true", help="not a spell/SLA of the caster (e.g. a breath weapon)")
     pf = sub.add_parser("profile"); pf.add_argument("action", choices=["check"]); pf.add_argument("files", nargs="+")
     for nm in ("cast", "sla"):
         cp = sub.add_parser(nm); cp.add_argument("token"); cp.add_argument("spell" if nm == "cast" else "name")
@@ -1466,6 +1526,11 @@ def main(argv=None):
         cp.add_argument("--no-provoke", action="store_true", help="it doesn't provoke (e.g. a quickened spell)")
         if nm == "cast":
             cp.add_argument("--level", type=int); cp.add_argument("--class", dest="cls")
+        cp.add_argument("--area", help='template, e.g. "cone 15", "burst 20", "line 60"')
+        cp.add_argument("--at", help="burst center square"); cp.add_argument("--toward", help="cone/line direction square")
+        cp.add_argument("--target", help="a single target token")
+        cp.add_argument("--save", choices=["fort", "ref", "will"]); cp.add_argument("--dmg")
+        cp.add_argument("--half", action="store_true"); cp.add_argument("--dc", type=int, help="override the DC")
     sub.add_parser("spells").add_argument("token")
     pv = sub.add_parser("provoke"); pv.add_argument("token"); pv.add_argument("--reason", default="provoking")
     pv.add_argument("--no-aoo", action="store_true")
