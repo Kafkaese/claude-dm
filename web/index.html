@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude DM</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400;1,7..72,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #F4F1EA; --surface: #FBF9F4; --border: #E1DACB; --field-border: #D9D1C0;
+  --text: #1F1D1A; --muted: #5F594F; --bubble: #E6E0D2; --accent: #A0552A; --accent-ink: #FFFFFF;
+  --accent-soft: #F3DCCB; --accent-soft-ink: #7E3F1C; --pc: #2F5FB3; --ally: #2E7D4F; --enemy: #B23A32;
+  --serif: 'Literata', Georgia, serif; --sans: 'IBM Plex Sans', system-ui, sans-serif; --mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141317; --surface: #1C1B20; --border: #2C2A31; --field-border: #34323A;
+    --text: #ECE7DF; --muted: #A9A296; --bubble: #26252B; --accent: #D9965F; --accent-ink: #141317;
+    --accent-soft: #3A2A1E; --accent-soft-ink: #E8B283; --pc: #6D96E0; --ally: #4CAF78; --enemy: #D65A50;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--sans); display: flex; flex-direction: column; }
+button { font: inherit; color: inherit; cursor: pointer; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+header { height: 64px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 28px; border-bottom: 1px solid var(--border); }
+.brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.brand .title { font-family: var(--serif); font-size: 18px; font-weight: 600; white-space: nowrap; }
+.badge { padding: 4px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-soft-ink); font-size: 12.5px; font-weight: 600; }
+.badge[hidden] { display: none; }
+nav { display: flex; align-items: center; gap: 4px; }
+.navbtn { height: 44px; padding: 0 16px; border: 0; border-radius: 10px; background: transparent; font-weight: 500; font-size: 14px; }
+.navbtn:hover, .iconbtn:hover { background: var(--bubble); }
+.iconbtn { width: 44px; height: 44px; border: 0; border-radius: 10px; background: transparent; display: flex; align-items: center; justify-content: center; }
+
+.layout { flex: 1; display: flex; min-height: 0; }
+main { flex: 1; display: flex; flex-direction: column; align-items: center; min-width: 0; }
+#scroll { flex: 1; width: 100%; overflow-y: auto; display: flex; flex-direction: column; align-items: center; }
+#chat { width: min(720px, calc(100% - 48px)); display: flex; flex-direction: column; gap: 26px; padding: 40px 0 24px; transition: width .25s; }
+body.combat #chat, body.combat #composer { width: min(640px, calc(100% - 48px)); }
+
+.dm { font-family: var(--serif); font-size: 19px; line-height: 1.65; overflow-wrap: anywhere; }
+body.combat .dm { font-size: 18px; line-height: 1.6; }
+.dm p { margin: 0 0 16px; } .dm p:last-child { margin-bottom: 0; }
+.dm blockquote { margin: 0 0 16px; padding-left: 16px; border-left: 2px solid var(--border); font-style: italic; }
+.dm ul, .dm ol { margin: 0 0 16px; padding-left: 24px; }
+.dm h1, .dm h2, .dm h3 { font-size: 1.05em; margin: 0 0 10px; }
+.dm code { font-family: var(--mono); font-size: .85em; }
+.dm pre { font-family: var(--mono); font-size: 13px; line-height: 1.45; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; overflow-x: auto; }
+.dm table { border-collapse: collapse; font-family: var(--sans); font-size: 14px; margin: 0 0 16px; }
+.dm th, .dm td { border-bottom: 1px solid var(--border); padding: 6px 12px 6px 0; text-align: left; }
+.dm hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0; }
+.player { align-self: flex-end; max-width: 78%; padding: 12px 18px; border-radius: 16px 16px 4px 16px; background: var(--bubble); font-size: 15px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.system { color: var(--muted); font-size: 13.5px; font-style: italic; }
+.debug { color: var(--muted); font: 12px/1.4 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.logcard { padding: 12px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; display: flex; flex-direction: column; gap: 4px; }
+.logcard .head { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 4px; }
+.logline { font: 12.5px/1.5 var(--mono); }
+.logline .r { color: var(--muted); margin-right: 6px; }
+
+#status { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 14px; }
+#status[hidden] { display: none; }
+#status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { #status .dot { animation: none; } }
+
+#composer { width: min(720px, calc(100% - 48px)); padding: 0 0 22px; display: flex; flex-direction: column; gap: 8px; transition: width .25s; }
+.field { display: flex; align-items: flex-end; gap: 10px; padding: 10px 10px 10px 18px; background: var(--surface); border: 1px solid var(--field-border); border-radius: 16px; }
+.field:focus-within { border-color: var(--accent); }
+#msg { flex: 1; resize: none; border: 0; outline: none; background: transparent; color: var(--text); font: 400 16px/1.5 var(--sans); padding: 8px 0; max-height: 220px; }
+#send { width: 44px; height: 44px; flex-shrink: 0; border: 0; border-radius: 12px; background: var(--accent); display: flex; align-items: center; justify-content: center; }
+#send:disabled { opacity: .45; cursor: default; }
+.hints { display: flex; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 12.5px; }
+
+aside { width: 0; flex-shrink: 0; overflow: hidden; background: var(--surface); border-left: 1px solid transparent; transition: width .25s; }
+body.combat aside { width: 540px; border-left-color: var(--border); }
+.panel { width: 540px; height: 100%; overflow-y: auto; padding: 24px 28px; display: flex; flex-direction: column; gap: 18px; }
+.panel .top { display: flex; align-items: baseline; justify-content: space-between; }
+.panel .round { font-family: var(--serif); font-size: 18px; font-weight: 600; }
+.panel .turn { color: var(--muted); font-size: 14px; }
+#map { width: 100%; border-radius: 8px; display: block; }
+.section-label { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; padding-bottom: 6px; }
+.initrow { display: grid; grid-template-columns: 16px 1fr 40px 130px; align-items: center; column-gap: 10px; min-height: 34px; padding: 0 8px; font-size: 14px; border-radius: 8px; }
+.initrow.current { background: var(--accent-soft); font-weight: 600; }
+.initrow .dot { width: 10px; height: 10px; border-radius: 50%; }
+.initrow .init { color: var(--muted); text-align: right; }
+.initrow.current .init { color: inherit; }
+#log { display: flex; flex-direction: column; gap: 4px; }
+
+.drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); display: none; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100%); background: var(--surface); border-left: 1px solid var(--border); padding: 24px 28px; overflow-y: auto; transform: translateX(100%); transition: transform .25s; }
+body.drawer-open .drawer { transform: none; }
+body.drawer-open .drawer-backdrop { display: block; }
+.drawer .dhead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.drawer .dhead h2 { font-family: var(--serif); font-size: 20px; margin: 0; }
+.drawer .dm { font-size: 16px; line-height: 1.6; }
+
+.menu { position: absolute; top: 60px; right: 20px; width: 260px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: none; flex-direction: column; gap: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.12); z-index: 5; }
+.menu.open { display: flex; }
+.menu label { font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 6px; }
+.menu select, .menu button { height: 40px; border-radius: 8px; border: 1px solid var(--field-border); background: var(--bg); color: var(--text); padding: 0 10px; font-size: 14px; }
+
+@media (max-width: 1100px) {
+  body.combat .layout { flex-direction: column; }
+  body.combat aside { width: 100%; max-height: 45vh; border-left: 0; border-top: 1px solid var(--border); }
+  .panel { width: 100%; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="color: var(--accent)" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8.5 5v10L12 22 3.5 17V7z"/><path d="M12 2v20M3.5 7L20.5 17M20.5 7L3.5 17"/></svg>
+    <span class="title" id="title">Claude DM</span>
+    <span class="badge" id="combat-badge" hidden>In combat</span>
+  </div>
+  <nav aria-label="Player tools">
+    <button class="navbtn" type="button" data-doc="character">Character</button>
+    <button class="navbtn" type="button" data-doc="party">Party notes</button>
+    <button class="navbtn" type="button" data-doc="handouts">Handouts</button>
+    <button class="iconbtn" type="button" id="settings-btn" aria-label="Settings" aria-expanded="false">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v3M12 20v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M1 12h3M20 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
+    </button>
+  </nav>
+  <div class="menu" id="menu" role="dialog" aria-label="Settings">
+    <label>Thinking effort
+      <select id="effort"><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option></select>
+    </label>
+    <button type="button" id="debug-btn">Debug: off</button>
+  </div>
+</header>
+
+<div class="layout">
+  <main>
+    <div id="scroll">
+      <div id="chat" aria-live="polite"></div>
+    </div>
+    <form id="composer">
+      <div id="status" hidden><span class="dot"></span><span id="status-text"></span></div>
+      <div class="field">
+        <label class="sr-only" for="msg">Your message to the DM</label>
+        <textarea id="msg" rows="1" placeholder="What do you do?"></textarea>
+        <button id="send" type="submit" aria-label="Send"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" style="color: var(--accent-ink)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+      </div>
+      <div class="hints"><span>Enter to send · Shift+Enter for a new line</span><span>"quotes" = speech · [brackets] = talk to the system</span></div>
+    </form>
+  </main>
+  <aside aria-label="Battle map">
+    <div class="panel">
+      <div class="top"><span class="round" id="round">Round 1</span><span class="turn" id="turn"></span></div>
+      <img id="map" alt="Battle map">
+      <div><div class="section-label">Initiative</div><div id="init"></div></div>
+      <div><div class="section-label">Combat log</div><div id="log"></div></div>
+    </div>
+  </aside>
+</div>
+
+<div class="drawer-backdrop" id="backdrop"></div>
+<div class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+  <div class="dhead"><h2 id="drawer-title">Character</h2><button class="iconbtn" type="button" id="drawer-close" aria-label="Close"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="dm" id="drawer-body"></div>
+</div>
+
+<script>
+// ---------- markdown (escape first, then a small subset) ----------
+function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+function inline(s) {
+  s = esc(s);
+  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  s = s.replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>");
+  s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^\*\w])\*(?!\s)(.+?)(?<!\s)\*(?![\*\w])/g, "$1<em>$2</em>");
+  s = s.replace(/(^|[^_\w])_(?!\s)(.+?)(?<!\s)_(?![_\w])/g, "$1<em>$2</em>");
+  return s;
+}
+function md(text) {
+  const lines = text.split("\n"); const out = []; let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      const buf = []; i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) buf.push(lines[i++]);
+      i++; out.push("<pre>" + esc(buf.join("\n")) + "</pre>"); continue;
+    }
+    if (/^\s*$/.test(line)) { i++; continue; }
+    if (/^#{1,6}\s/.test(line)) { out.push("<h3>" + inline(line.replace(/^#{1,6}\s/, "")) + "</h3>"); i++; continue; }
+    if (/^\s*(---|\*\*\*)\s*$/.test(line)) { out.push("<hr>"); i++; continue; }
+    if (/^\s*\|/.test(line)) {
+      const rows = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) { if (!/^\s*\|?\s*:?-{3,}/.test(lines[i])) rows.push(lines[i]); i++; }
+      const cells = r => r.trim().replace(/^\||\|$/g, "").split("|").map(c => inline(c.trim()));
+      out.push("<table>" + rows.map((r, n) => "<tr>" + cells(r).map(c => n ? `<td>${c}</td>` : `<th>${c}</th>`).join("") + "</tr>").join("") + "</table>");
+      continue;
+    }
+    if (/^>/.test(line)) {
+      const buf = [];
+      while (i < lines.length && /^>/.test(lines[i])) buf.push(lines[i++].replace(/^>\s?/, ""));
+      out.push("<blockquote>" + buf.map(inline).join("<br>") + "</blockquote>"); continue;
+    }
+    if (/^\s*([-*]|\d+\.)\s/.test(line)) {
+      const ordered = /^\s*\d+\./.test(line); const items = [];
+      while (i < lines.length && /^\s*([-*]|\d+\.)\s/.test(lines[i])) items.push(inline(lines[i++].replace(/^\s*([-*]|\d+\.)\s/, "")));
+      out.push((ordered ? "<ol>" : "<ul>") + items.map(x => `<li>${x}</li>`).join("") + (ordered ? "</ol>" : "</ul>")); continue;
+    }
+    const buf = [];
+    while (i < lines.length && !/^\s*$/.test(lines[i]) && !/^(\s*```|#{1,6}\s|>|\s*\||\s*([-*]|\d+\.)\s)/.test(lines[i])) buf.push(lines[i++]);
+    out.push("<p>" + buf.map(inline).join("<br>") + "</p>");
+  }
+  return out.join("");
+}
+
+// ---------- chat ----------
+const chat = document.getElementById("chat"), scroller = document.getElementById("scroll");
+const msg = document.getElementById("msg"), sendBtn = document.getElementById("send");
+let current = null, currentText = "", busy = false, statusSince = null, statusLabel = null;
+
+function nearBottom() { return scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 120; }
+function stick(fn) { const b = nearBottom(); fn(); if (b) scroller.scrollTop = scroller.scrollHeight; }
+function add(cls, html) { const d = document.createElement("div"); d.className = cls; d.innerHTML = html; stick(() => chat.appendChild(d)); return d; }
+function addPlayer(text) { const d = document.createElement("div"); d.className = "player"; d.textContent = text; stick(() => chat.appendChild(d)); }
+function addLog(title, events) {
+  if (!events || !events.length) return;
+  add("logcard", `<div class="head">${esc(title)}</div>` + events.map(e => `<div class="logline"><span class="r">R${e.round ?? "?"}</span>${esc(e.text)}</div>`).join(""));
+}
+function renderItem(m) {
+  if (m.role === "player") addPlayer(m.text);
+  else if (m.role === "dm") add("dm", md(m.text));
+  else if (m.role === "system") add("system", esc(m.text));
+  else if (m.role === "debug") add("debug", esc(m.text));
+  else if (m.role === "log") addLog(m.title, m.events);
+}
+
+function setBusy(b) { busy = b; sendBtn.disabled = b; }
+function setStatus(label, since) {
+  statusLabel = label; statusSince = label ? (since ? since * 1000 : Date.now()) : null;
+  document.getElementById("status").hidden = !label; tickStatus();
+}
+function tickStatus() {
+  if (!statusLabel) return;
+  const s = Math.max(0, Math.floor((Date.now() - statusSince) / 1000));
+  document.getElementById("status-text").textContent = `${statusLabel}… ${s}s`;
+}
+setInterval(tickStatus, 500);
+
+// ---------- combat panel ----------
+function setCombat(c) {
+  const active = !!(c && c.active);
+  document.body.classList.toggle("combat", active);
+  document.getElementById("combat-badge").hidden = !active;
+  if (!active) return;
+  document.getElementById("round").textContent = `Round ${c.round}`;
+  document.getElementById("turn").textContent = c.turn ? `${c.turn}’s turn` : "";
+  if (c.image) document.getElementById("map").src = `/map.png?v=${c.image}`;
+  const color = side => side === "pc" ? "var(--pc)" : side === "ally" ? "var(--ally)" : "var(--enemy)";
+  document.getElementById("init").innerHTML = c.initiative.map(r =>
+    `<div class="initrow${r.current ? " current" : ""}"><span class="dot" style="background:${color(r.side)}"></span><span>${esc(r.name)}</span><span class="init">${r.init}</span><span>${esc(r.status)}</span></div>`).join("");
+  const log = document.getElementById("log");
+  log.innerHTML = c.events.map(e => `<div class="logline"><span class="r">R${e.round ?? "?"}</span>${esc(e.text)}</div>`).join("");
+  log.lastElementChild && log.parentElement.parentElement.scrollTo({ top: 1e9 });
+}
+
+// ---------- events from the server ----------
+function connect() {
+  const es = new EventSource("/events");
+  es.onmessage = e => handle(JSON.parse(e.data));
+  es.onerror = () => { es.close(); setTimeout(connect, 1500); };
+}
+function handle(ev) {
+  switch (ev.type) {
+    case "hello":
+      chat.innerHTML = ""; current = null;
+      document.getElementById("title").textContent = ev.title || "Claude DM";
+      document.title = `${ev.title || "Claude DM"} · Claude DM`;
+      ev.history.forEach(renderItem);
+      if (!ev.history.length) add("system", "New session. Type <strong>/start-session &lt;campaign&gt;</strong> or <strong>/new-campaign</strong> to begin.");
+      setBusy(ev.busy); setStatus(ev.status, ev.status_since); setCombat(ev.combat);
+      setSettings(ev.effort, ev.debug);
+      scroller.scrollTop = scroller.scrollHeight;
+      break;
+    case "player": addPlayer(ev.text); current = null; break;
+    case "busy": setBusy(ev.busy); if (!ev.busy) { setStatus(null); current = null; } break;
+    case "status": setStatus(ev.label, ev.since); break;
+    case "text_start":
+      if (ev.new || !current) { current = add("dm", ""); currentText = ""; }
+      else currentText += "\n\n";
+      break;
+    case "text":
+      if (!current) { current = add("dm", ""); currentText = ""; }
+      currentText += ev.delta; stick(() => { current.innerHTML = md(currentText); });
+      break;
+    case "text_end": break;
+    case "turn_end": if (!ev.solicited) current = null; break;
+    case "system": add("system", esc(ev.text)); break;
+    case "error": add("system", esc(ev.message)); break;
+    case "debug": add("debug", esc(ev.line)); break;
+    case "combat":
+      if (!ev.active && ev.final_events) addLog("The fight is over", ev.final_events);
+      setCombat(ev);
+      break;
+    case "settings": setSettings(ev.effort, ev.debug); break;
+  }
+}
+
+// ---------- input ----------
+async function send(text) {
+  const r = await fetch("/send", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+  if (r.status === 409) add("system", "The DM is still busy. Your message wasn’t sent.");
+  return r.ok;
+}
+document.getElementById("composer").addEventListener("submit", async e => {
+  e.preventDefault();
+  const text = msg.value.trim();
+  if (!text || busy) return;
+  msg.value = ""; autosize();
+  if (!(await send(text)) && !text.startsWith(":")) msg.value = text;
+});
+msg.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); document.getElementById("composer").requestSubmit(); }
+});
+function autosize() { msg.style.height = "auto"; msg.style.height = Math.min(msg.scrollHeight, 220) + "px"; }
+msg.addEventListener("input", autosize);
+
+// ---------- drawer & settings ----------
+document.querySelectorAll("[data-doc]").forEach(b => b.addEventListener("click", async () => {
+  const r = await fetch(`/doc?name=${b.dataset.doc}`);
+  const doc = r.ok ? await r.json() : { title: b.textContent, markdown: "*Nothing here yet.*" };
+  document.getElementById("drawer-title").textContent = doc.title;
+  document.getElementById("drawer-body").innerHTML = md(doc.markdown);
+  document.body.classList.add("drawer-open");
+  document.getElementById("drawer-close").focus();
+}));
+function closeDrawer() { document.body.classList.remove("drawer-open"); msg.focus(); }
+document.getElementById("drawer-close").addEventListener("click", closeDrawer);
+document.getElementById("backdrop").addEventListener("click", closeDrawer);
+document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawer(); toggleMenu(false); } });
+
+const menu = document.getElementById("menu"), settingsBtn = document.getElementById("settings-btn");
+function toggleMenu(open) { menu.classList.toggle("open", open); settingsBtn.setAttribute("aria-expanded", String(open)); }
+settingsBtn.addEventListener("click", () => toggleMenu(!menu.classList.contains("open")));
+function setSettings(effort, debug) {
+  if (effort) document.getElementById("effort").value = effort;
+  document.getElementById("debug-btn").textContent = `Debug: ${debug ? "on" : "off"}`;
+}
+document.getElementById("effort").addEventListener("change", e => { send(`:effort ${e.target.value}`); toggleMenu(false); });
+document.getElementById("debug-btn").addEventListener("click", () => { send(":debug"); toggleMenu(false); });
+
+connect();
+msg.focus();
+</script>
+</body>
+</html>

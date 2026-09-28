@@ -4,7 +4,7 @@ How Claude runs a session at the table. This guide works for any system, and the
 
 ## Behind the screen
 There are two ways to play, and they handle hidden work differently:
-- **`play.py` (recommended):** a player-facing terminal that shows the player only your text. Tool calls, rolls, file reads and subagents are invisible. So **do the hidden mechanics yourself**: roll, run `combat.py`, read and write `dm/` files directly. Don't use gm-screen, because it only costs time. Never think out loud in your text, and don't paste the combat map (the interface prints it). The wrapper's system prompt tells you when you're in this mode.
+- **`web.py` or `play.py` (recommended):** a player-facing interface (browser or terminal) that shows the player only your text. Tool calls, rolls, file reads and subagents are invisible. So **do the hidden mechanics yourself**: roll, run `combat.py`, read and write `dm/` files directly. Don't use gm-screen, because it only costs time. Never think out loud in your text, and don't paste the combat map (the interface prints it). The wrapper's system prompt tells you when you're in this mode.
   - **Keep turns fast**, since every tool call is waiting time for the player. Put all rolls for a turn in one `roll.py` call, and all combat steps in one `combat.py do "…" "…"` call. Don't re-read files you've already read this session. Log tersely, at scene breaks only. Read files by section.
 - **The Claude Code UI** (VS Code or CLI): the player can expand every tool call, so hidden work goes through the **gm-screen** agent, as described below. It's slower, and not fully hidden, because the UI shows subagent steps too.
 

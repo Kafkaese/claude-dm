@@ -9,3 +9,4 @@ Spoilers for these are fine. Include each one's outcome at the player's table if
 
 ## Notes
 - 2026-09-26: confirmed at session zero (sandpoint-delve): no published adventures played or read.
+- 2026-09-28: created `test-campaign`, a throwaway one-shot for testing table tooling, reusing Corin (level 3) from `sandpoint-delve` as-is. Expect it to be reused and overwritten.
