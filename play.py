@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from dm_engine import EFFORTS, REPO, Engine, last_session
+from dm_engine import EFFORTS, REPO, Engine, combat_state, is_go_signal, last_session, run_combat_step, step_due
 
 # ---------- terminal formatting ----------
 
@@ -198,6 +198,10 @@ class MapWatcher:
         self.seen[str(path)] = m
         return True
 
+    def current_campaign(self) -> str | None:
+        """The campaign whose fight is watched (the --campaign option, or the latest fight)."""
+        return self._campaign()
+
     def in_combat(self) -> bool:
         """Whether the watched campaign has an active fight."""
         camp = self._campaign()
@@ -304,6 +308,12 @@ class Terminal:
         self.at_prompt = True
 
 
+def _pc_up(camp: str) -> bool:
+    """Whether the turn pointer is on a PC."""
+    st = combat_state(camp) or {}
+    return any(t["token"] == st.get("turn") and t["side"] == "pc" for t in st.get("tokens", []))
+
+
 def read_input() -> str:
     """Read the player's message; lines ending in a backslash continue on the next line."""
     lines = []
@@ -389,8 +399,17 @@ def main() -> None:
             continue
         print()
         term.before_turn()
+        camp = maps.current_campaign()
+        st = combat_state(camp)
         try:
-            ok = dm.send(text)
+            if camp and st and not st.get("awaiting") and is_go_signal(text):
+                ok = run_combat_step(dm, camp, dm.send) != "error"   # the interface plays one step
+                if _pc_up(camp):
+                    print(f"{DIM}(your turn){RESET}")
+            else:
+                ok = dm.send(text)
+                if ok and camp and step_due(camp, text):
+                    ok = run_combat_step(dm, camp, dm.send) != "error"
         except KeyboardInterrupt:
             spinner.hide()
             print(f"\n{DIM}(interrupted; restarting the DM session){RESET}")

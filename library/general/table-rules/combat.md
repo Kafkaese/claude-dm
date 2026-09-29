@@ -16,7 +16,7 @@ Setting up a fight takes a moment. Use it: give the player something to do while
 
 1. **Call it and stop.** In one short message, with **no tool calls** before it: narrate the moment violence breaks out (only what the PC perceives), then ask the player to **roll initiative** (give their modifier from the sheet) and to get their attack and damage dice ready. Example: *"Steel clears leather. **Roll initiative** (d20+5), and get your dice ready."* End the message there.
 2. **Set up while they roll.** When the answer comes in, do the whole setup in as few calls as possible: one `roll.py` call for all enemy initiatives and surprise checks, then one `combat.py do "new …" "add …" "add …" "show"` call. Hidden enemies get `--hidden`.
-3. **Open the fight** without resolving any turn yet, and without `next`, so the pointer starts before the first actor. (Exceptions: if the PC acts first, run `next` so the pointer is on them. Unnoticed enemies who act before the first visible actor are resolved silently.) Give the initiative order (only combatants the PC knows about), say who acts first, then stop. The player's "next" (or their declarations, if they're first) starts the first step. Include the map (in `play.py` the interface prints it), and a one-line reminder of the turn convention: *"(Declare your actions, and say **end turn** when you're done.)"* Give the reminder at every fight in the first sessions, and later only when it helps.
+3. **Open the fight** without resolving any turn yet, so the pointer starts before the first actor. In `web.py`/`play.py`, never run `next`: if the PC acts first, the interface moves the pointer onto them (resolving unnoticed enemies before them) right after your reply. In the Claude Code UI, run `next` yourself if the PC acts first, resolving unnoticed enemies who act before them silently. Give the initiative order (only combatants the PC knows about), say who acts first, then stop. The player's "next" (or their declarations, if they're first) starts the first step. Include the map (in `play.py` the interface prints it), and a one-line reminder of the turn convention: *"(Declare your actions, and say **end turn** when you're done.)"* Give the reminder at every fight in the first sessions, and later only when it helps.
 4. **Surprise:** if the enemies strike first from hiding, it's fine to narrate the ambush and then ask for initiative in the same message.
 
 ## Solo and small parties
@@ -96,7 +96,7 @@ It confirms crits, rolls damage only on a hit, applies DR, and writes the **comb
 **Movement:** `move g1 D4`, or `move C C4 --step` for a 5-foot step. The script tracks feet per turn.
 - **Leaving a threatened square:** NPCs' attacks of opportunity are rolled automatically, and the mover stops if they drop it (use `--no-aoo` only for a deliberate exception). A PC's chance to take an AoO opens a question, unless its standing order says otherwise (`order C aoo never|always|ask`).
 
-**`next`** moves the pointer at the **start** of each step (see "Flow"), and handles the start of that creature's turn:
+**`next`** moves the pointer at the **start** of each step (see "Flow"). In `web.py`/`play.py` only the interface runs it (the script refuses it from the DM). It handles the start of that creature's turn:
 - ends expiring conditions and applies ongoing damage
 - resets its AoOs and movement
 - makes a dying NPC's stabilization check
@@ -122,6 +122,18 @@ Combat runs **one actor at a time**. Each non-PC actor's turn is its own reply, 
 - **"next":** play the next actor's turn.
 - **"end turn":** the PC is done. Play the next actor's turn.
 
+**The actor lock:** `attack`, `move`, `cast`, `sla`, `provoke` and `area --from` only work for the creature the pointer is on, so one actor can't act on another's turn. Exempt: attacks of opportunity (`attack … --aoo`), and anything marked `--out-of-turn` (readied or immediate actions, forced movement, repositioning during setup).
+
+### In `web.py` / `play.py`: the interface runs the steps
+The pacing is in code, not in your hands:
+- **On a go signal,** the interface runs `next` itself and sends you a bracketed **combat step** message naming the one actor to play, with what happened at the start of its turn. Resolve exactly that actor in one `combat.py do` call, narrate only that actor, and stop. The message says whether the PC's turn comes right after (then say so in one short line).
+- **Hidden actors** get their own step message. Your reply is only shown if the actor gets revealed (`combat.py reveal`); if it stays unnoticed, reply "…".
+- **The PC's turn:** resolve what the player declares. When the player ends their turn in any words other than the bare signal, or in the same message as their actions ("…attack g2, 17 to hit. Done."), add `combat.py endturn C` to your call. The interface plays the next step after your reply. Never narrate another actor's turn yourself.
+- **Mid-round questions** work as below (`combat.py ask`).
+
+### In the Claude Code UI (gm-screen mode)
+Send one `enemy-turns` call per step, asking for exactly one actor. gm-screen runs the step:
+
 **One step (one non-PC actor), ideally ONE `combat.py do` call:**
 1. `next`, which moves the pointer to the actor who plays now.
 2. **Hidden actors don't get their own step.** A "next" that reveals nothing would give them away. If the pointer lands on a creature the PC hasn't noticed and it stays unnoticed, resolve it silently and `next` again, in the same call, until the pointer is on a visible actor.
@@ -129,20 +141,20 @@ Combat runs **one actor at a time**. Each non-PC actor's turn is its own reply, 
 4. **If the actor after it is the PC,** add one more `next` at the end, so the pointer rests on the PC and the UI shows "End turn".
    Example: `combat.py do "next" "move g1 D4" "attack g1 C --roll '1d20+4' --dmg '1d6+1' --name spear" "next"`, where the last `next` is only there because Corin is next.
 5. Narrate that actor in a line or a few (see Narration), then **stop**. If it's the PC's turn now, say so in one line ("Your turn, Corin.") and wait for their declarations. Otherwise, no question at the end: the player sends the next signal.
-6. **If the player must decide something mid-round** (an attack of opportunity without a standing order, a readied or immediate action, a stabilization check), ask. Also run `combat.py ask "…"` so the UI pauses auto-combat. The next state-changing command clears it.
+6. **If the player must decide something mid-round** (an attack of opportunity without a standing order, a readied or immediate action, a stabilization check), ask. Also run `combat.py ask "…"` so the UI pauses auto-combat. The next state-changing command clears it. (This applies in both modes.)
+
+### In both modes
 
 **The PC's turn** stays open until the player says "end turn". That's the default convention; session zero can set a different phrase.
 - Never assume that a declared action is the whole turn. "I attack, 20 to hit, 5 damage" resolves the attack, and then the player may still want to move, take a 5-foot step, draw a weapon, use a swift action or speak.
 - After resolving what they declared, say briefly which actions remain and wait, e.g. *"Hit, 5 damage; the goblin staggers. You still have a move and a swift action."*
 - Only a full-round action, or the player saying "end turn" (or "done", "that's it"), ends the turn. **When in doubt, ask.**
-- A whole turn declared at once ("Move to D4, attack g2, 17 to hit, 9 damage. End turn.") is resolved, and then the next actor plays right away in the same step (the "end turn" is also the go signal). Resolving the PC's own actions never moves the pointer; it's already on the PC.
+- A whole turn declared at once ("Move to D4, attack g2, 17 to hit, 9 damage. End turn.") is resolved, and then the next actor plays right away (the "end turn" is also the go signal). In `web.py`/`play.py`, add `combat.py endturn C` and the interface plays that step; in the Claude Code UI, gm-screen plays it in the same step. Resolving the PC's own actions never moves the pointer; it's already on the PC.
 - Delaying and readying are declared the same way. Free actions like speaking are fine outside the PC's turn when the rules allow them.
 
 **Standing orders** avoid pauses. The player can set them any time, e.g. "always take AoOs", "Feather Fall if anyone falls", or "hold the door". Record them in the live log and apply them without asking.
 
 **Surprise round:** only aware combatants act, with one standard or move action each, and each one is still its own step.
-
-**In the Claude Code UI** (gm-screen mode), send one `enemy-turns` call per step, asking for exactly one actor.
 
 ## Narration
 **The default is one line per action,** with the key rolls: *The bandit leader charges you: 17 vs your AC 16, hit, **6 damage**.* Quick and readable, so combat keeps moving.

@@ -25,7 +25,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from typing import Any
 
-from dm_engine import (EFFORTS, REPO, Engine, active_campaign, campaign_title, combat_snapshot, list_campaigns,
+from dm_engine import (EFFORTS, REPO, Engine, active_campaign, campaign_title, combat_snapshot, combat_state,
+                       is_go_signal, list_campaigns, run_combat_step, step_due,
                        last_combat_events, last_session, load_history, map_png_path)
 
 WEB = REPO / "web"
@@ -167,7 +168,9 @@ class Hub:
             self.turn_dm = None
             self.publish({"type": "player", "text": text})
             self.publish({"type": "busy", "busy": True})
-            self.worker = threading.Thread(target=self._run_turn, args=(text,), daemon=True)
+            st = combat_state(self.campaign())
+            step = bool(st and not st.get("awaiting") and is_go_signal(text))
+            self.worker = threading.Thread(target=self._run_step if step else self._run_turn, args=(text,), daemon=True)
             self.worker.start()
         return 202, "ok"
 
@@ -184,20 +187,47 @@ class Hub:
             self.campaign_arg = None   # the new one will be the most recently touched
 
     def _run_turn(self, text: str) -> None:
-        """Worker thread: send the message to the engine and wait for the reply."""
-        self._exchange(text)
+        """Worker thread: send the message to the engine and wait for the reply. If that reply
+        leaves a combat step due (the player ended their turn in the same message, or a fight was
+        just set up with the PC first), the step runs right after."""
+        ok = self._exchange(text)
         self.refresh_combat()
+        if ok and step_due(self.campaign(), text):
+            self._step()
         self.refresh_campaign()
         self.publish({"type": "busy", "busy": False})
 
-    def _exchange(self, text: str) -> None:
-        """Send one message and wait for the reply; restart (resuming) if the process died."""
+    def _run_step(self, text: str) -> None:
+        """Worker thread for a go signal ("next", "end turn"): one engine-driven combat step."""
+        self._step()
+        self.publish({"type": "busy", "busy": False})
+
+    def _step(self) -> None:
+        """Run one combat step, refreshing the combat panel after each DM reply."""
+        camp = self.campaign()
+        if not camp:
+            return
+
+        def send(instruction: str) -> bool:
+            ok = self._exchange(instruction)
+            self.refresh_combat()
+            return ok
+
+        result = run_combat_step(self.eng, camp, send)
+        self.refresh_combat()
+        if result == "pc-quiet":
+            self.system("Your turn.")
+
+    def _exchange(self, text: str) -> bool:
+        """Send one message and wait for the reply; restart (resuming) if the process died.
+        Returns whether the reply completed."""
         ok = self.eng.send(text)
         if not ok:
             self.system("The DM process stopped. Restarting and resuming the session…")
             self.eng.restart()
         with self.lock:
             self.turn_dm = None
+        return ok
 
     def switch(self, slug: str, end_current: bool) -> tuple[int, str]:
         """Switch to another campaign: optionally end the running session, then start a fresh

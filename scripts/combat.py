@@ -18,7 +18,13 @@ Setup
 Play
   show [--dm]                     player view (paste verbatim) / DM view (never paste)
   next                            advance the turn pointer. Also: ends expiring conditions, applies
-                                  ongoing damage, resets AoOs and movement, reminds of dying checks
+                                  ongoing damage, resets AoOs and movement, reminds of dying checks.
+                                  In web/terminal play (CLAUDE_DM_MODE=play) only the interface runs it.
+  endturn C                       the player ended the PC's turn (in words other than the go signal,
+                                  or together with their actions): the interface plays the next step
+  Actor lock: attack, move, cast, sla, provoke and area --from only work for the creature the
+  pointer is on. Exempt: attack --aoo, and --out-of-turn (readied/immediate actions, forced
+  movement, repositioning during setup).
   move TOKEN POS [--step]         move along the cheapest legal path; tracks feet used this turn.
                                   Leaving threatened squares: NPC attacks of opportunity are rolled
                                   automatically (--no-aoo to skip); a PC's chance to take one opens a
@@ -95,6 +101,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import sys
 from datetime import datetime
@@ -934,22 +941,75 @@ def cmd_add(args: Args, st: State) -> str:
         f" ({'; '.join(notes)})" if notes else "")
 
 
+def cmd_endturn(args: Args, st: State) -> str:
+    """Mark the PC's turn as over (the player ended it in words, or in the same message as their
+    actions). In web/terminal play the interface then plays the next step itself."""
+    c = token(st, args.token)
+    if c["side"] != "pc":
+        raise CombatError(f"{c['token']} isn't a PC: other actors' turns end with their step")
+    if st.get("turn") != c["token"]:
+        raise CombatError(f"it isn't {c['token']}'s turn")
+    st["end_turn"] = c["token"]
+    return f"{c['name']}'s turn is over; the interface plays the next step"
+
+
+ACTOR_ARG = {"attack": "attacker", "move": "token", "cast": "token", "sla": "token", "provoke": "token", "area": "frm"}
+
+
+def check_actor(args: Args, st: State) -> None:
+    """The actor lock: only the creature the turn pointer is on takes actions. Attacks of opportunity
+    (`--aoo`) and anything marked `--out-of-turn` (readied or immediate actions, forced movement,
+    repositioning during setup) are exempt. An area with no --from (a trap, a hazard) has no actor.
+
+    Raises:
+        CombatError: if another creature tries to act.
+    """
+    key = ACTOR_ARG.get(args.command)
+    actor = getattr(args, key, None) if key else None
+    if not actor or getattr(args, "out_of_turn", False) or getattr(args, "aoo", False):
+        return
+    turn = st.get("turn")
+    if turn is None:
+        raise CombatError(f"no one is acting yet: {actor} can't act before the first turn starts "
+                          f"(use --out-of-turn to reposition during setup)")
+    if actor != turn:
+        raise CombatError(f"it's {turn}'s turn, not {actor}'s: resolve only the current actor. "
+                          f"AoOs take --aoo; readied or immediate actions and forced movement take --out-of-turn")
+
+
+def in_fight(c: Token) -> bool:
+    """Whether the token still gets turns: not removed, and above 0 HP unless a PC or ally (dying ones roll)."""
+    return not c.get("removed") and (c["hp"] > 0 or c["side"] in FRIENDLY)
+
+
+def next_actor(st: State) -> tuple[Token, bool] | None:
+    """The creature `next` will land on, and whether that starts a new round. Counts from the
+    pointer's place in the full order, so it's right even if the current actor just dropped."""
+    full = order(st)
+    if not any(in_fight(c) for c in full):
+        return None
+    toks = [c["token"] for c in full]
+    start = toks.index(st["turn"]) if st.get("turn") in toks else -1
+    for k in range(1, len(full) + 1):
+        j = start + k
+        c = full[j % len(full)]
+        if in_fight(c):
+            return c, start >= 0 and j >= len(full)
+    return None
+
+
 def cmd_next(args: Args, st: State) -> str:
     """Advance the turn pointer and handle the start of that creature's turn: expiring conditions,
     ongoing damage, AoO and movement resets, and dying checks (NPCs roll; a dying PC opens a question).
     """
-    live = [c for c in order(st) if not c.get("removed") and (c["hp"] > 0 or c["side"] in FRIENDLY)]
-    if not live:
+    found = next_actor(st)
+    if not found:
         raise CombatError("no combatants")
-    toks = [c["token"] for c in live]
-    if st["turn"] in toks:
-        i = toks.index(st["turn"]) + 1
-        if i >= len(toks):
-            i, st["round"] = 0, st["round"] + 1
-    else:
-        i = 0
-    st["turn"] = toks[i]
-    c = live[i]
+    c, wraps = found
+    if wraps:
+        st["round"] = st.get("round", 1) + 1
+    st["turn"] = c["token"]
+    st.pop("end_turn", None)
     out = [f"Round {st['round']}: {label(c)} ({c['name']}) acts"]
     # start of this creature's turn
     for o, name in R.expire(st, c["token"], st["round"]):
@@ -1650,8 +1710,12 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("reveal", "hide", "remove"):
         sub.add_parser(name).add_argument("token")
     sub.add_parser("end")
+    sub.add_parser("endturn").add_argument("token")
     im = sub.add_parser("image"); im.add_argument("mode", nargs="?", choices=["on", "off"])
     dp = sub.add_parser("do"); dp.add_argument("cmds", nargs="+")
+    for sp in (at, m, pv, ar, sub.choices["cast"], sub.choices["sla"]):
+        sp.add_argument("--out-of-turn", action="store_true",
+                        help="the actor isn't the current one: a readied or immediate action, forced movement, setup")
     args = p.parse_args(argv)
 
     handlers = {"add": cmd_add, "next": cmd_next, "move": cmd_move, "dist": cmd_dist,
@@ -1660,7 +1724,7 @@ def main(argv: list[str] | None = None) -> int:
                 "image": cmd_image, "attack": cmd_attack, "log": cmd_log, "events": cmd_events,
                 "ask": cmd_ask, "stabilize": cmd_stabilize, "save": cmd_save, "area": cmd_area,
                 "order": cmd_order, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
-                "provoke": cmd_provoke}
+                "provoke": cmd_provoke, "endturn": cmd_endturn}
     if args.command == "profile":
         return cmd_profile(args)
     if args.command == "do":
@@ -1678,6 +1742,10 @@ def main(argv: list[str] | None = None) -> int:
             print(cmd_new(args))
             return 0
         st = load(args.campaign)
+        if args.command == "next" and os.environ.get("CLAUDE_DM_MODE") == "play":
+            raise CombatError("the interface advances turns in this mode: don't run `next`. Resolve only the "
+                              "current actor, then stop")
+        check_actor(args, st)
         if args.command == "show":
             print(render(st, dm=args.dm))
             return 0

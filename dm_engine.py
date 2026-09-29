@@ -22,6 +22,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -66,8 +67,10 @@ WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude 
 - COMBAT:
   - The combat script knows the rules. Resolve attacks with `combat.py attack g1 C --with <attack>` (NPC, from its combat profile) or `attack C g1 --total N --damage N` (PC). Flanking, conditions, prone, cover, range, into-melee, flat-footed/touch AC and concealment are applied automatically, so never add modifiers yourself and never roll attacks separately. Timed effects: `cond … --rounds N` (they expire on their own). Areas: `area …`, saves: `save …`, dying PCs: `stabilize C --total N`. NPC spellcasting ALWAYS goes through `cast s1 "spell"` / `sla s1 "ability"` (slots, provoking, concentration), with the effect in the same command (`--area "cone 15" --toward C4 --save ref --dmg 1d4 --half`, or `--target C --save will`). The DC comes from the profile. Never resolve an NPC spell with `area` alone; a PC casting in melee: `provoke C --reason "casting a spell"`. Movement rolls NPC attacks of opportunity itself. If a combatant's stat block has no combat-profile block, add one first, following library/pf1e/combat-profile-guide.md, and run `combat.py profile check <file>`.
   - The interface shows the combat log with all the numbers, after each turn. Narrate EVERY creature's turn in its own line or lines, matching the log. Never merge turns, never skip a creature, never contradict a number.
-  - ONE ACTOR PER REPLY. The player sends "next" (or "end turn" on their own turn) as a go signal. The turn pointer marks who is acting or acted last, so every step STARTS with `next` and then resolves the actor it lands on, all in ONE `combat.py do "next" "…"` call. If the PC acts after that actor, end the call with one more `next` so the pointer rests on the PC. Narrate that one actor, then STOP (say "Your turn" if the PC is up).
-  - Hidden, unnoticed actors never get a step of their own: if `next` lands on one, resolve it silently and `next` again in the same call.
+  - THE INTERFACE RUNS THE TURN ORDER. You never run `combat.py next` (it's refused). On the player's go signal the interface advances the pointer and sends you a bracketed "[Combat step …]" message naming ONE actor: resolve exactly that actor in ONE `combat.py do "…"` call, narrate only that actor, and stop. The actor lock refuses actions by anyone but the current actor (exempt: `attack … --aoo`, and `--out-of-turn` for readied/immediate actions, forced movement and repositioning during setup).
+  - Hidden, unnoticed actors get a step message too. Your reply is only shown if the actor gets revealed (`combat.py reveal`); if it stays unnoticed, reply "…".
+  - On the PC's turn, resolve what the player declares and say which actions remain. When the player ends their turn in any words other than the bare "end turn"/"next" (e.g. "done", or actions plus "that's my turn"), add `combat.py endturn C` to your call; the interface then plays the next step. Never narrate another actor's turn on your own.
+  - Starting a fight: after setup, stop. Never run `next`; if the PC acts first, the interface moves the pointer onto them.
   - When the player must decide something mid-round (an AoO, a reaction, a stabilization check), ask, and run `combat.py ask "…"` in your call so auto-combat pauses.
   - A PC who is dying rolls their own stabilization check (ask for it). Never "play it forward" without the player, and never promise to report back later: resolve everything in this reply, step by step.
   - PC tokens use the first letter of the character's name (Corin → C).
@@ -132,6 +135,7 @@ class Engine:
         self.lock = threading.RLock()
         self.done = threading.Event()
         self.waiting = False   # a player turn is in progress
+        self._held: list[dict[str, Any]] | None = None   # DM text held back (a hidden actor's step)
         self.armed = False     # the echo of the player's message has been seen
         self._reset()
 
@@ -142,7 +146,29 @@ class Engine:
         self.in_text = False
 
     def emit(self, **ev: Any) -> None:
-        """Send an event to the frontend; errors in the handler never reach the reader thread."""
+        """Send an event to the frontend; errors in the handler never reach the reader thread.
+        While text is held (see hold()), DM text events are kept back instead."""
+        with self.lock:
+            if self._held is not None and ev["type"] in ("text_start", "text", "text_end"):
+                self._held.append(ev)
+                return
+        self._send_event(ev)
+
+    def hold(self) -> None:
+        """Keep the DM's text back until release(), e.g. while a hidden actor's turn is resolved."""
+        with self.lock:
+            self._held = []
+
+    def release(self, publish: bool) -> None:
+        """Stop holding text; show what was held back if `publish`, else drop it."""
+        with self.lock:
+            held, self._held = self._held or [], None
+        if publish:
+            for ev in held:
+                self._send_event(ev)
+
+    def _send_event(self, ev: dict[str, Any]) -> None:
+        """Pass one event to the frontend's handler."""
         try:
             self.on_event(ev)
         except Exception:
@@ -441,15 +467,8 @@ def combat_snapshot(camp: str | None, render_png: bool = False) -> dict[str, Any
     # Who plays on the next go signal: the first live actor after the turn pointer (the pointer
     # marks who is acting or acted last). Hidden actors are skipped, because the DM resolves them
     # silently within the step, and naming them would give them away.
-    live = [c for c in cm.order(st) if not c.get("removed") and (c["hp"] > 0 or c["side"] in cm.FRIENDLY)]
-    toks = [c["token"] for c in live]
-    start = toks.index(st["turn"]) + 1 if st.get("turn") in toks else 0
-    upcoming = None
-    for i in range(len(live)):
-        c = live[(start + i) % len(live)]
-        if not c.get("hidden"):
-            upcoming = {"name": c["name"], "token": c["token"], "side": c["side"]}
-            break
+    nxt = _first_visible_after(st, st.get("turn"))
+    upcoming = {"name": nxt["name"], "token": nxt["token"], "side": nxt["side"]} if nxt else None
     return {
         "active": True, "round": st.get("round", 1), "turn": turn, "initiative": rows,
         # whose turn it is, for the End turn / Next button ("pc" = the player acts now)
@@ -516,3 +535,152 @@ def load_history(session_id: str | None) -> list[dict[str, str]]:
                 else:
                     out.append({"role": "dm", "text": "\n".join(texts)})
     return out
+
+
+# ---------- engine-driven combat steps ----------
+# The interface, not the DM, moves the turn pointer: on the player's go signal it runs
+# `combat.py next` itself and asks the DM to resolve exactly the one actor it landed on.
+# (`next` is refused inside the DM's own process: CLAUDE_DM_MODE=play.)
+
+GO_SIGNALS = ("next", "end turn")
+
+
+def is_go_signal(text: str) -> bool:
+    """Whether the player's message is just a go signal ("next" or "end turn")."""
+    return text.strip().lower().rstrip(".!") in GO_SIGNALS
+
+
+def ends_turn(text: str) -> bool:
+    """Whether a longer message ends with "end turn" (a whole turn declared at once)."""
+    return re.search(r"\bend turn[.!]?\s*$", text.strip(), re.IGNORECASE) is not None
+
+
+def combat_state(camp: str | None) -> dict[str, Any] | None:
+    """The raw current.json of the campaign's fight (DM data, never sent to the player), or None."""
+    if not camp:
+        return None
+    try:
+        return json.loads((REPO / "campaigns" / camp / "dm" / "combat" / "current.json").read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _first_visible_after(st: dict[str, Any], token: str | None) -> dict[str, Any] | None:
+    """The first creature still in the fight, not hidden, that acts after `token` (None: from the top)."""
+    cm = _combat_module()
+    full = cm.order(st)
+    toks = [c["token"] for c in full]
+    start = toks.index(token) if token in toks else -1
+    for k in range(1, len(full) + 1):
+        c = full[(start + k) % len(full)]
+        if cm.in_fight(c) and not c.get("hidden"):
+            return c
+    return None
+
+
+def step_due(camp: str | None, text: str) -> bool:
+    """After an ordinary exchange: should the interface run a combat step on its own? Yes when the
+    PC's turn is over (the DM ran `combat.py endturn`, or the message ended in "end turn"), or when
+    the fight was just set up and the PC is the first visible actor."""
+    st = combat_state(camp)
+    if not st or st.get("awaiting"):
+        return False
+    turn = st.get("turn")
+    by_tok = {c["token"]: c for c in st.get("tokens", [])}
+    if turn is None:
+        first = _first_visible_after(st, None)
+        return bool(first and first["side"] == "pc")
+    pc_up = by_tok.get(turn, {}).get("side") == "pc"
+    return pc_up and (st.get("end_turn") == turn or ends_turn(text))
+
+
+def _run_next(camp: str) -> str:
+    """Run `combat.py next` for the interface (outside the DM's play-mode restriction)."""
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_DM_MODE"}
+    r = subprocess.run([sys.executable, str(REPO / "scripts" / "combat.py"), "-c", camp, "next"],
+                       cwd=REPO, env=env, capture_output=True, text=True)
+    if r.returncode:
+        raise RuntimeError(r.stderr.strip() or "combat.py next failed")
+    return r.stdout.strip()
+
+
+def _visible_prompt(c: dict[str, Any], started: str, pc_after: bool) -> str:
+    """The instruction for one visible non-PC actor's step."""
+    end = ("The player's turn comes right after this one: end with one short line saying so."
+           if pc_after else "Don't end with a question: the player sends the next go signal.")
+    return (f"[Combat step, sent by the interface (not the player). The turn pointer is on {c['token']} "
+            f"({c['name']}); `next` already ran:\n{started}\n"
+            f"Resolve ONLY {c['name']}'s turn: choose its actions from its tactics and the situation, and "
+            f"resolve them in ONE `combat.py do \"…\"` call. Don't run `next`: the interface advances turns. "
+            f"Then narrate only {c['name']}'s turn and stop. {end}]")
+
+
+def _hidden_prompt(c: dict[str, Any], started: str) -> str:
+    """The instruction for a hidden actor's step (its text is only shown if it gets revealed)."""
+    return (f"[Combat step, sent by the interface. The turn pointer is on {c['token']} ({c['name']}), which "
+            f"the player hasn't noticed; `next` already ran:\n{started}\n"
+            f"Resolve its turn with combat.py (don't run `next`). If it stays unnoticed, reply with only \"…\": "
+            f"nothing you write is shown. If its action reveals it (it attacks, or the character notices it), "
+            f"run `combat.py reveal {c['token']}` in the same call and narrate its turn.]")
+
+
+def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool]) -> str:
+    """Play one step of the fight on the player's go signal: advance the pointer, resolve hidden
+    actors silently, resolve the one visible non-PC actor, and move the pointer onto the PC if the
+    PC is next. The pacing is decided here, in code; the DM only plays the actor it's given.
+
+    Args:
+        engine: the engine (its text is held back while a hidden actor acts).
+        camp: the campaign with the fight.
+        send: sends one instruction to the DM and waits for the reply; False if the process died.
+
+    Returns:
+        Why the step stopped: "pc" (the player's turn), "pc-quiet" (the player's turn, and no actor
+        was shown, so the frontend should say so itself), "wait" (the next visible actor waits for the
+        next signal), "ask" (a question for the player is open), "over" (no fight), or "error".
+    """
+    cm = _combat_module()
+    acted = False
+    for _ in range(200):   # a safety net; a step never needs this many
+        st = combat_state(camp)
+        if not st:
+            return "over"
+        if st.get("awaiting"):
+            return "ask"
+        found = cm.next_actor(st)
+        if not found:
+            return "over"
+        c = found[0]
+        if acted and c["side"] != "pc":
+            # The next visible actor gets its own step. Hidden actors in between are only resolved
+            # now if the PC comes next (so the pointer can rest on the PC); otherwise they open the
+            # next step, and one that reveals itself is then the only actor shown in it.
+            if not c.get("hidden"):
+                return "wait"
+            nxt = _first_visible_after(st, c["token"])
+            if not (nxt and nxt["side"] == "pc"):
+                return "wait"
+        try:
+            started = _run_next(camp)
+        except RuntimeError as e:
+            engine.emit(type="error", message=f"Couldn't advance the turn: {e}")
+            return "error"
+        if c["side"] == "pc":
+            return "pc" if acted else "pc-quiet"
+        if c.get("hidden"):
+            engine.hold()
+            try:
+                ok = send(_hidden_prompt(c, started))
+            finally:
+                after = combat_state(camp) or {}
+                still = next((t.get("hidden") for t in after.get("tokens", []) if t["token"] == c["token"]), True)
+                engine.release(publish=not still)
+            acted = acted or not still
+        else:
+            nxt = _first_visible_after(st, c["token"])
+            ok = send(_visible_prompt(c, started, pc_after=bool(nxt and nxt["side"] == "pc")))
+            acted = True
+        if not ok:
+            return "error"
+    return "error"
+
