@@ -41,6 +41,7 @@ CONDITIONS: dict[str, dict[str, Any]] = {
     "panicked": {"save": -2, "check": -2, "no_aoo": True},
     "sickened": {"atk": -2, "dmg": -2, "save": -2, "check": -2},
     "dazzled": {"atk": -1},
+    "dazzled by light": {"atk": -1},        # light sensitivity (combat.py adds/removes it)
     "entangled": {"atk": -2, "dex": -4},
     "grappled": {"atk": -2, "dex": -4, "no_aoo": True, "no_move": True},       # also -2 CMB except to grapple/escape (not automated)
     "pinning": {"flatfooted": True},           # the grappler holding a pin loses its Dex bonus to AC

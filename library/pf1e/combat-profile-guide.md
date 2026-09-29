@@ -13,6 +13,7 @@
 | Stat block | Profile |
 |---|---|
 | **Init** +6 | `"init": 6` |
+| **Senses** darkvision 60 ft., low-light vision, scent; **Perception** +5 | `"senses": {"darkvision": 60, "low_light": true, "scent": true}, "perception": 5`. Other keys: `see_in_darkness`, `blindsight`/`blindsense`/`tremorsense` (ft), and from **Weaknesses** `light_sensitivity` / `light_blindness`. Always fill this in, for PCs too (race: elves and half-elves low-light, dwarves darkvision 60): the script decides what each creature sees from it |
 | **hp** 11 (2d8+2) | `"hp": 11` (optionally `"max_hp"`) |
 | **AC** 16, touch 13, flat-footed 14 | `"ac": 16, "touch": 13, "ff": 14` |
 | AC … ; +4 dodge vs. giants | `"ac_notes": ["+4 dodge vs. giants"]` |

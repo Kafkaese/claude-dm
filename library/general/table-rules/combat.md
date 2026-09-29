@@ -15,7 +15,8 @@ For an **unexpected fight,** take a moment and prefer options 1–3; they're fas
 Setting up a fight takes a moment. Use it: give the player something to do while you prepare, so the fight doesn't start with a silent wait.
 
 1. **Call it and stop.** In one short message, with **no tool calls** before it: narrate the moment violence breaks out (only what the PC perceives), then ask the player to **roll initiative** (give their modifier from the sheet) and to get their attack and damage dice ready. Example: *"Steel clears leather. **Roll initiative** (d20+5), and get your dice ready."* End the message there.
-2. **Set up while they roll.** When the answer comes in, do the whole setup in as few calls as possible: one `roll.py` call for all enemy initiatives and surprise checks, then one `combat.py do "new …" "add …" "add …" "show"` call. Hidden enemies get `--hidden`.
+2. **Set up while they roll.** When the answer comes in, do the whole setup in as few calls as possible: one `roll.py` call for all enemy initiatives and surprise checks, then one `combat.py do "new …" "add …" "add …" "light …" "show"` call. Hidden enemies get `--hidden`.
+   - **Decide the lighting as part of the encounter design** (see "Vision and light"): the ambient light (`new … --light dim`, or `ambient:` in the map file), darker or brighter zones (`light:` rows in the map file, or `light zone`), and every light source, including what each creature carries (`light add torch --on C`). A fight without lighting set up is in normal light everywhere.
 3. **Open the fight** without resolving any turn yet, so the pointer starts before the first actor. In `web.py`/`play.py`, never run `next`: if the PC acts first, the interface moves the pointer onto them (resolving unnoticed enemies before them) right after your reply. In the Claude Code UI, run `next` yourself if the PC acts first, resolving unnoticed enemies who act before them silently. Give the initiative order (only combatants the PC knows about), say who acts first, then stop. The player's "next" (or their declarations, if they're first) starts the first step. Include the map (in `play.py` the interface prints it), and a one-line reminder of the turn convention: *"(Declare your actions, and say **end turn** when you're done.)"* Give the reminder at every fight in the first sessions, and later only when it helps.
 4. **Surprise:** if the enemies strike first from hiding, it's fine to narrate the ambush and then ask for initiative in the same message.
 
@@ -94,6 +95,36 @@ It confirms crits, rolls damage only on a hit, applies DR, and writes the **comb
 - **Results:** prone (and the attacker prone on a trip failed by 10+), pushes and drags that stop at walls and creatures, conditions with durations (dirty trick), dropped items. An overrun lets the attacker move through the target's space afterwards.
 - **Grapples are tracked:** a success grapples both. The grappler must maintain every round on its turn (`maneuver g1 C grapple` again, +5, with `--option pin|damage|move|tie`), or the grapple ends when the turn moves on. The held creature uses `maneuver C g1 escape` (CMB, or `--total` for Escape Artist; `--reverse` to take over). `release` lets go. A grapple ends when either creature drops.
 - Trip, disarm and sunder can be made as AoOs (`--aoo --out-of-turn`).
+
+**Vision and light** (rules: `library/<system>/rules/vision-and-light.md`; the math is in `scripts/vision.py`):
+- **Levels:** dark, dim, normal, bright, plus supernatural darkness (*deeper darkness*). Walls block light.
+- **Setting it up:**
+  - `new … --light dark`, or `ambient: dark` in the map file.
+  - Light zones: a `light:` block after the map rows, with X dark, D dim, N normal, B bright and `.` for the ambient light. Or `light zone A1 C4 dim`.
+  - Sources: `light add torch --on C`, `light add sunrod --at D4`, `light add "bullseye lantern" --on g1 --toward F4`. `light move l1 --at D5` drops one, `--on g2` hands it over, and `light remove l1` snuffs it out.
+  - The catalog: candle, torch, lamp, hooded lantern, bullseye lantern, sunrod, everburning torch, and the spells *light*, *dancing lights*, *continual flame*, *daylight*, *darkness* and *deeper darkness*.
+  - NPC spells create their light or darkness with `cast … --light-at D4` or `--light-on g1` (and `--rounds N`).
+- **Senses** come from the profile (`senses`):
+  - Low-light vision doubles light source radii for that creature.
+  - Darkvision sees dark and dim squares within range, but not inside *deeper darkness*.
+  - See in darkness sees everywhere, and blindsight sees everything within range.
+- **The script applies the rules** (table rulings in `vision.py`'s docstring):
+  - **Miss chance** for each attacker/target pair, judged from the target's square: 20% in dim light, 50% in darkness.
+  - A defender that can't see its attacker loses its Dex bonus, and takes −2 AC when it's in the dark.
+  - No attacks of opportunity against a target the creature can't see.
+  - Blind-Fight rerolls a melee miss chance.
+  - Light sensitivity (dazzled) and light blindness in bright light are applied at the start of the creature's turn.
+  - A *darkness* spell switches off nonmagical light, and magical light only wins with a higher spell level.
+- **Hiding:** Stealth needs cover or concealment while observed.
+  - `hide` refuses a creature the PC sees clearly.
+  - A hidden creature the PC sees clearly (no cover, no concealment, within take-10 Perception range) is revealed automatically once the fight has started.
+- **`sight g1`** (DM only) shows what a creature sees, how each enemy sees it, where it could hide within its speed, and nearby light sources. `light show --for C` prints the light map as a creature sees it.
+- **Creatures act on the light.** In web/terminal play, every combat step message includes the actor's `sight` report. In the Claude Code UI, gm-screen runs `sight` before deciding. Play every creature by what it can see:
+  - Creatures with darkvision fight from the dark, and go for the enemy's light: snuff the torch, sunder the lantern, grab the sunrod, cast *darkness*.
+  - Creatures without darkvision stay in the light or bring their own, and don't wander into darkness they can't see in.
+  - Hiders move to squares where they're unseen, and only `hide` after a successful Stealth check.
+  - Creatures with light sensitivity avoid bright light.
+- **The map** (web UI and PNG) shows the light **as the PC sees it**: dim and dark squares shaded, what darkvision shows in grey, magical darkness hatched, light sources as flames, and known creatures the PC can't currently see faded with a "?". Hovering over a square shows the natural light and what it is for the PC.
 
 **Areas and saves:**
 - `area burst 10 --at D4 --save ref --dc 13 --dmg 2d6 --half --name "burning hands"`, or `area cone 15 --from C --toward E5 …`, or `line`. The damage is rolled once, and NPC saves come from their profiles.

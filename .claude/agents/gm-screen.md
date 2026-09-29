@@ -54,6 +54,8 @@ python3 scripts/combat.py -c <camp> cond g1 add shaken --rounds 1      # also: -
 python3 scripts/combat.py -c <camp> area burst 10 --at D4 --save ref --dc 13 --dmg 2d6 --half --name "burning hands"
 python3 scripts/combat.py -c <camp> save C --total 17          # a PC's pending save; NPC: save g1 will --dc 14
 python3 scripts/combat.py -c <camp> maneuver g1 C trip          # combat maneuver (NPC rolls CMB; PC: --total N); grapples tracked
+python3 scripts/combat.py -c <camp> light add torch --on C       # lighting: new … --light dim, light add/move/remove/zone/show
+python3 scripts/combat.py -c <camp> sight g1                     # what g1 sees, who sees it, hiding spots (DM only)
 python3 scripts/combat.py -c <camp> stabilize C --total 12     # a dying PC's check (NPCs roll their own on `next`)
 python3 scripts/combat.py -c <camp> move C C4 --step           # 5-foot step; normal moves roll NPC AoOs automatically
 python3 scripts/combat.py -c <camp> cast s1 "burning hands" --area "cone 15" --toward C4 --save ref --dmg 1d4 --half   # slot + effect in one
@@ -86,7 +88,7 @@ python3 scripts/combat.py -c <camp> do "move g1 D4" "hp C -6" "next" "show"   # 
 - `add` every token with `--ref` pointing to its stat block file. Use `--hidden` for enemies the PCs can't see, and `image on` if session zero wants it.
 - Return the player view, plus what the PCs perceive: only the visible enemies, described.
 
-**enemy-turns.** Actions only work for the creature the pointer is on (the actor lock; `attack … --aoo` and `--out-of-turn` are exempt). One step, see `combat.md`: `next`, then resolve exactly the ONE non-PC actor it lands on (hidden, unnoticed ones silently, then `next` again), and another `next` at the end if the PC is up after it:
+**enemy-turns.** Run `sight <actor>` first when the fight has lighting, and play the creature by what it sees (combat.md, "Vision and light"). Actions only work for the creature the pointer is on (the actor lock; `attack … --aoo` and `--out-of-turn` are exempt). One step, see `combat.md`: `next`, then resolve exactly the ONE non-PC actor it lands on (hidden, unnoticed ones silently, then `next` again), and another `next` at the end if the PC is up after it:
 - Play tactics by each creature's nature and what it knows, not by what the DM knows. Include morale.
 - Update HP and conditions with `combat.py`, and `next` through the order.
 - **Stop** as soon as the PC has a real choice to make (an attack of opportunity without a standing order, a readied or immediate action), and report what's needed.

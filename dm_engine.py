@@ -65,7 +65,7 @@ WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude 
     - Never name a lead, flaw, culprit or connection the character hasn't found, not even as an open question: "you couldn't tell whether the circle was drawn correctly", never "the ritual circle's flaw".
     - No loaded framing that confirms a hidden truth ("whether it was anything but an accident", "the real culprit"). A failed investigation reports what was checked and what it showed, not that something was missed.
 - COMBAT:
-  - The combat script knows the rules. Resolve attacks with `combat.py attack g1 C --with <attack>` (NPC, from its combat profile) or `attack C g1 --total N --damage N` (PC). Flanking, conditions, prone, cover, range, into-melee, flat-footed/touch AC and concealment are applied automatically, so never add modifiers yourself and never roll attacks separately. Timed effects: `cond … --rounds N` (they expire on their own). Combat maneuvers (trip, grapple, bull rush, disarm, …): `combat.py maneuver g1 C trip` (NPC rolls its CMB) or `maneuver C g1 grapple --total N` (PC); grapples are tracked and must be maintained each round (see `-h`). Areas: `area …`, saves: `save …`, dying PCs: `stabilize C --total N`. NPC spellcasting ALWAYS goes through `cast s1 "spell"` / `sla s1 "ability"` (slots, provoking, concentration), with the effect in the same command (`--area "cone 15" --toward C4 --save ref --dmg 1d4 --half`, or `--target C --save will`). The DC comes from the profile. Never resolve an NPC spell with `area` alone; a PC casting in melee: `provoke C --reason "casting a spell"`. Movement rolls NPC attacks of opportunity itself. If a combatant's stat block has no combat-profile block, add one first, following library/pf1e/combat-profile-guide.md, and run `combat.py profile check <file>`.
+  - The combat script knows the rules. Resolve attacks with `combat.py attack g1 C --with <attack>` (NPC, from its combat profile) or `attack C g1 --total N --damage N` (PC). Flanking, conditions, prone, cover, range, into-melee, flat-footed/touch AC and concealment are applied automatically, so never add modifiers yourself and never roll attacks separately. Timed effects: `cond … --rounds N` (they expire on their own). Combat maneuvers (trip, grapple, bull rush, disarm, …): `combat.py maneuver g1 C trip` (NPC rolls its CMB) or `maneuver C g1 grapple --total N` (PC); grapples are tracked and must be maintained each round (see `-h`). LIGHT: when setting up a fight, decide the lighting (ambient `new … --light dim`, sources `light add torch --on C`, zones) as combat.md "Vision and light" says; the script then applies concealment, darkvision etc. itself, reveals hidden creatures the PC sees clearly, and every combat step includes the actor's `sight` report: play the creature by what it sees. NPC light/darkness spells: `cast … --light-at D4`. Areas: `area …`, saves: `save …`, dying PCs: `stabilize C --total N`. NPC spellcasting ALWAYS goes through `cast s1 "spell"` / `sla s1 "ability"` (slots, provoking, concentration), with the effect in the same command (`--area "cone 15" --toward C4 --save ref --dmg 1d4 --half`, or `--target C --save will`). The DC comes from the profile. Never resolve an NPC spell with `area` alone; a PC casting in melee: `provoke C --reason "casting a spell"`. Movement rolls NPC attacks of opportunity itself. If a combatant's stat block has no combat-profile block, add one first, following library/pf1e/combat-profile-guide.md, and run `combat.py profile check <file>`.
   - The interface shows the combat log with all the numbers, after each turn. Narrate EVERY creature's turn in its own line or lines, matching the log. Never merge turns, never skip a creature, never contradict a number.
   - THE INTERFACE RUNS THE TURN ORDER. You never run `combat.py next` (it's refused). On the player's go signal the interface advances the pointer and sends you a bracketed "[Combat step …]" message naming ONE actor: resolve exactly that actor in ONE `combat.py do "…"` call, narrate only that actor, and stop. The actor lock refuses actions by anyone but the current actor (exempt: `attack … --aoo`, and `--out-of-turn` for readied/immediate actions, forced movement and repositioning during setup).
   - Hidden, unnoticed actors get a step message too. Your reply is only shown if the actor gets revealed (`combat.py reveal`); if it stays unnoticed, reply "…".
@@ -419,6 +419,28 @@ def map_png_path(camp: str) -> Path:
     return REPO / "campaigns" / camp / "players" / "combat-map-clean.png"
 
 
+def _light_view(cm: ModuleType, st: dict[str, Any]) -> dict[str, Any] | None:
+    """Lighting for the browser map, from the (first) PC's perspective, or None when the fight has
+    plain normal light. Light sources are shown where they are; a hidden carrier isn't named."""
+    V = cm.V
+    if not V.has_lighting(st):
+        return None
+    pc = next((c for c in st["tokens"] if c["side"] == "pc" and not c.get("removed")), None)
+    view = V.player_view(st, pc)
+    view["pc"] = pc["name"] if pc else None
+    view["senses"] = V.describe_senses(pc) if pc else ""
+    srcs = []
+    for s in V.light_state(st).get("sources", []):
+        cs = V.source_cells(st, s)
+        if not cs or s.get("steps"):
+            continue
+        carrier = next((c for c in st["tokens"] if c["token"] == s.get("on")), None)
+        srcs.append({"x": cs[0][0], "y": cs[0][1], "kind": s["kind"],
+                     "carried": bool(carrier), "by": carrier["name"] if carrier and not carrier.get("hidden") else None})
+    view["sources"] = srcs
+    return view
+
+
 def combat_snapshot(camp: str | None, render_png: bool = False) -> dict[str, Any] | None:
     """Player-safe state of the current fight, or None. The web UI draws the map itself from
     `map`; render_png=True also writes a map-only PNG (for other frontends)."""
@@ -459,9 +481,11 @@ def combat_snapshot(camp: str | None, render_png: bool = False) -> dict[str, Any
     for c in st["tokens"]:
         r = by_token.get(c["token"])
         if r:
-            tokens.append(dict(r, x=c["x"], y=c["y"], size=c.get("size", 1)))
+            pc = next((o for o in st["tokens"] if o["side"] == "pc" and not o.get("removed")), None)
+            unseen = bool(pc and c is not pc and cm.V.has_lighting(st) and cm.V.concealment(st, pc, c)[0] >= 50)
+            tokens.append(dict(r, x=c["x"], y=c["y"], size=c.get("size", 1), unseen=unseen))
     grid_map = {"w": st["w"], "h": st["h"], "grid": st["grid"], "tokens": tokens,
-                "terrain_names": cm.TERRAIN_NAMES}
+                "terrain_names": cm.TERRAIN_NAMES, "light": _light_view(cm, st)}
     turn = next((r["name"] for r in rows if r["current"]), None)
     cur = next((r for r in rows if r["current"]), None)
     # Who plays on the next go signal: the first live actor after the turn pointer (the pointer
@@ -604,12 +628,26 @@ def _run_next(camp: str) -> str:
     return r.stdout.strip()
 
 
+def _sight(camp: str, st: dict[str, Any], tok: str) -> str:
+    """The actor's `combat.py sight` report when the fight has lighting set up, else ""."""
+    L = st.get("light") or {}
+    if L.get("ambient", "normal") == "normal" and not L.get("grid") and not L.get("sources"):
+        return ""
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_DM_MODE"}
+    r = subprocess.run([sys.executable, str(REPO / "scripts" / "combat.py"), "-c", camp, "sight", tok],
+                       cwd=REPO, env=env, capture_output=True, text=True)
+    if r.returncode:
+        return ""
+    return ("\nWhat it sees (use it: fight from where it sees and isn't seen, avoid what it can't see in, "
+            "go for light sources if darkness favors it):\n" + r.stdout.strip())
+
+
 def _visible_prompt(c: dict[str, Any], started: str, pc_after: bool) -> str:
     """The instruction for one visible non-PC actor's step."""
     end = ("The player's turn comes right after this one: end with one short line saying so."
            if pc_after else "Don't end with a question: the player sends the next go signal.")
     return (f"[Combat step, sent by the interface (not the player). The turn pointer is on {c['token']} "
-            f"({c['name']}); `next` already ran:\n{started}\n"
+            f"({c['name']}); `next` already ran:\n{started}{c.get('_sight', '')}\n"
             f"Resolve ONLY {c['name']}'s turn: choose its actions from its tactics and the situation, and "
             f"resolve them in ONE `combat.py do \"…\"` call. Don't run `next`: the interface advances turns. "
             f"Then narrate only {c['name']}'s turn and stop. {end}]")
@@ -618,7 +656,7 @@ def _visible_prompt(c: dict[str, Any], started: str, pc_after: bool) -> str:
 def _hidden_prompt(c: dict[str, Any], started: str) -> str:
     """The instruction for a hidden actor's step (its text is only shown if it gets revealed)."""
     return (f"[Combat step, sent by the interface. The turn pointer is on {c['token']} ({c['name']}), which "
-            f"the player hasn't noticed; `next` already ran:\n{started}\n"
+            f"the player hasn't noticed; `next` already ran:\n{started}{c.get('_sight', '')}\n"
             f"Resolve its turn with combat.py (don't run `next`). If it stays unnoticed, reply with only \"…\": "
             f"nothing you write is shown. If its action reveals it (it attacks, or the character notices it), "
             f"run `combat.py reveal {c['token']}` in the same call and narrate its turn.]")
@@ -667,6 +705,7 @@ def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool]) -> s
             return "error"
         if c["side"] == "pc":
             return "pc" if acted else "pc-quiet"
+        c = dict(c, _sight=_sight(camp, combat_state(camp) or st, c["token"]))
         if c.get("hidden"):
             engine.hold()
             try:

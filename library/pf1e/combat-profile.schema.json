@@ -46,6 +46,17 @@
     "max_dex": {"type": "integer", "description": "The armor's (or shield's) max Dex bonus, if it caps the Dex bonus in AC. Needed so a Dex penalty doesn't lower AC when the cap already limits it."},
     "feats": {"type": "array", "items": {"type": "string"}, "description": "At least those the script uses: Combat Reflexes, Precise Shot, Improved Initiative. Listing all is fine."},
     "uncanny_dodge": {"type": "boolean"},
+    "senses": {
+      "type": "object", "additionalProperties": false,
+      "description": "Vision and other senses, from the stat block's Senses line and weaknesses. Ranges in feet.",
+      "properties": {
+        "darkvision": {"type": "integer", "minimum": 0}, "low_light": {"type": "boolean"},
+        "see_in_darkness": {"type": "boolean"}, "blindsight": {"type": "integer", "minimum": 0},
+        "blindsense": {"type": "integer", "minimum": 0}, "tremorsense": {"type": "integer", "minimum": 0},
+        "scent": {"type": "boolean"}, "light_sensitivity": {"type": "boolean"}, "light_blindness": {"type": "boolean"}
+      }
+    },
+    "perception": {"type": "integer", "description": "Perception modifier (Senses line). Used to decide how far a creature notices others in plain sight (take 10)."},
     "aoo": {"type": "integer", "minimum": 0, "description": "AoOs per round, only if it differs from the rules (1, +Dex with Combat Reflexes)."},
     "attacks": {
       "type": "object", "description": "One entry per distinct attack. Required for kind creature (may be empty for a creature that doesn't attack).",

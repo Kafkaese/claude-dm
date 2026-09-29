@@ -118,6 +118,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import combat_rules as R  # noqa: E402
+import vision as V  # noqa: E402
 
 Token = R.Token    # one combatant in the combat state
 State = R.State    # the whole combat state (dm/combat/current.json)
@@ -391,6 +392,17 @@ def render(st: State, dm: bool = False) -> str:
         legend.append("x fallen")
     if legend:
         out.append("    " + "   ".join(legend))
+    if V.has_lighting(st):
+        L = V.light_state(st)
+        srcs = []
+        for src in L.get("sources", []):
+            carrier = next((o for o in st["tokens"] if o["token"] == src.get("on")), None)
+            if carrier and carrier.get("hidden") and not dm:
+                where = "carried by someone unseen"
+            else:
+                where = f"carried by {carrier['token']}" if carrier else f"at {fmt_pos(*src['at'])}"
+            srcs.append(f"{src['kind']} {where}")
+        out.append(f"    Light: {L.get('ambient')} ambient" + (f"; {'; '.join(srcs)}" if srcs else ""))
     out.append("")
     cur = st.get("turn")
     for c in order(st):
@@ -519,6 +531,36 @@ def render_image(st: State, path: Path, panel: bool = True) -> Path:
     for j, row in enumerate(st["grid"]):
         for i, ch in enumerate(row):
             img.paste(tile(ch), (LABEL + i * CELL, top + j * CELL))
+    if V.has_lighting(st):   # light as the (first) PC sees it, like the web map
+        from PIL import Image, ImageDraw
+        pc = next((o for o in st["tokens"] if o["side"] == "pc" and not o.get("removed")), None)
+        view = V.player_view(st, pc)["squares"]
+        shade = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        sd = ImageDraw.Draw(shade)
+        for j in range(st["h"]):
+            for i in range(st["w"]):
+                if st["grid"][j][i] in "# ":
+                    continue
+                q = view[j][i]
+                box_sq = [LABEL + i * CELL, top + j * CELL, LABEL + (i + 1) * CELL - 1, top + (j + 1) * CELL - 1]
+                if q["how"] in ("darkvision", "see in darkness", "blindsight"):
+                    sd.rectangle(box_sq, fill=(105, 108, 118, 140))
+                elif q["e"] == V.DARK:
+                    sd.rectangle(box_sq, fill=(6, 6, 14, 205))
+                elif q["e"] == V.DIM:
+                    sd.rectangle(box_sq, fill=(16, 20, 44, 100))
+                elif q["e"] == V.BRIGHT:
+                    sd.rectangle(box_sq, fill=(255, 226, 120, 34))
+                if q["magic"]:
+                    for k in range(-CELL, CELL, 10):
+                        sd.line([box_sq[0] + k, box_sq[3], box_sq[0] + k + CELL, box_sq[1]], fill=(150, 110, 210, 140), width=2)
+        for src in V.light_state(st).get("sources", []):
+            cs = V.source_cells(st, src)
+            if cs and not src.get("steps"):
+                cx, cy = LABEL + cs[0][0] * CELL + CELL - 10, top + cs[0][1] * CELL + 10
+                sd.ellipse([cx - 7, cy - 7, cx + 7, cy + 7], fill=(246, 181, 50, 255), outline=(122, 58, 18, 255))
+        img = Image.alpha_composite(img.convert("RGBA"), shade).convert("RGB")
+        d = ImageDraw.Draw(img)
     for t in shown:
         x0, y0 = LABEL + t["x"] * CELL, top + t["y"] * CELL
         span = t["size"] * CELL
@@ -688,6 +730,11 @@ def attack_mods(st: State, a: Token, t: Token, kind: str, touch: bool = False, c
     base = dfn["ac"] or 0
     uncanny = bool((t.get("profile") or {}).get("uncanny_dodge"))
     flat = R.flag(t, "flatfooted") or (not t.get("acted") and not uncanny)
+    blind, blind_why = V.concealment(st, t, a)   # can the defender see its attacker?
+    unseen = blind >= 50 or R.has(a, "invisible")
+    if unseen and not flat:
+        flat = True
+        dmnotes.append(f"{t['token']} can't see {a['token']} ({blind_why if blind >= 50 else 'invisible'}): loses its Dex bonus")
     ac, label = base, ""
     if touch:
         ac, label = (dfn["touch"] if dfn["touch"] is not None else base), "touch "
@@ -700,6 +747,11 @@ def attack_mods(st: State, a: Token, t: Token, kind: str, touch: bool = False, c
     if label:
         notes.append(label.strip())
     ac += R.total(t, "ac")
+    if blind >= 50 and blind_why == "darkness":
+        ac -= 2
+        notes.append("target can't see in the dark")
+    elif unseen:
+        notes.append("target can't see the attacker")
     ac_conds = R.condition_names(t, ("ac", "dex", "dex_zero"))
     if ac_conds:
         notes.append("target " + ", ".join(ac_conds))
@@ -718,6 +770,10 @@ def attack_mods(st: State, a: Token, t: Token, kind: str, touch: bool = False, c
         ac += 4
         notes.append("soft cover")
     miss = max((R.cond_effects(x).get("concealment", 0) for x in R.conditions(t)), default=0)
+    lmiss, lwhy = V.concealment(st, a, t)   # lighting, from the attacker's eyes (doesn't stack)
+    if lmiss > miss:
+        miss = lmiss
+        dmnotes.append(f"{miss}% miss chance from {lwhy}")
     if miss:
         notes.append(f"{miss}% concealment")
     return atk, ac, notes, dmnotes, miss
@@ -816,6 +872,9 @@ def _attack_once(args: Args, st: State, a: Token, t: Token, name: str | None, bo
     if hit and miss:
         mroll, _, _ = _roll("1d100")
         dm.append(f"miss chance {miss}%: d% {mroll}")
+        if mroll <= miss and kind == "melee" and "blind-fight" in [f.lower() for f in ((a.get("profile") or {}).get("feats") or [])]:
+            mroll, _, _ = _roll("1d100")
+            dm.append(f"Blind-Fight reroll: d% {mroll}")
         if mroll <= miss:
             event(st, line + f" — would hit, but misses (concealment, rolled {mroll})")
             return "\n".join(dm + [f"MISS (concealment). Log: {line}"])
@@ -879,6 +938,7 @@ def cmd_new(args: Args) -> str:
     path = state_path(args.campaign)
     if path.exists() and not args.force:
         raise CombatError("an encounter is already active; 'end' it first or pass --force")
+    ambient, light_rows = (args.light or "normal"), None
     if args.blank:
         w, h = (int(v) for v in args.blank.lower().split("x"))
         grid = ["." * w for _ in range(h)]
@@ -890,6 +950,15 @@ def cmd_new(args: Args) -> str:
             raise CombatError(f"no such map file: {args.mapfile}")
         lines = [l.rstrip("\n") for l in mp.read_text(encoding="utf-8").splitlines()]
         lines = [l for l in lines if l.strip() and not l.lstrip().startswith("//")]
+        # optional lighting: an "ambient: dim" line, and a "light:" line followed by zone rows
+        # (X dark, D dim, N normal, B bright, anything else = ambient), same size as the map
+        for l in [l for l in lines if l.strip().lower().startswith("ambient:")]:
+            ambient = l.split(":", 1)[1].strip().lower()
+            lines.remove(l)
+        cut = next((i for i, l in enumerate(lines) if l.strip().lower() == "light:"), None)
+        if cut is not None:
+            light_rows = lines[cut + 1:]
+            lines = lines[:cut]
         w = max(len(l) for l in lines)
         grid = [l.ljust(w) for l in lines]
         h = len(grid)
@@ -898,8 +967,14 @@ def cmd_new(args: Args) -> str:
             raise CombatError(f"unknown map characters: {''.join(sorted(bad))}")
     if not (1 <= w <= 26 and h >= 1):
         raise CombatError("map must be 1-26 columns wide")
+    if args.light:
+        ambient = args.light
+    if ambient not in V.LEVELS:
+        raise CombatError(f"ambient light must be one of: {', '.join(V.LEVELS)}")
     st = {"w": w, "h": h, "grid": grid, "tokens": [], "round": 1, "turn": None,
-          "started": datetime.now().isoformat(timespec="minutes")}
+          "started": datetime.now().isoformat(timespec="minutes"),
+          "light": {"ambient": ambient, "sources": [],
+                    "grid": [r.ljust(w)[:w] for r in light_rows][:h] if light_rows else None}}
     save(args.campaign, st)
     return render(st, dm=True)
 
@@ -1052,6 +1127,13 @@ def cmd_next(args: Args, st: State) -> str:
     c["moved"] = 0
     c.pop("stepped", None)
     c.pop("overrun_through", None)
+    for src in list(V.light_state(st).get("sources", [])):
+        e = src.get("expires")
+        if e and (e["round"] < st["round"] or (e["round"] == st["round"] and e["token"] == c["token"])):
+            V.light_state(st)["sources"].remove(src)
+            out.append(f"  ended: {src['kind']} {src['id']}")
+            event(st, f"The {src['kind']} goes out")
+    out += light_sensitivity(st, c)
     for g in grapples(st):
         if g["by"] == c["token"]:
             out.append(f"  {c['token']} is grappling {g['target']}{' (pinned)' if g['pinned'] else ''}: maintain it this "
@@ -1077,6 +1159,54 @@ def cmd_next(args: Args, st: State) -> str:
     elif c["hp"] == 0:
         out.append("  disabled: a single move or standard action; a strenuous one costs 1 HP")
     return "\n".join(out)
+
+
+def light_sensitivity(st: State, c: Token) -> list[str]:
+    """Light sensitivity / light blindness at the start of the creature's turn: dazzled while in
+    bright light (light blindness: blinded for 1 round on first exposure). Approximation: checked
+    at the start of its turn only."""
+    s = V.senses(c)
+    if not (s.get("light_sensitivity") or s.get("light_blindness")):
+        return []
+    bright = max(V.level_at(st, q)[0] for q in cells(c)) >= V.BRIGHT
+    out = []
+    if bright:
+        if s.get("light_blindness") and not c.get("light_exposed"):
+            R.add_condition(st, c, "blinded", rounds=1)
+            out.append(f"  {c['token']} is blinded by the bright light (1 round)")
+        if not R.has(c, "dazzled by light"):
+            R.add_condition(st, c, "dazzled by light")
+            out.append(f"  {c['token']} is dazzled by the bright light")
+        c["light_exposed"] = True
+    else:
+        if R.remove_condition(c, "dazzled by light"):
+            out.append(f"  {c['token']} is out of the bright light: no longer dazzled")
+        c.pop("light_exposed", None)
+    return out
+
+
+def reveal_observed(st: State) -> list[str]:
+    """Stealth needs cover or concealment while observed: a hidden creature that a PC sees clearly
+    (no concealment, no cover, not invisible) within take-10 Perception range is revealed.
+    Only once the fight has started (so the DM can set up lighting first)."""
+    if st.get("turn") is None:
+        return []
+    out = []
+    pcs = [p for p in st["tokens"] if p["side"] == "pc" and not p.get("removed") and p["hp"] >= 0]
+    for c in st["tokens"]:
+        if not c.get("hidden") or c.get("removed") or R.has(c, "invisible"):
+            continue
+        for p in pcs:
+            if V.hidden_from(st, c, p):
+                continue
+            perception = (p.get("profile") or {}).get("perception", 0)
+            if feet_between(p, c) // 10 > 10 + perception:   # too far to notice on a take-10
+                continue
+            c["hidden"] = False
+            event(st, f"{who(c)} comes into view")
+            out.append(f"  {c['token']} is revealed: {p['token']} sees it clearly (no cover or concealment)")
+            break
+    return out
 
 
 def aoo_left(o: Token) -> int:
@@ -1112,6 +1242,8 @@ def provoke_aoos(st: State, c: Token, no_aoo: bool = False, reason: str = 'provo
     out, hp_before = [], c["hp"]
     for o in [x for x in st["tokens"] if threatens(x, c) and (only is None or x in only)]:
         why = aoo_blocked(o)
+        if not why and (V.concealment(st, o, c)[0] >= 50 or R.has(c, "invisible")):
+            why = f"can't see {c['token']}"
         if why:
             out.append(f"  {label(o)} can't make an AoO ({why})")
             continue
@@ -1249,6 +1381,8 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
     The player's log and questions say "the spell" / "the ability": naming it is a Spellcraft matter."""
     out = []
     shown = "the ability" if args.command == "sla" else "the spell"
+    if name.lower() in V.SOURCES and (args.light_at or args.light_on):
+        out.append("  " + add_light(st, name.lower(), args.light_at, args.light_on, rounds=args.rounds, by=c["token"]))
     if args.area:
         m = re.match(r"^\s*(burst|cone|line)\s+(\d+)\s*$", args.area)
         if not m:
@@ -1904,6 +2038,121 @@ def _grapple_option(args: Args, st: State, a: Token, t: Token, g: dict[str, Any]
     return f"{who(a)} keeps hold of {who(t)}"
 
 
+def add_light(st: State, kind: str, at: str | None, on: str | None, toward: str | None = None,
+              rounds: int | None = None, magic: int | None = None, radius: int | None = None,
+              increased: int | None = None, by: str | None = None) -> str:
+    """Add a light source or darkness effect from the catalog (vision.SOURCES), at a square or carried."""
+    if kind not in V.SOURCES and radius is None:
+        raise CombatError(f"unknown light source '{kind}' (known: {', '.join(V.SOURCES)}); or give --radius/--increased")
+    if bool(at) == bool(on):
+        raise CombatError("give exactly one of --at SQUARE or --on TOKEN")
+    src: dict[str, Any] = dict(V.SOURCES.get(kind, {"radius": radius or 0, "increased": increased or radius or 0,
+                                                   "lit": V.NORMAL, "cap": V.NORMAL, "magic": None}))
+    for k, v in (("radius", radius), ("increased", increased), ("magic", magic)):
+        if v is not None:
+            src[k] = v
+    L = V.light_state(st)
+    n = 1 + max([int(x["id"][1:]) for x in L["sources"] if x["id"][1:].isdigit()] or [0])
+    src.update(id=f"l{n}", kind=kind)
+    if on:
+        token(st, on)
+        src["on"] = on
+    else:
+        src["at"] = list(parse_pos(at or "", st))
+    if src.get("cone"):
+        if not toward:
+            raise CombatError(f"a {kind} shines in a cone: give --toward SQUARE")
+        src["toward"] = list(parse_pos(toward, st))
+    if rounds:
+        src["expires"] = {"round": st.get("round", 1) + rounds, "token": by or st.get("turn") or ""}
+    L["sources"].append(src)
+    where = f"carried by {on}" if on else f"at {fmt_pos(*src['at'])}"
+    if st.get("turn") is not None and not (on and token(st, on).get("hidden")):   # not during setup
+        near = f"around {who(token(st, on))}" if on else f"at {fmt_pos(*src['at'])}"
+        event(st, f"Darkness falls {near}" if src.get("steps") else f"A {kind} lights up {near}")
+    return f"light {src['id']}: {kind} {where}" + (f", {rounds} rounds" if rounds else "")
+
+
+def cmd_light(args: Args, st: State) -> str:
+    """Lighting: ambient level, zones, light sources and darkness effects, and a light map."""
+    L = V.light_state(st)
+    w = args.what
+    if args.action == "ambient":
+        if len(w) != 1 or w[0] not in V.LEVELS:
+            raise CombatError(f"light ambient LEVEL ({'|'.join(V.LEVELS)})")
+        L["ambient"] = w[0]
+        event(st, f"The light here is {w[0]}")
+        return f"ambient light: {w[0]}"
+    if args.action == "add":
+        if not w:
+            raise CombatError("light add KIND (--at SQUARE | --on TOKEN)")
+        return add_light(st, " ".join(w).lower(), args.at, args.on, args.toward, args.rounds, args.magic,
+                         args.radius, args.increased)
+    if args.action in ("remove", "move"):
+        src = next((x for x in L["sources"] if x["id"] in w), None)
+        if not src:
+            raise CombatError(f"no light source {' '.join(w)} (see `light show`)")
+        if args.action == "remove":
+            L["sources"].remove(src)
+            event(st, f"The {src['kind']} goes out")
+            return f"removed {src['id']} ({src['kind']})"
+        if args.on:
+            token(st, args.on)
+            src.pop("at", None)
+            src["on"] = args.on
+        else:
+            cs = V.source_cells(st, src)
+            dest = parse_pos(args.at, st) if args.at else (cs[0] if cs else None)
+            if dest is None:
+                raise CombatError("give --at SQUARE or --on TOKEN")
+            src.pop("on", None)
+            src["at"] = list(dest)
+        if args.toward:
+            src["toward"] = list(parse_pos(args.toward, st))
+        return f"{src['id']} ({src['kind']}) now " + (f"carried by {src['on']}" if src.get("on") else f"at {fmt_pos(*src['at'])}")
+    if args.action == "zone":
+        if len(w) != 3 or w[2] not in V.LEVELS + ["ambient"]:
+            raise CombatError("light zone FROM TO LEVEL, e.g. light zone A1 C4 dark (or 'ambient' to clear)")
+        (x1, y1), (x2, y2) = parse_pos(w[0], st), parse_pos(w[1], st)
+        grid = [list(r) for r in (L.get("grid") or ["." * st["w"]] * st["h"])]
+        ch = "." if w[2] == "ambient" else {V.DARK: "X", V.DIM: "D", V.NORMAL: "N", V.BRIGHT: "B"}[V.LEVEL_OF[w[2]]]
+        for y in range(min(y1, y2), max(y1, y2) + 1):
+            for x in range(min(x1, x2), max(x1, x2) + 1):
+                grid[y][x] = ch
+        L["grid"] = ["".join(r) for r in grid]
+        return f"light zone {w[0]}–{w[1]}: {w[2]}"
+    # show
+    viewer = token(st, args.for_) if args.for_ else None
+    chars = "XDNB"
+    out = [f"Light ({'as ' + viewer['token'] + ' sees it, ' + V.describe_senses(viewer) if viewer else 'natural'}); "
+           f"ambient {L.get('ambient')}"]
+    out.append("    " + "".join(f"{chr(ord('A') + i):<3}" for i in range(st["w"])).rstrip())
+    for y in range(st["h"]):
+        row = []
+        for x in range(st["w"]):
+            if R.blocks_line(st, x, y):
+                row.append("#")
+                continue
+            if viewer:
+                lvl, how = V.seen_level(st, viewer, (x, y))
+                row.append("v" if how in ("darkvision", "see in darkness", "blindsight") else chars[lvl])
+            else:
+                lvl, deep, _ = V.level_at(st, (x, y))
+                row.append("S" if deep else chars[lvl])
+        out.append(f"{y + 1:>2}  " + "".join(f"{c:<3}" for c in row).rstrip())
+    out.append("    X dark  D dim  N normal  B bright" + ("  v seen by darkvision etc." if viewer else "  S supernatural darkness"))
+    for src in L["sources"]:
+        where = f"carried by {src['on']}" if src.get("on") else f"at {fmt_pos(*src['at'])}"
+        out.append(f"  {src['id']} {src['kind']} {where}" + (f" toward {fmt_pos(*src['toward'])}" if src.get("toward") else ""))
+    return "\n".join(out)
+
+
+def cmd_sight(args: Args, st: State) -> str:
+    """What a creature sees and how it's seen, where it could hide, and nearby light sources (DM view)."""
+    c = token(st, args.token)
+    return V.sight_report(st, c, fmt_pos, (c.get("speed") or 30) // 5)
+
+
 def resolve(st: State, ref: str) -> Token:
     """A token by id, or a 1x1 pseudo-token for a square name (for distances)."""
     try:
@@ -2120,6 +2369,12 @@ def cmd_flag(args: Args, st: State) -> str:
     if args.command == "remove":
         c["removed"] = True
     else:
+        if args.command == "hide" and not getattr(args, "force", False):
+            seen_by = [p["token"] for p in st["tokens"] if p["side"] == "pc" and not p.get("removed")
+                       and p["hp"] >= 0 and not V.hidden_from(st, c, p)]
+            if seen_by and st.get("turn") is not None:
+                raise CombatError(f"{c['token']} can't hide: {', '.join(seen_by)} sees it clearly (no cover or "
+                                  f"concealment). Move it into darkness or cover first, or --force")
         c["hidden"] = args.command == "hide"
         if args.command == "reveal":
             event(st, f"{who(c)} appears!")
@@ -2177,6 +2432,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-c", "--campaign", required=True)
     sub = p.add_subparsers(dest="command", required=True)
     n = sub.add_parser("new"); n.add_argument("mapfile", nargs="?"); n.add_argument("--blank"); n.add_argument("--force", action="store_true")
+    n.add_argument("--light", choices=V.LEVELS, help="ambient light (default normal, or the map file's 'ambient:')")
     a = sub.add_parser("add")
     a.add_argument("token"); a.add_argument("name"); a.add_argument("--pos", required=True)
     a.add_argument("--init", help="initiative value, or 'roll' (from the profile)"); a.add_argument("--hp", type=int)
@@ -2228,6 +2484,9 @@ def main(argv: list[str] | None = None) -> int:
         cp.add_argument("--target", help="a single target token")
         cp.add_argument("--save", choices=["fort", "ref", "will"]); cp.add_argument("--dmg")
         cp.add_argument("--half", action="store_true"); cp.add_argument("--dc", type=int, help="override the DC")
+        cp.add_argument("--light-at", help="light/darkness spells: the square it's cast on")
+        cp.add_argument("--light-on", help="light/darkness spells: the creature/object carrier token")
+        cp.add_argument("--rounds", type=int, help="light/darkness spells: duration in rounds (default: the fight)")
     sub.add_parser("spells").add_argument("token")
     pv = sub.add_parser("provoke"); pv.add_argument("token"); pv.add_argument("--reason", default="provoking")
     pv.add_argument("--no-aoo", action="store_true")
@@ -2242,7 +2501,9 @@ def main(argv: list[str] | None = None) -> int:
         c.add_argument(f"--{k}", type=int)
     i = sub.add_parser("init"); i.add_argument("token"); i.add_argument("value", type=float)
     for name in ("reveal", "hide", "remove"):
-        sub.add_parser(name).add_argument("token")
+        fp = sub.add_parser(name); fp.add_argument("token")
+        if name == "hide":
+            fp.add_argument("--force", action="store_true", help="hide even though a PC sees it clearly")
     sub.add_parser("end")
     sub.add_parser("endturn").add_argument("token")
     im = sub.add_parser("image"); im.add_argument("mode", nargs="?", choices=["on", "off"])
@@ -2265,6 +2526,12 @@ def main(argv: list[str] | None = None) -> int:
     mn.add_argument("--damage", type=int, help="damage (PC)"); mn.add_argument("--nonlethal", action="store_true")
     mn.add_argument("--reverse", action="store_true", help="escape: become the grappler instead")
     mn.add_argument("--reach", type=int, help="reach of the weapon used, if longer (whip, reach weapon)")
+    lt = sub.add_parser("light"); lt.add_argument("action", choices=["ambient", "add", "remove", "move", "zone", "show"])
+    lt.add_argument("what", nargs="*"); lt.add_argument("--at"); lt.add_argument("--on"); lt.add_argument("--toward")
+    lt.add_argument("--rounds", type=int); lt.add_argument("--magic", type=int, help="spell level (magical light)")
+    lt.add_argument("--radius", type=int); lt.add_argument("--increased", type=int)
+    lt.add_argument("--for", dest="for_", help="show: the light as this creature sees it")
+    sub.add_parser("sight").add_argument("token")
     for sp in (at, m, pv, ar, mn, sub.choices["cast"], sub.choices["sla"]):
         sp.add_argument("--out-of-turn", action="store_true",
                         help="the actor isn't the current one: a readied or immediate action, forced movement, setup")
@@ -2276,7 +2543,8 @@ def main(argv: list[str] | None = None) -> int:
                 "image": cmd_image, "attack": cmd_attack, "log": cmd_log, "events": cmd_events,
                 "ask": cmd_ask, "stabilize": cmd_stabilize, "save": cmd_save, "area": cmd_area,
                 "order": cmd_order, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
-                "provoke": cmd_provoke, "endturn": cmd_endturn, "maneuver": cmd_maneuver}
+                "provoke": cmd_provoke, "endturn": cmd_endturn, "maneuver": cmd_maneuver,
+                "light": cmd_light, "sight": cmd_sight}
     if args.command == "profile":
         return cmd_profile(args)
     if args.command == "do":
@@ -2301,10 +2569,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "show":
             print(render(st, dm=args.dm))
             return 0
-        if args.command not in ("ask", "dist", "threat", "events", "image"):
+        if args.command not in ("ask", "dist", "threat", "events", "image", "sight"):
             st.pop("awaiting", None)   # any real change answers an open question
         result = handlers[args.command](args, st)
-        ended = clean_grapples(st)
+        ended = clean_grapples(st) + reveal_observed(st)
         if ended:
             result += "\n" + "\n".join(ended)
         if args.command != "end":
