@@ -21,35 +21,45 @@ PROJECT = Path(__file__).resolve().parents[1]
 FRIENDLY = {"pc", "ally"}
 
 # ---------- conditions ----------
-# Numeric effects of common conditions. Keys:
+# Numeric effects of common conditions (Core Rulebook, Conditions appendix; see
+# library/pf1e/rules/conditions.md). Keys:
 #   atk / dmg / save / check / ac   flat modifiers
-#   flatfooted                      loses Dex bonus to AC (flat-footed AC is used)
+#   str / dex                       ability SCORE penalties. They're never added to anything directly:
+#                                   the script recomputes what the ability feeds (see ability effects)
+#   str_zero / dex_zero             the score is treated as 0 (helpless, paralyzed)
+#   flatfooted                      loses Dex bonus to AC (only a positive bonus; a Dex penalty still counts)
 #   concealment                     miss chance (%) for attacks against this creature
 #   prone                           +4 AC vs ranged, -4 AC vs melee; -4 on its own melee attacks
-#   helpless                        melee attacks against it get +4 (Dex 0 is approximated by flat-footed AC)
+#   helpless                        melee attacks against it get +4
+#   no_move                         can't move on its own (forced movement still works: --out-of-turn)
+#   no_aoo                          can't make attacks of opportunity (grappled and pinned by their
+#                                   text; the others because they can't act or attack at all)
 # Conditions not listed here are tracked by name only (the DM applies them).
 CONDITIONS: dict[str, dict[str, Any]] = {
     "shaken": {"atk": -2, "save": -2, "check": -2},
     "frightened": {"atk": -2, "save": -2, "check": -2},
-    "panicked": {"atk": -2, "save": -2, "check": -2},
+    "panicked": {"save": -2, "check": -2, "no_aoo": True},
     "sickened": {"atk": -2, "dmg": -2, "save": -2, "check": -2},
     "dazzled": {"atk": -1},
-    "entangled": {"atk": -2},
-    "grappled": {"atk": -2, "ac": -2},
+    "entangled": {"atk": -2, "dex": -4},
+    "grappled": {"atk": -2, "dex": -4, "no_aoo": True, "no_move": True},       # also -2 CMB except to grapple/escape (not automated)
+    "pinned": {"flatfooted": True, "ac": -4, "no_aoo": True, "no_move": True},  # replaces grappled
     "blinded": {"ac": -2, "flatfooted": True},
-    "stunned": {"ac": -2, "flatfooted": True},
-    "cowering": {"ac": -2, "flatfooted": True},
+    "stunned": {"ac": -2, "flatfooted": True, "no_aoo": True, "no_move": True},
+    "cowering": {"ac": -2, "flatfooted": True, "no_aoo": True, "no_move": True},
     "flat-footed": {"flatfooted": True},
-    "helpless": {"flatfooted": True, "helpless": True},
-    "unconscious": {"flatfooted": True, "helpless": True},
-    "paralyzed": {"flatfooted": True, "helpless": True},
+    "helpless": {"dex_zero": True, "helpless": True, "no_aoo": True, "no_move": True},
+    "unconscious": {"dex_zero": True, "helpless": True, "no_aoo": True, "no_move": True},
+    "paralyzed": {"dex_zero": True, "str_zero": True, "helpless": True, "no_aoo": True, "no_move": True},
     "prone": {"prone": True},
     "invisible": {"concealment": 50},
     "concealed": {"concealment": 20},
     "charged": {"ac": -2},                    # until the start of its next turn
     "fighting defensively": {"atk": -4, "ac": 2},
     "total defense": {"ac": 4},
-    "fatigued": {}, "exhausted": {}, "staggered": {}, "nauseated": {}, "stable": {}, "dying": {},
+    "fatigued": {"str": -2, "dex": -2},
+    "exhausted": {"str": -6, "dex": -6},
+    "staggered": {}, "nauseated": {"no_aoo": True}, "stable": {}, "dying": {},
 }
 
 
@@ -296,11 +306,78 @@ def find_attack(profile: dict[str, Any] | None, name: str | None) -> tuple[str |
 
 
 def save_bonus(c: Token, kind: str) -> int | None:
-    """The token's save bonus ('fort', 'ref', 'will') from its profile plus condition modifiers, or None."""
+    """The token's save bonus ('fort', 'ref', 'will') from its profile plus condition modifiers
+    (flat ones, and a changed Dex modifier for Reflex), or None."""
     saves = (c.get("profile") or {}).get("saves") or {}
     if kind not in saves:
         return None
-    return saves[kind] + total(c, "save")
+    return saves[kind] + total(c, "save") + (mod_change(c, "dex") if kind == "ref" else 0)
+
+
+# ---------- ability effects of conditions ----------
+# A condition's ability penalty lowers the SCORE; everything that ability feeds is recomputed
+# from the new modifier. Profiles store the finished numbers (AC, touch, flat-footed, saves,
+# attack bonuses), so the script applies the difference between the old and new modifier.
+
+def scores(c: Token, ab: str) -> tuple[int, int, bool]:
+    """(profile score, effective score, whether the profile has the score) for 'str' or 'dex'.
+    A missing score is assumed to be 10, which gives the right modifier change for plain
+    penalties, but not for armor caps or a score treated as 0."""
+    base = (c.get("profile") or {}).get(ab)
+    known = base is not None
+    b: int = base if base is not None else 10
+    eff = 0 if flag(c, f"{ab}_zero") else max(1, b + total(c, ab))   # approximation: floored at 1
+    return b, eff, known
+
+
+def mod_change(c: Token, ab: str) -> int:
+    """How much the conditions change the ability's modifier (0 without ability effects)."""
+    b, eff, _ = scores(c, ab)
+    return ability_mod(eff) - ability_mod(b)
+
+
+def _dex_to_ac(c: Token, score: int) -> int:
+    """The part of AC that comes from Dex at this score, capped by the armor's max Dex bonus."""
+    m = ability_mod(score)
+    cap = (c.get("profile") or {}).get("max_dex")
+    return min(m, cap) if cap is not None else m
+
+
+def defenses(c: Token) -> dict[str, int | None]:
+    """AC, touch AC and flat-footed AC with the Dex effects of conditions applied (flat condition
+    modifiers like -2 AC are NOT included; attack_mods adds those). Flat-footed AC only loses a
+    positive Dex bonus, so a Dex penalty that turns the modifier negative lowers it too."""
+    b, eff, _ = scores(c, "dex")
+    old, new = _dex_to_ac(c, b), _dex_to_ac(c, eff)
+    d = new - old
+    ac, touch, ff = c.get("ac"), c.get("touch"), c.get("ff")
+    return {"ac": ac + d if ac is not None else None,
+            "touch": touch + d if touch is not None else None,
+            "ff": ff + min(0, new) - min(0, old) if ff is not None else None}
+
+
+def attack_ability(weapon: dict[str, Any] | None, kind: str) -> str:
+    """The ability behind an attack roll: the attack's own 'ability', else Str (melee) or Dex (ranged)."""
+    return (weapon or {}).get("ability") or ("str" if kind == "melee" else "dex")
+
+
+def str_damage_change(c: Token, weapon: dict[str, Any] | None, kind: str) -> int:
+    """How much the conditions change an attack's damage through Str. The attack's 'str_damage'
+    is the Str multiplier (default 1 for melee and thrown, 0 for other ranged attacks; 1.5 for
+    two-handed, 0.5 off-hand). A Str penalty applies in full whatever the multiplier."""
+    w = weapon or {}
+    mult = w.get("str_damage", 1 if kind == "melee" or w.get("thrown") else 0)
+    b, eff, _ = scores(c, "str")
+
+    def part(m: int) -> int:
+        return m if m < 0 else math.floor(m * mult)
+
+    return part(ability_mod(eff)) - part(ability_mod(b))
+
+
+def condition_names(c: Token, keys: tuple[str, ...]) -> list[str]:
+    """Names of the token's conditions that have any of these effects."""
+    return [x["name"] for x in conditions(c) if any(cond_effects(x).get(k) for k in keys)]
 
 
 def ability_mod(score: int | None) -> int:

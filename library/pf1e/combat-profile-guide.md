@@ -27,7 +27,8 @@
 | Other defensive abilities (ferocity, evasion, …) | `"special": ["ferocity", "evasion"]` |
 | **Speed** 30 ft., fly 60 ft. (good) | `"speed": 30, "speeds": {"fly": 60, "fly_maneuverability": "good"}` |
 | **Space** 10 ft.; **Reach** 10 ft. | `"size": 2, "reach": 10` (5 ft. → 1, 10 ft. → 2, 15 ft. → 3, 20 ft. → 4; Small and Tiny creatures → 1) |
-| **Str** 17, **Dex** 15, **Con** 12 … | `"con": 12, "dex": 15` (a score of "—" → `null`) |
+| **Str** 17, **Dex** 15, **Con** 12 … | `"str": 17, "dex": 15, "con": 12` (a score of "—" → `null`). Always include Str and Dex: conditions like grappled (−4 Dex) or fatigued (−2 Str/Dex) are applied through them |
+| Armor with a max Dex bonus that limits the creature's Dex bonus (e.g. Dex 16 in a breastplate, max Dex +3) | `"max_dex": 3`. Skip it when the cap doesn't bite (the Dex bonus is at or below it) |
 | **Base Atk** +1; **CMB** +3; **CMD** 15 | `"cmb": 3, "cmd": 15` |
 | **Feats** Combat Reflexes, Improved Initiative | `"feats": ["Combat Reflexes", "Improved Initiative"]` |
 
@@ -51,6 +52,7 @@ Each distinct attack gets an entry in `attacks`. The **name** is the weapon or n
 - **Damage:** only dice and flat numbers. Extra damage like "plus 1d6 fire" goes in `rider`, as does poison, grab and trip.
 - **Range increments aren't in the stat block.** Take them from the weapon table (`library/pf1e/items/` or the allowed sources), e.g. shortbow 60, longbow 100, light crossbow 80, javelin 30, dagger 10, sling 50.
 - **Primary and secondary natural attacks:** the stat block already prints the right bonuses and damage, so copy them.
+- **Which ability an attack uses** matters only when a condition changes Str or Dex. The defaults are Str for melee rolls and Dex for ranged rolls; add `"ability": "dex"` for a Weapon Finesse attack. Str on damage defaults to ×1 for melee and thrown and ×0 for other ranged attacks. Add `"str_damage": 1.5` for two-handed weapons or a sole natural attack, `0.5` for off-hand or secondary natural attacks, and `1` for composite bows.
 - **Special attacks** (breath weapon, rend, pounce, trample, …) go in `special`. Area attacks run through `combat.py area`.
 
 ## Spellcasting

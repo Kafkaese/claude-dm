@@ -636,11 +636,13 @@ def attack_mods(st: State, a: Token, t: Token, kind: str, touch: bool = False, c
     """Situational modifiers for one attack. Returns (attacker delta, target AC, log notes,
     DM notes, miss chance %). kind is 'melee' or 'ranged'."""
     atk, notes, dmnotes = 0, [], []
-    # attacker side
-    cond_atk = R.total(a, "atk")
+    # attacker side: flat condition modifiers plus a changed Str/Dex modifier (e.g. grappled -4 Dex)
+    ab = R.attack_ability(weapon, kind)
+    cond_atk = R.total(a, "atk") + R.mod_change(a, ab)
     if cond_atk:
         atk += cond_atk
-        notes.append(f"{cond_atk:+d} conditions")
+        names = R.condition_names(a, ("atk", ab, f"{ab}_zero"))
+        notes.append(f"{cond_atk:+d} {', '.join(names) or 'conditions'}")
     if kind == "melee" and R.flag(a, "prone"):
         atk -= 4
         notes.append("-4 attacking prone")
@@ -667,23 +669,29 @@ def attack_mods(st: State, a: Token, t: Token, kind: str, touch: bool = False, c
             if inc >= limit:
                 dmnotes.append(f"out of range: {dist} ft is beyond {limit} range increments")
     # target side
-    base = t.get("ac")
-    if base is None:
+    if t.get("ac") is None:
         raise CombatError(f"{t['token']} has no AC; pass --ac or give it a profile")
+    dfn = R.defenses(t)   # AC, touch and flat-footed AC with the Dex effects of conditions
+    base = dfn["ac"] or 0
     uncanny = bool((t.get("profile") or {}).get("uncanny_dodge"))
     flat = R.flag(t, "flatfooted") or (not t.get("acted") and not uncanny)
     ac, label = base, ""
     if touch:
-        ac, label = (t.get("touch") if t.get("touch") is not None else base), "touch "
-        if flat and t.get("ff") is not None:
-            ac = min(ac, t["ff"])
-    elif flat and t.get("ff") is not None:
-        ac, label = t["ff"], "flat-footed "
+        ac, label = (dfn["touch"] if dfn["touch"] is not None else base), "touch "
+        if flat and dfn["ff"] is not None:
+            ac = min(ac, dfn["ff"])
+    elif flat and dfn["ff"] is not None:
+        ac, label = dfn["ff"], "flat-footed "
     elif flat:
         dmnotes.append(f"{t['token']} is flat-footed but has no flat-footed AC; base AC used")
     if label:
         notes.append(label.strip())
     ac += R.total(t, "ac")
+    ac_conds = R.condition_names(t, ("ac", "dex", "dex_zero"))
+    if ac_conds:
+        notes.append("target " + ", ".join(ac_conds))
+    if R.mod_change(t, "dex") and not R.scores(t, "dex")[2]:
+        dmnotes.append(f"{t['token']} has no Dex score in its profile: Dex 10 assumed for its condition")
     if R.flag(t, "prone"):
         ac += 4 if kind == "ranged" else -4
         notes.append("target prone")
@@ -705,6 +713,10 @@ def attack_mods(st: State, a: Token, t: Token, kind: str, touch: bool = False, c
 def _attack(args: Args, st: State) -> str:
     """Work out which attacks are made (profile --with/--full, raw --roll, or the PC's --total) and resolve each."""
     a, t = token(st, args.attacker), token(st, args.target)
+    if args.aoo:
+        why = aoo_blocked(a)
+        if why:
+            raise CombatError(f"{a['token']} can't make attacks of opportunity: {why}")
     prof = a.get("profile") or {}
     # (label, bonus, damage expr, crit, mult, kind, weapon dict)
     entries: list[tuple[str | None, int | None, str | None, int, int, str, dict[str, Any] | None]] = []
@@ -798,7 +810,7 @@ def _attack_once(args: Args, st: State, a: Token, t: Token, name: str | None, bo
         event(st, line + " — miss")
         return "\n".join(dm + [f"MISS. Log: {line} — miss"])
     if dmg_expr:
-        dmg_mod = R.total(a, "dmg")
+        dmg_mod = R.total(a, "dmg") + R.str_damage_change(a, weapon, kind)
         times = mult if crit else 1
         dmg, parts = 0, []
         for _ in range(times):
@@ -1049,12 +1061,30 @@ def aoo_left(o: Token) -> int:
     return allowed - o.get("aoo_used", 0)
 
 
+def aoo_blocked(o: Token) -> str | None:
+    """Why the token can't make attacks of opportunity right now, or None if it can: a condition
+    (grappled, pinned, helpless, stunned, …), or being flat-footed before its first turn without
+    Combat Reflexes or uncanny dodge."""
+    names = R.condition_names(o, ("no_aoo",))
+    if names:
+        return ", ".join(names)
+    prof = o.get("profile") or {}
+    feats = [f.lower() for f in (prof.get("feats") or [])]
+    if not o.get("acted") and "combat reflexes" not in feats and not prof.get("uncanny_dodge"):
+        return "flat-footed (hasn't acted yet)"
+    return None
+
+
 def provoke_aoos(st: State, c: Token, no_aoo: bool = False, reason: str = 'provoking') -> tuple[list[str], int]:
     """Resolve the attacks of opportunity that `c` provokes right now. NPC and ally threateners
     attack automatically (first melee attack in their profile); a PC's chance opens a question
     (unless its standing order says never). Returns (lines, damage c took)."""
     out, hp_before = [], c["hp"]
     for o in [x for x in st["tokens"] if threatens(x, c)]:
+        why = aoo_blocked(o)
+        if why:
+            out.append(f"  {label(o)} can't make an AoO ({why})")
+            continue
         if aoo_left(o) <= 0:
             out.append(f"  {label(o)} could make an AoO but has none left this round")
             continue
@@ -1338,6 +1368,9 @@ def cmd_move(args: Args, st: State) -> str:
         raise CombatError(f"{c['token']} is down (HP {c['hp']}) and can't move")
     if c["hp"] < 0:
         raise CombatError(f"{c['token']} is dying (HP {c['hp']}) and can't move")
+    stuck = R.condition_names(c, ("no_move",))
+    if stuck and not args.out_of_turn:
+        raise CombatError(f"{c['token']} can't move ({', '.join(stuck)}); forced movement takes --out-of-turn")
     dest = parse_pos(args.pos, st)
     feet = path_cost(st, c, dest)
     frm = fmt_pos(c["x"], c["y"])

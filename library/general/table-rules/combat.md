@@ -86,7 +86,7 @@ Iterative attacks use a list: `"bonus": [10, 5]`. Natural attacks go in `full_at
 
 It confirms crits, rolls damage only on a hit, applies DR, and writes the **combat log**, the player-safe record the interface shows. For PC attacks it applies the target side, and lists attacker-side modifiers as reminders so you can check the player included them. Never roll attacks with `roll.py`. Use `log "…"` for anything else the player should see in the log.
 
-**Conditions and effects:** `cond g1 add shaken --rounds 1`, `cond C add bless --atk 1 --rounds 30`, `cond g1 add bleeding --ongoing 1d4`. Known conditions carry their modifiers. Timed ones end by themselves, and ongoing damage is rolled at the start of the creature's turn.
+**Conditions and effects:** `cond g1 add shaken --rounds 1`, `cond C add bless --atk 1 --rounds 30`, `cond g1 add bleeding --ongoing 1d4`. Known conditions carry their effects (the catalog is `CONDITIONS` in `combat_rules.py`, the rules text is in `library/<system>/rules/conditions.md`): flat modifiers, ability penalties (grappled −4 Dex, fatigued −2 Str/Dex, helpless Dex 0), which the script turns into the right AC, touch, flat-footed AC, Reflex, attack and damage changes, and restrictions (no moving, no AoOs). Conditions never change the stored numbers; they're applied each time something is resolved. Timed ones end by themselves, and ongoing damage is rolled at the start of the creature's turn.
 
 **Areas and saves:**
 - `area burst 10 --at D4 --save ref --dc 13 --dmg 2d6 --half --name "burning hands"`, or `area cone 15 --from C --toward E5 …`, or `line`. The damage is rolled once, and NPC saves come from their profiles.
