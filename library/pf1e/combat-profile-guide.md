@@ -30,6 +30,9 @@
 | **Str** 17, **Dex** 15, **Con** 12 … | `"str": 17, "dex": 15, "con": 12` (a score of "—" → `null`). Always include Str and Dex: conditions like grappled (−4 Dex) or fatigued (−2 Str/Dex) are applied through them |
 | Armor with a max Dex bonus that limits the creature's Dex bonus (e.g. Dex 16 in a breastplate, max Dex +3) | `"max_dex": 3`. Skip it when the cap doesn't bite (the Dex bonus is at or below it) |
 | **Base Atk** +1; **CMB** +3; **CMD** 15 | `"cmb": 3, "cmd": 15` |
+| **CMB** +5 (+7 trip); **CMD** 17 (21 vs. trip) | `"cmb": 5, "cmb_vs": {"trip": 7}, "cmd": 17, "cmd_vs": {"trip": 21}` (maneuver names: bull-rush, dirty-trick, disarm, drag, grapple, overrun, reposition, steal, sunder, trip). Copy the stat block's numbers: the script doesn't add Improved/Greater feat bonuses itself, but it does read the feats for "no AoO" and the Greater effects |
+| can't be tripped (oozes, legless or flying creatures) | `"maneuver_immune": ["trip"]` |
+| **grab** (on an attack) | keep it in `rider`; the DM resolves it with `maneuver … grapple --grab` (+4, no AoO) |
 | **Feats** Combat Reflexes, Improved Initiative | `"feats": ["Combat Reflexes", "Improved Initiative"]` |
 
 ## Attacks

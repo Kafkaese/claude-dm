@@ -88,6 +88,13 @@ It confirms crits, rolls damage only on a hit, applies DR, and writes the **comb
 
 **Conditions and effects:** `cond g1 add shaken --rounds 1`, `cond C add bless --atk 1 --rounds 30`, `cond g1 add bleeding --ongoing 1d4`. Known conditions carry their effects (the catalog is `CONDITIONS` in `combat_rules.py`, the rules text is in `library/<system>/rules/conditions.md`): flat modifiers, ability penalties (grappled −4 Dex, fatigued −2 Str/Dex, helpless Dex 0), which the script turns into the right AC, touch, flat-footed AC, Reflex, attack and damage changes, and restrictions (no moving, no AoOs). Conditions never change the stored numbers; they're applied each time something is resolved. Timed ones end by themselves, and ongoing damage is rolled at the start of the creature's turn.
 
+**Combat maneuvers:** `maneuver g1 C trip` (NPC: rolls its profile CMB, `cmb_vs` per maneuver), `maneuver C g1 bull-rush --total 18` (PC: the player's check). Maneuvers: bull-rush, dirty-trick (`--condition shaken`), disarm, drag, grapple, overrun, reposition (`--to D4`), steal, sunder, trip. The rules are in `library/<system>/rules/combat-maneuvers.md`; the script applies them:
+- **CMD** with conditions (Str/Dex changes, AC penalties, flat-footed loses Dex), automatic success against helpless targets, +4 against stunned ones, size limits and `maneuver_immune`.
+- **Provoking:** only from the target, unless the attacker has the Improved feat or uses `--grab`. An NPC target's AoO is rolled, and its damage becomes a penalty on the check. A PC target gets a question; after their answer, rerun with `--aoo-damage N`.
+- **Results:** prone (and the attacker prone on a trip failed by 10+), pushes and drags that stop at walls and creatures, conditions with durations (dirty trick), dropped items. An overrun lets the attacker move through the target's space afterwards.
+- **Grapples are tracked:** a success grapples both. The grappler must maintain every round on its turn (`maneuver g1 C grapple` again, +5, with `--option pin|damage|move|tie`), or the grapple ends when the turn moves on. The held creature uses `maneuver C g1 escape` (CMB, or `--total` for Escape Artist; `--reverse` to take over). `release` lets go. A grapple ends when either creature drops.
+- Trip, disarm and sunder can be made as AoOs (`--aoo --out-of-turn`).
+
 **Areas and saves:**
 - `area burst 10 --at D4 --save ref --dc 13 --dmg 2d6 --half --name "burning hands"`, or `area cone 15 --from C --toward E5 …`, or `line`. The damage is rolled once, and NPC saves come from their profiles.
 - A PC's save becomes a pending question. Resolve it with `save C --total 17` when the player answers.

@@ -15,6 +15,9 @@
     "ff": {"type": "integer", "description": "Flat-footed AC."},
     "cmb": {"type": "integer"},
     "cmd": {"type": "integer"},
+    "cmb_vs": {"type": "object", "propertyNames": {"enum": ["bull-rush", "dirty-trick", "disarm", "drag", "grapple", "overrun", "reposition", "steal", "sunder", "trip"]}, "additionalProperties": {"type": "integer"}, "description": "CMB for specific maneuvers, from the stat block's parentheses: 'CMB +5 (+7 trip)' -> {\"trip\": 7}. combat.py doesn't add Improved/Greater feat bonuses itself."},
+    "cmd_vs": {"type": "object", "propertyNames": {"enum": ["bull-rush", "dirty-trick", "disarm", "drag", "grapple", "overrun", "reposition", "steal", "sunder", "trip"]}, "additionalProperties": {"type": "integer"}, "description": "CMD against specific maneuvers: 'CMD 17 (21 vs. trip)' -> {\"trip\": 21} (Improved feats, extra legs)."},
+    "maneuver_immune": {"type": "array", "items": {"enum": ["bull-rush", "dirty-trick", "disarm", "drag", "grapple", "overrun", "reposition", "steal", "sunder", "trip"]}, "description": "Maneuvers that can't affect it: 'can't be tripped', oozes and legless or flying creatures (trip), etc."},
     "saves": {
       "type": "object", "required": ["fort", "ref", "will"], "additionalProperties": false,
       "properties": {"fort": {"type": "integer"}, "ref": {"type": "integer"}, "will": {"type": "integer"}}

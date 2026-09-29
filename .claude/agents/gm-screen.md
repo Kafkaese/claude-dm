@@ -53,6 +53,7 @@ python3 scripts/combat.py -c <camp> attack C g1 --total 17 --damage 9 --name rap
 python3 scripts/combat.py -c <camp> cond g1 add shaken --rounds 1      # also: --atk/--ac/--save/--dmg N, --ongoing 1d4
 python3 scripts/combat.py -c <camp> area burst 10 --at D4 --save ref --dc 13 --dmg 2d6 --half --name "burning hands"
 python3 scripts/combat.py -c <camp> save C --total 17          # a PC's pending save; NPC: save g1 will --dc 14
+python3 scripts/combat.py -c <camp> maneuver g1 C trip          # combat maneuver (NPC rolls CMB; PC: --total N); grapples tracked
 python3 scripts/combat.py -c <camp> stabilize C --total 12     # a dying PC's check (NPCs roll their own on `next`)
 python3 scripts/combat.py -c <camp> move C C4 --step           # 5-foot step; normal moves roll NPC AoOs automatically
 python3 scripts/combat.py -c <camp> cast s1 "burning hands" --area "cone 15" --toward C4 --save ref --dmg 1d4 --half   # slot + effect in one

@@ -22,6 +22,14 @@ Play
                                   In web/terminal play (CLAUDE_DM_MODE=play) only the interface runs it.
   endturn C                       the player ended the PC's turn (in words other than the go signal,
                                   or together with their actions): the interface plays the next step
+  maneuver ATT TGT KIND [--total N] [--charge] [--grab] [--aoo] [--condition X] [--to SQ] [--item X]
+                                  combat maneuver: bull-rush dirty-trick disarm drag grapple overrun
+                                  reposition steal sunder trip, plus escape and release. NPCs roll their
+                                  profile CMB (cmb_vs per maneuver), PCs give --total. Provokes from the
+                                  target unless the Improved feat/--grab (a PC target: question, then
+                                  rerun with --aoo-damage N). Grapple again = maintain (+5), with
+                                  --option pin|damage|move|tie; grapples are tracked and end when a
+                                  party drops or isn't maintained
   Actor lock: attack, move, cast, sla, provoke and area --from only work for the creature the
   pointer is on. Exempt: attack --aoo, and --out-of-turn (readied/immediate actions, forced
   movement, repositioning during setup).
@@ -234,7 +242,7 @@ def active(c: Token) -> bool:
 def blocked_by_hostile(st: State, mover: Token, x: int, y: int) -> bool:
     """Whether an active enemy of the mover stands on the square."""
     for o in st["tokens"]:
-        if o is mover or not active(o):
+        if o is mover or not active(o) or o["token"] in mover.get("overrun_through", []):
             continue
         if (o["side"] in FRIENDLY) != (mover["side"] in FRIENDLY) and (x, y) in cells(o):
             return True
@@ -632,6 +640,12 @@ def cmd_attack(args: Args, st: State) -> str:
     return out
 
 
+def flanking(st: State, a: Token, t: Token) -> bool:
+    """Whether `a` flanks `t` with an ally that also threatens it."""
+    return any(threatens(o, t) and o is not a and flanks(a, o, t)
+               for o in st["tokens"] if (o["side"] in FRIENDLY) == (a["side"] in FRIENDLY))
+
+
 def attack_mods(st: State, a: Token, t: Token, kind: str, touch: bool = False, charge: bool = False, weapon: dict[str, Any] | None = None) -> tuple[int, int, list[str], list[str], int]:
     """Situational modifiers for one attack. Returns (attacker delta, target AC, log notes,
     DM notes, miss chance %). kind is 'melee' or 'ranged'."""
@@ -649,8 +663,7 @@ def attack_mods(st: State, a: Token, t: Token, kind: str, touch: bool = False, c
     if charge:
         atk += 2
         notes.append("+2 charge")
-    if kind == "melee" and any(threatens(o, t) and o is not a and flanks(a, o, t)
-                               for o in st["tokens"] if (o["side"] in FRIENDLY) == (a["side"] in FRIENDLY)):
+    if kind == "melee" and flanking(st, a, t):
         atk += 2
         notes.append("+2 flanking")
     feats = [f.lower() for f in ((a.get("profile") or {}).get("feats") or [])]
@@ -965,7 +978,7 @@ def cmd_endturn(args: Args, st: State) -> str:
     return f"{c['name']}'s turn is over; the interface plays the next step"
 
 
-ACTOR_ARG = {"attack": "attacker", "move": "token", "cast": "token", "sla": "token", "provoke": "token", "area": "frm"}
+ACTOR_ARG = {"maneuver": "attacker", "attack": "attacker", "move": "token", "cast": "token", "sla": "token", "provoke": "token", "area": "frm"}
 
 
 def check_actor(args: Args, st: State) -> None:
@@ -1017,12 +1030,18 @@ def cmd_next(args: Args, st: State) -> str:
     found = next_actor(st)
     if not found:
         raise CombatError("no combatants")
+    lapsed = []
+    for g in list(grapples(st)):   # a grapple must be maintained every round, on the grappler's turn
+        if g["by"] == st.get("turn") and g.get("round") != st.get("round"):
+            end_grapple(st, g)
+            lapsed.append(f"  {g['by']} didn't maintain its grapple on {g['target']}: the grapple ends")
+            event(st, f"{who(token(st, g['by']))} lets go of {who(token(st, g['target']))}")
     c, wraps = found
     if wraps:
         st["round"] = st.get("round", 1) + 1
     st["turn"] = c["token"]
     st.pop("end_turn", None)
-    out = [f"Round {st['round']}: {label(c)} ({c['name']}) acts"]
+    out = [f"Round {st['round']}: {label(c)} ({c['name']}) acts"] + lapsed
     # start of this creature's turn
     for o, name in R.expire(st, c["token"], st["round"]):
         out.append(f"  ended: {name} on {label(o)}")
@@ -1032,6 +1051,15 @@ def cmd_next(args: Args, st: State) -> str:
     c["aoo_used"] = 0
     c["moved"] = 0
     c.pop("stepped", None)
+    c.pop("overrun_through", None)
+    for g in grapples(st):
+        if g["by"] == c["token"]:
+            out.append(f"  {c['token']} is grappling {g['target']}{' (pinned)' if g['pinned'] else ''}: maintain it this "
+                       f"turn (`maneuver {c['token']} {g['target']} grapple`, +5) or `release`; not maintaining ends it")
+        elif g["target"] == c["token"]:
+            can = "only verbal and mental actions" if g["pinned"] else "act without two hands"
+            out.append(f"  {c['token']} is {'pinned' if g['pinned'] else 'grappled'} by {g['by']}: it can try to escape "
+                       f"(`maneuver {c['token']} {g['by']} escape`, CMB or Escape Artist) or take {can}")
     for x in R.conditions(c):
         if x.get("ongoing") and c["hp"] > -1000:
             d, detail, _ = _roll(x["ongoing"])
@@ -1075,12 +1103,14 @@ def aoo_blocked(o: Token) -> str | None:
     return None
 
 
-def provoke_aoos(st: State, c: Token, no_aoo: bool = False, reason: str = 'provoking') -> tuple[list[str], int]:
+def provoke_aoos(st: State, c: Token, no_aoo: bool = False, reason: str = 'provoking',
+                 only: list[Token] | None = None) -> tuple[list[str], int]:
     """Resolve the attacks of opportunity that `c` provokes right now. NPC and ally threateners
     attack automatically (first melee attack in their profile); a PC's chance opens a question
-    (unless its standing order says never). Returns (lines, damage c took)."""
+    (unless its standing order says never). `only` limits it to these threateners (a combat
+    maneuver provokes only from its target). Returns (lines, damage c took)."""
     out, hp_before = [], c["hp"]
-    for o in [x for x in st["tokens"] if threatens(x, c)]:
+    for o in [x for x in st["tokens"] if threatens(x, c) and (only is None or x in only)]:
         why = aoo_blocked(o)
         if why:
             out.append(f"  {label(o)} can't make an AoO ({why})")
@@ -1401,6 +1431,477 @@ def cmd_move(args: Args, st: State) -> str:
     kind = "5-foot step" if args.step else "moves"
     out.insert(0, f"{c['token']} {kind} {frm} → {fmt_pos(*dest)}: {feet} ft{warn}")
     return "\n".join(out)
+
+
+# ---------- combat maneuvers ----------
+# Rules: library/pf1e/rules/combat-maneuvers.md (Core Rulebook pg. 198-201, APG). d20 + CMB vs CMD;
+# a tie succeeds, a natural 20 always succeeds and a natural 1 always fails.
+
+MANEUVERS = ("bull-rush", "dirty-trick", "disarm", "drag", "grapple", "overrun", "reposition",
+             "steal", "sunder", "trip", "escape", "release")
+FEAT_NAME = {"bull-rush": "bull rush", "dirty-trick": "dirty trick", "disarm": "disarm", "drag": "drag",
+             "grapple": "grapple", "overrun": "overrun", "reposition": "reposition", "steal": "steal",
+             "sunder": "sunder", "trip": "trip"}
+SIZE_LIMITED = {"bull-rush", "drag", "overrun", "reposition", "trip"}   # target at most one size larger
+AS_AOO = {"disarm", "sunder", "trip"}                                  # may replace an attack (or an AoO)
+DIRTY_TRICKS = ("blinded", "dazzled", "deafened", "entangled", "shaken", "sickened")
+VERB = {"bull-rush": "bull rush", "dirty-trick": "use a dirty trick on", "disarm": "disarm", "drag": "drag",
+        "grapple": "grapple", "overrun": "overrun", "reposition": "reposition", "steal": "steal from",
+        "sunder": "sunder the gear of", "trip": "trip", "escape": "escape from"}
+
+
+def _feats(c: Token) -> list[str]:
+    """The token's feats in lowercase."""
+    return [f.lower() for f in ((c.get("profile") or {}).get("feats") or [])]
+
+
+def grapples(st: State) -> list[dict[str, Any]]:
+    """Active grapples: {"by": grappler token, "target": token, "pinned": bool}."""
+    return st.setdefault("grapples", [])
+
+
+def _grapple(st: State, by: str, target: str) -> dict[str, Any] | None:
+    """The grapple `by` holds on `target`, if any."""
+    return next((g for g in grapples(st) if g["by"] == by and g["target"] == target), None)
+
+
+def end_grapple(st: State, g: dict[str, Any]) -> None:
+    """End a grapple: both lose grappled/pinned/pinning unless another grapple still holds them."""
+    st["grapples"] = [x for x in grapples(st) if x is not g]
+    for tok in (g["by"], g["target"]):
+        if any(tok in (x["by"], x["target"]) for x in grapples(st)):
+            continue
+        c = token(st, tok)
+        for name in ("grappled", "pinned", "pinning"):
+            R.remove_condition(c, name)
+
+
+def clean_grapples(st: State) -> list[str]:
+    """End grapples whose grappler or target is out of the fight or unconscious (the usual ruling;
+    the rules don't say). Returns report lines."""
+    out = []
+    for g in list(grapples(st)):
+        a, t = token(st, g["by"]), token(st, g["target"])
+        gone = [c for c in (a, t) if c.get("removed") or c["hp"] < 0 or (c["hp"] == 0 and c["side"] not in FRIENDLY)]
+        if gone:
+            end_grapple(st, g)
+            out.append(f"  grapple {g['by']} → {g['target']} ended ({', '.join(c['token'] for c in gone)} is out)")
+            if not any(c.get("hidden") for c in (a, t)):
+                event(st, f"{who(a)}'s grapple on {who(t)} ends")
+    return out
+
+
+def _free_adjacent(st: State, anchor: Token, mover: Token, near: Square) -> Square | None:
+    """The open square next to `anchor` where `mover` fits, closest to `near`."""
+    best = None
+    for y in range(st["h"]):
+        for x in range(st["w"]):
+            ok = all(cost(st, cx, cy) is not None and not occupied(st, mover, cx, cy) for cx, cy in cells(mover, (x, y)))
+            if not ok:
+                continue
+            probe = dict(mover, x=x, y=y)
+            if feet_between(anchor, probe) != 5:
+                continue
+            d = sq_dist((x, y), near)
+            if best is None or d < best[0]:
+                best = (d, (x, y))
+    return best[1] if best else None
+
+
+def _fits(st: State, c: Token, at: Square, ignore: tuple[Token, ...] = ()) -> bool:
+    """Whether the token fits at `at`: on the map, passable, and not on another token."""
+    for cx, cy in cells(c, at):
+        if cost(st, cx, cy) is None:
+            return False
+        if any(o is not c and o not in ignore and not o.get("removed") and (cx, cy) in cells(o) for o in st["tokens"]):
+            return False
+    return True
+
+
+def _direction(frm: Token, to: Token) -> tuple[int, int]:
+    """Unit step (dx, dy) from one token's center toward another's."""
+    fx, fy = frm["x"] + frm["size"] / 2, frm["y"] + frm["size"] / 2
+    tx, ty = to["x"] + to["size"] / 2, to["y"] + to["size"] / 2
+    sgn = lambda v: (v > 0.01) - (v < -0.01)
+    return sgn(tx - fx), sgn(ty - fy)
+
+
+def _push(st: State, c: Token, d: tuple[int, int], squares: int, ignore: tuple[Token, ...] = ()) -> int:
+    """Move `c` up to `squares` squares in direction d, stopping at anything in the way. Returns squares moved."""
+    moved = 0
+    for _ in range(squares):
+        nxt = (c["x"] + d[0], c["y"] + d[1])
+        if not _fits(st, c, nxt, ignore):
+            break
+        c["x"], c["y"] = nxt
+        moved += 1
+    return moved
+
+
+def maneuver_cmd(st: State, t: Token, kind: str) -> tuple[int, list[str]]:
+    """The target's CMD against this maneuver, with conditions applied: Str/Dex changes, AC penalties
+    and bonuses (which also apply to CMD), and a flat-footed target's lost Dex bonus. Returns (CMD, notes)."""
+    prof = t.get("profile") or {}
+    base = (prof.get("cmd_vs") or {}).get(kind, prof.get("cmd"))
+    if base is None:
+        raise CombatError(f"{t['token']} has no CMD: add 'cmd' to its profile, or pass --cmd N")
+    notes = []
+    v = base + R.mod_change(t, "str") + R.mod_change(t, "dex") + R.total(t, "ac")
+    uncanny = bool(prof.get("uncanny_dodge"))
+    if R.flag(t, "flatfooted") or (not t.get("acted") and not uncanny):
+        dex_mod = R.ability_mod(R.scores(t, "dex")[1])
+        if dex_mod > 0:
+            v -= dex_mod
+            notes.append("flat-footed")
+    names = R.condition_names(t, ("ac", "dex", "dex_zero", "str", "str_zero"))
+    if names:
+        notes.append("target " + ", ".join(names))
+    return v, notes
+
+
+def maneuver_cmb(st: State, a: Token, t: Token, kind: str, args: Args) -> tuple[int, list[str]]:
+    """Situational modifiers on the attacker's check (not the base CMB). Returns (delta, notes)."""
+    delta, notes = 0, []
+    # attack-roll modifiers from conditions; grappled/pinned don't apply to grappling or escaping
+    skip = ("grappled", "pinned") if kind in ("grapple", "escape") else ()
+    cond = sum(R.cond_effects(x).get("atk", 0) for x in R.conditions(a) if x["name"].lower() not in skip)
+    cond += R.mod_change(a, "str")
+    if cond:
+        delta += cond
+        names = [n for n in R.condition_names(a, ("atk", "str", "str_zero")) if n.lower() not in skip]
+        notes.append(f"{cond:+d} {', '.join(names) or 'conditions'}")
+    if R.flag(a, "prone"):
+        delta -= 4
+        notes.append("-4 prone")
+    if getattr(args, "charge", False):
+        delta += 2
+        notes.append("+2 charge")
+    if kind != "escape" and flanking(st, a, t):
+        delta += 2
+        notes.append("+2 flanking")
+    if R.has(t, "stunned"):
+        delta += 4
+        notes.append("+4 target stunned")
+    if kind == "grapple" and _grapple(st, a["token"], t["token"]):
+        delta += 5
+        notes.append("+5 maintaining")
+    if kind == "grapple" and getattr(args, "grab", False):
+        delta += 4
+        notes.append("+4 grab")
+    if getattr(args, "mod", None):
+        delta += args.mod
+        notes.append(f"{args.mod:+d} situational")
+    return delta, notes
+
+
+def cmd_maneuver(args: Args, st: State) -> str:
+    """A combat maneuver: provoke (unless the Improved feat or grab), roll or take the check
+    against CMD, and apply the result (prone, pushed, grappled, …). Grapples are tracked:
+    `maneuver A T grapple` again maintains (+5) with --option pin|damage|move, `escape`
+    breaks free (or --reverse), `release` lets go."""
+    a, t = token(st, args.attacker), token(st, args.target)
+    kind = args.kind
+    pa, pt = a.get("profile") or {}, t.get("profile") or {}
+    if a is t:
+        raise CombatError("a maneuver needs another creature as its target")
+
+    if kind == "release":
+        g = _grapple(st, a["token"], t["token"])
+        if not g:
+            raise CombatError(f"{a['token']} isn't grappling {t['token']}")
+        end_grapple(st, g)
+        event(st, f"{who(a)} releases {who(t)}")
+        return f"{a['token']} releases {t['token']} (free action)"
+
+    held = _grapple(st, t["token"], a["token"]) if kind == "escape" else None
+    if kind == "escape" and not held:
+        raise CombatError(f"{t['token']} isn't grappling {a['token']}")
+    maintain = _grapple(st, a["token"], t["token"]) if kind == "grapple" else None
+    if args.option and not maintain:
+        raise CombatError("--option (pin, damage, move, tie) only works when maintaining a grapple you started")
+    if kind in (pt.get("maneuver_immune") or []):
+        raise CombatError(f"{t['token']} can't be affected by {kind} (its profile says so)")
+    if kind in SIZE_LIMITED and t["size"] - a["size"] > 1:
+        raise CombatError(f"{t['token']} is too big to {kind.replace('-', ' ')} (more than one size larger)")
+    if kind == "dirty-trick" and args.condition not in DIRTY_TRICKS:
+        raise CombatError(f"a dirty trick needs --condition, one of: {', '.join(DIRTY_TRICKS)}")
+    if kind == "reposition" and not args.to:
+        raise CombatError("a reposition needs --to SQUARE (where the target should end up)")
+    dm = []
+    reach = args.reach or a.get("reach", 5)
+    if feet_between(a, t) > reach and kind != "escape":
+        raise CombatError(f"{t['token']} is {feet_between(a, t)} ft away, beyond {a['token']}'s reach ({reach} ft); "
+                          f"move first, or pass --reach N for a reach weapon or whip")
+    if args.aoo:
+        if kind not in AS_AOO:
+            raise CombatError(f"only {', '.join(sorted(AS_AOO))} can be made as an attack of opportunity")
+        why = aoo_blocked(a)
+        if why:
+            raise CombatError(f"{a['token']} can't make attacks of opportunity: {why}")
+        if aoo_left(a) <= 0:
+            raise CombatError(f"{a['token']} has no attacks of opportunity left this round")
+        a["aoo_used"] = a.get("aoo_used", 0) + 1
+
+    # provoking: from the target only, unless the Improved feat, grab, or not a new attempt
+    penalty = 0
+    feat = FEAT_NAME.get(kind)
+    improved = bool(feat) and f"improved {feat}" in _feats(a)
+    provokes = feat is not None and not maintain and not improved and not args.grab and not args.no_provoke and not args.aoo
+    if provokes:
+        if args.aoo_damage is not None:
+            penalty = args.aoo_damage
+            if penalty:
+                dm.append(f"the AoO it provoked dealt {penalty}: -{penalty} on the check")
+        elif threatens(t, a) and (aoo_blocked(t) or aoo_left(t) <= 0):
+            dm.append(f"it provokes, but {t['token']} can't take the AoO ({aoo_blocked(t) or 'none left this round'})")
+        elif threatens(t, a):
+            if t["side"] == "pc" and st.get("orders", {}).get(t["token"], {}).get("aoo", "ask") != "never":
+                st["awaiting"] = (f"{t['name']}: {who(a)} tries to {VERB[kind]} you and provokes. Take an attack of "
+                                  f"opportunity? If so, roll it")
+                return (f"{a['token']}'s {kind} provokes an AoO from {t['token']}: ask the player (question set). Then "
+                        f"`attack {t['token']} {a['token']} --total N --damage N --aoo` if they take it, and rerun this "
+                        f"maneuver with --aoo-damage N (the damage dealt, 0 if it missed or they passed)")
+            lines, taken = provoke_aoos(st, a, reason=f"attempting to {VERB[kind]} {t['token']}", only=[t])
+            dm += [l.strip() for l in lines]
+            penalty = taken
+            if a["hp"] <= 0:
+                event(st, f"{who(a)} goes down before the {kind.replace('-', ' ')} lands")
+                return "\n".join([f"{a['token']} is dropped by the AoO; the {kind} fails"] + dm)
+            if penalty:
+                dm.append(f"the AoO dealt {penalty}: -{penalty} on the check")
+    elif feat and improved and not maintain:
+        dm.append(f"no AoO (Improved {feat.title()})")
+
+    # the check
+    target_cmd = args.cmd if args.cmd is not None else None
+    if kind == "escape":   # against the grappler's CMD
+        cmd_v, cmd_notes = maneuver_cmd(st, t, "grapple") if target_cmd is None else (target_cmd, [])
+    else:
+        cmd_v, cmd_notes = maneuver_cmd(st, t, kind) if target_cmd is None else (target_cmd, [])
+    delta, notes = maneuver_cmb(st, a, t, kind, args)
+    delta -= penalty
+    if penalty:
+        notes.append(f"-{penalty} AoO damage")
+    auto = kind != "escape" and any(R.has(t, n) for n in ("helpless", "unconscious", "paralyzed"))
+    if args.total is not None:        # the player's roll, everything they know included
+        total_v, nat = args.total, args.nat
+        pc_side = [n for n in notes if n.startswith(("+", "-"))]
+        if pc_side:
+            dm.append(f"reminder: {', '.join(pc_side)} applies to the player's roll; check they included it")
+        how = f"reported {total_v}"
+    else:
+        base = args.cmb if args.cmb is not None else (pa.get("cmb_vs") or {}).get(kind, pa.get("cmb"))
+        if base is None:
+            raise CombatError(f"{a['token']} has no CMB: add 'cmb' to its profile, or pass --cmb N (or --total for a PC)")
+        expr = f"1d20{base + delta:+d}"
+        total_v, detail, _ = _roll(expr)
+        nat = _natural(detail)
+        how = f"{expr} (CMB {base:+d}{', ' + ', '.join(notes) if notes else ''}) → {detail} = {total_v}"
+    ok = auto or nat == 20 or (nat != 1 and total_v >= cmd_v)
+    margin = total_v - cmd_v
+    dm.insert(0, f"{kind}: {how} vs CMD {cmd_v}" + (f" ({', '.join(cmd_notes)})" if cmd_notes else "")
+              + (" — automatic success (helpless target)" if auto else "")
+              + f": {'SUCCESS' if ok else 'FAILURE'} by {abs(margin)}")
+    shown_cmd = f" vs CMD {cmd_v}" if t["side"] in FRIENDLY else ""
+    nat_s = " (natural 20)" if nat == 20 else " (natural 1)" if nat == 1 else ""
+    head = f"{who(a)} tries to {VERB[kind]} {who(t)}: {total_v}{shown_cmd}{nat_s} — {'success' if ok else 'failure'}"
+    result = _maneuver_effect(args, st, a, t, kind, ok, margin, maintain, held, dm)
+    for g in grapples(st):   # a check made this round counts as maintaining
+        if g["by"] == a["token"] and g["target"] == t["token"] and kind == "grapple":
+            g["round"] = st.get("round", 1)
+    if a.get("hidden"):
+        a["hidden"] = False
+        head = f"{who(a)} bursts from hiding! " + head
+    event(st, head + (f": {result}" if result else ""))
+    return "\n".join(dm + [f"Log: {head}" + (f": {result}" if result else "")])
+
+
+def _maneuver_effect(args: Args, st: State, a: Token, t: Token, kind: str, ok: bool, margin: int,
+                     maintain: dict[str, Any] | None, held: dict[str, Any] | None, dm: list[str]) -> str:
+    """Apply a maneuver's result. Returns the player-safe result text for the log."""
+    extra = max(0, margin) // 5            # every 5 points over the CMD
+    if kind == "trip":
+        if ok:
+            R.add_condition(st, t, "prone")
+            if "greater trip" in _feats(a):
+                lines, _ = provoke_aoos(st, t, reason="knocked prone (Greater Trip)")
+                dm += [l.strip() for l in lines]
+            return f"{who(t)} falls prone"
+        if margin <= -10:
+            R.add_condition(st, a, "prone")
+            return f"{who(a)} is knocked prone instead"
+        return ""
+    if kind == "grapple":
+        if maintain:
+            if not ok:
+                end_grapple(st, maintain)
+                return f"{who(t)} slips out of the grapple"
+            return _grapple_option(args, st, a, t, maintain, dm)
+        if not ok:
+            return ""
+        if feet_between(a, t) > 5:
+            spot = _free_adjacent(st, a, t, (t["x"], t["y"]))
+            if not spot:
+                dm.append("no open square next to the grappler: the grapple fails")
+                return "but there's no room to hold on"
+            t["x"], t["y"] = spot
+            dm.append(f"{t['token']} pulled to {fmt_pos(*spot)}")
+        grapples(st).append({"by": a["token"], "target": t["token"], "pinned": False})
+        R.add_condition(st, a, "grappled")
+        R.add_condition(st, t, "grappled")
+        return f"both are grappled"
+    if kind == "escape":
+        if not ok:
+            return ""
+        assert held is not None
+        end_grapple(st, held)
+        if args.reverse:
+            grapples(st).append({"by": a["token"], "target": t["token"], "pinned": False})
+            R.add_condition(st, a, "grappled")
+            R.add_condition(st, t, "grappled")
+            return f"{who(a)} breaks free and turns the hold around"
+        return f"{who(a)} breaks free"
+    if kind == "bull-rush":
+        if not ok:
+            return f"{who(a)} is stopped in front of {who(t)}"
+        d = _direction(a, t)
+        start = (a["x"], a["y"])
+        moved = _push(st, t, d, 1 + extra)
+        if args.follow and moved:
+            a["x"], a["y"] = start
+            _push(st, a, d, moved)
+        if moved < 1 + extra:
+            dm.append(f"pushed {5 * moved} of {5 * (1 + extra)} ft: something is in the way (a creature in the "
+                      f"way can be pushed too with a new check at -4)")
+        return f"{who(t)} is pushed back {5 * moved} ft" if moved else f"{who(t)} is pinned against an obstacle"
+    if kind == "drag":
+        if not ok:
+            return ""
+        d = _direction(t, a)
+        moved = 0
+        for _ in range(1 + extra):
+            old = (a["x"], a["y"])
+            if _push(st, a, d, 1) != 1:
+                break
+            if not _fits(st, t, (t["x"] + d[0], t["y"] + d[1])):
+                a["x"], a["y"] = old
+                break
+            t["x"], t["y"] = t["x"] + d[0], t["y"] + d[1]
+            moved += 1
+        a["moved"] = a.get("moved", 0) + 5 * moved
+        return f"{who(a)} drags {who(t)} {5 * moved} ft"
+    if kind == "reposition":
+        if not ok:
+            return ""
+        dest = parse_pos(args.to, st)
+        allowed = 1 + extra
+        if sq_dist((t["x"], t["y"]), dest) > allowed:
+            raise CombatError(f"{args.to} is too far: the check allows {5 * allowed} ft")
+        if not _fits(st, t, dest):
+            raise CombatError(f"{args.to} is blocked or occupied")
+        if feet_between(a, dict(t, x=dest[0], y=dest[1])) > a.get("reach", 5) + 5:
+            raise CombatError(f"{args.to} is beyond {a['token']}'s reach (+5 ft)")
+        t["x"], t["y"] = dest
+        return f"{who(t)} is moved to {fmt_pos(*dest)}"
+    if kind == "overrun":
+        if not ok:
+            return f"{who(a)} is stopped in front of {who(t)}"
+        a.setdefault("overrun_through", []).append(t["token"])
+        dm.append(f"{a['token']} may now move through {t['token']}'s space this turn (continue with `move`)")
+        if margin >= 5:
+            R.add_condition(st, t, "prone")
+            if "greater overrun" in _feats(a):
+                lines, _ = provoke_aoos(st, t, reason="knocked prone (Greater Overrun)")
+                dm += [l.strip() for l in lines]
+            return f"{who(a)} barrels through, and {who(t)} falls prone"
+        return f"{who(a)} barrels through"
+    if kind == "dirty-trick":
+        if not ok:
+            return ""
+        if "greater dirty trick" in _feats(a):
+            r, detail, _ = _roll("1d4")
+            rounds = r + extra
+            dm.append(f"Greater Dirty Trick: 1d4 → {detail} + {extra} = {rounds} rounds; removing it takes a standard action")
+        else:
+            rounds = 1 + extra
+            dm.append(f"{rounds} round(s); the target can remove it with a move action (`cond {t['token']} remove {args.condition}`)")
+        R.add_condition(st, t, args.condition, rounds=rounds)
+        return f"{who(t)} is {args.condition}"
+    their = "their" if t["side"] == "pc" else "its"
+    item = args.item or (f"{their} weapon" if kind in ("disarm", "sunder") else "an item")
+    if kind == "disarm":
+        if ok:
+            R.add_condition(st, t, "disarmed")
+            where = " (it lands 15 ft away)" if "greater disarm" in _feats(a) else ""
+            return f"{who(t)} drops {item}{where}" + (" and whatever else it holds" if margin >= 10 else "")
+        if margin <= -10:
+            R.add_condition(st, a, "disarmed")
+            return f"{who(a)} fumbles and drops {'their' if a['side'] == 'pc' else 'its'} own weapon"
+        return ""
+    if kind == "steal":
+        if ok:
+            dm.append("Greater Steal: the target doesn't notice yet" if "greater steal" in _feats(a) else "the target notices")
+            return f"{who(a)} takes {item}"
+        return ""
+    if kind == "sunder":
+        if not ok:
+            return ""
+        if args.damage is not None:
+            dmg = args.damage
+        else:
+            expr = args.dmg or next((w["damage"] for w in ((a.get("profile") or {}).get("attacks") or {}).values()
+                                     if w.get("type", "melee") == "melee"), None)
+            if not expr:
+                raise CombatError("sunder damage: pass --dmg EXPR (NPC) or --damage N (PC)")
+            dmg, detail, _ = _roll(expr)
+            dm.append(f"sunder damage {expr} → {detail} = {dmg} (subtract the item's hardness; half its hp or less = broken)")
+        return f"{item} takes {dmg} damage"
+    return ""
+
+
+def _grapple_option(args: Args, st: State, a: Token, t: Token, g: dict[str, Any], dm: list[str]) -> str:
+    """A successful maintain: hold on, and optionally pin, deal damage, move, or tie up."""
+    opt = args.option
+    if opt == "pin":
+        g["pinned"] = True
+        R.remove_condition(t, "grappled")
+        R.add_condition(st, t, "pinned")
+        R.add_condition(st, a, "pinning")
+        return f"{who(t)} is pinned"
+    if opt == "damage":
+        if args.damage is not None:
+            dmg = args.damage
+        else:
+            expr = args.dmg or next((w["damage"] for w in ((a.get("profile") or {}).get("attacks") or {}).values()
+                                     if w.get("type", "melee") == "melee"), None)
+            if not expr:
+                raise CombatError("grapple damage: pass --dmg EXPR (NPC) or --damage N (PC)")
+            dmg, detail, _ = _roll(expr)
+            dm.append(f"grapple damage {expr} → {detail} = {dmg}")
+        dealt, absorbed = apply_damage(t, dmg, args.nonlethal)
+        if absorbed:
+            dm.append(f"DR/hardness absorbs {absorbed}")
+        return f"{who(t)} takes {dealt} damage [{who(t)}: {status(t)}]"
+    if opt == "move":
+        if not args.to:
+            raise CombatError("moving a grapple needs --to SQUARE (where the grappler goes); --place SQUARE for the target")
+        dest = parse_pos(args.to, st)
+        feet = path_cost(st, dict(a, conditions=[]), dest) if (a["x"], a["y"]) != dest else 0
+        half = (a.get("speed") or 30) // 2
+        if feet > half:
+            raise CombatError(f"a grapple moves at most half speed ({half} ft); this move costs {feet} ft")
+        a["x"], a["y"] = dest
+        spot = parse_pos(args.place, st) if args.place else _free_adjacent(st, a, t, (t["x"], t["y"]))
+        if not spot or not _fits(st, t, spot) or feet_between(a, dict(t, x=spot[0], y=spot[1])) != 5:
+            raise CombatError("no open square next to the grappler for the target (pass --place SQUARE)")
+        t["x"], t["y"] = spot
+        return f"{who(a)} hauls {who(t)} along"
+    if opt == "tie":
+        dm.append("tie up: needs rope; -10 on this check unless the target was pinned, restrained or unconscious. "
+                  "Escape DC 20 + the grappler's CMB. Track it as a condition (`cond … add \"tied up\"`) and end the "
+                  "grapple with `maneuver … release`")
+        return f"{who(a)} ties up {who(t)}"
+    return f"{who(a)} keeps hold of {who(t)}"
 
 
 def resolve(st: State, ref: str) -> Token:
@@ -1746,7 +2247,25 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("endturn").add_argument("token")
     im = sub.add_parser("image"); im.add_argument("mode", nargs="?", choices=["on", "off"])
     dp = sub.add_parser("do"); dp.add_argument("cmds", nargs="+")
-    for sp in (at, m, pv, ar, sub.choices["cast"], sub.choices["sla"]):
+    mn = sub.add_parser("maneuver"); mn.add_argument("attacker"); mn.add_argument("target")
+    mn.add_argument("kind", choices=MANEUVERS)
+    mn.add_argument("--total", type=int, help="the player's check total (PC), or an Escape Artist total")
+    mn.add_argument("--nat", type=int, choices=[1, 20]); mn.add_argument("--cmb", type=int, help="NPC CMB if its profile has none")
+    mn.add_argument("--cmd", type=int, help="override the target's CMD"); mn.add_argument("--mod", type=int, help="other situational modifier")
+    mn.add_argument("--charge", action="store_true"); mn.add_argument("--grab", action="store_true", help="grab: +4, no AoO")
+    mn.add_argument("--aoo", action="store_true", help="trip/disarm/sunder made as an attack of opportunity")
+    mn.add_argument("--no-provoke", action="store_true", help="it doesn't provoke (a similar ability)")
+    mn.add_argument("--aoo-damage", type=int, help="damage the provoked AoO dealt (after asking a PC target)")
+    mn.add_argument("--option", choices=["pin", "damage", "move", "tie"], help="what a successful maintain does")
+    mn.add_argument("--to", help="reposition: target's square; grapple move: grappler's square")
+    mn.add_argument("--place", help="grapple move: the target's square next to the grappler")
+    mn.add_argument("--follow", action="store_true", help="bull rush: move along with the target")
+    mn.add_argument("--condition", help="dirty trick: " + ", ".join(DIRTY_TRICKS))
+    mn.add_argument("--item", help="disarm/steal/sunder: the item"); mn.add_argument("--dmg", help="damage dice (NPC)")
+    mn.add_argument("--damage", type=int, help="damage (PC)"); mn.add_argument("--nonlethal", action="store_true")
+    mn.add_argument("--reverse", action="store_true", help="escape: become the grappler instead")
+    mn.add_argument("--reach", type=int, help="reach of the weapon used, if longer (whip, reach weapon)")
+    for sp in (at, m, pv, ar, mn, sub.choices["cast"], sub.choices["sla"]):
         sp.add_argument("--out-of-turn", action="store_true",
                         help="the actor isn't the current one: a readied or immediate action, forced movement, setup")
     args = p.parse_args(argv)
@@ -1757,7 +2276,7 @@ def main(argv: list[str] | None = None) -> int:
                 "image": cmd_image, "attack": cmd_attack, "log": cmd_log, "events": cmd_events,
                 "ask": cmd_ask, "stabilize": cmd_stabilize, "save": cmd_save, "area": cmd_area,
                 "order": cmd_order, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
-                "provoke": cmd_provoke, "endturn": cmd_endturn}
+                "provoke": cmd_provoke, "endturn": cmd_endturn, "maneuver": cmd_maneuver}
     if args.command == "profile":
         return cmd_profile(args)
     if args.command == "do":
@@ -1785,6 +2304,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command not in ("ask", "dist", "threat", "events", "image"):
             st.pop("awaiting", None)   # any real change answers an open question
         result = handlers[args.command](args, st)
+        ended = clean_grapples(st)
+        if ended:
+            result += "\n" + "\n".join(ended)
         if args.command != "end":
             if args.command not in ("image", "dist", "threat"):
                 maybe_image(args, st)

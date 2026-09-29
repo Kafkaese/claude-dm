@@ -43,6 +43,7 @@ CONDITIONS: dict[str, dict[str, Any]] = {
     "dazzled": {"atk": -1},
     "entangled": {"atk": -2, "dex": -4},
     "grappled": {"atk": -2, "dex": -4, "no_aoo": True, "no_move": True},       # also -2 CMB except to grapple/escape (not automated)
+    "pinning": {"flatfooted": True},           # the grappler holding a pin loses its Dex bonus to AC
     "pinned": {"flatfooted": True, "ac": -4, "no_aoo": True, "no_move": True},  # replaces grappled
     "blinded": {"ac": -2, "flatfooted": True},
     "stunned": {"ac": -2, "flatfooted": True, "no_aoo": True, "no_move": True},
@@ -197,6 +198,8 @@ def _validate(v: Any, s: dict[str, Any], path: str, errs: list[str]) -> list[str
                 errs.append(f"{path}: missing required field '{k}'")
         props, pats = s.get("properties", {}), s.get("patternProperties", {})
         for k, x in v.items():
+            if "propertyNames" in s:
+                _validate(k, s["propertyNames"], f"{path}.{k} (name)", errs)
             if k in props:
                 _validate(x, props[k], f"{path}.{k}", errs)
                 continue
