@@ -136,7 +136,11 @@ body.combat #divider { display: block; }
 .initrow.current .cond { color: var(--accent-soft-ink); }
 .init-head { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto 34px; column-gap: 12px; padding: 0 10px 4px; color: var(--muted); font-size: 11.5px; }
 .init-head span:last-child { text-align: right; }
-#legend { color: var(--muted); font-size: 12px; margin-top: -8px; }
+.rollchip { display: inline-block; font: 12.5px var(--sans); color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 10px; margin: 2px 0; font-style: normal; }
+#legend { color: var(--muted); font-size: 12px; margin-top: -8px; display: flex; flex-direction: column; gap: 6px; }
+#legend .keys { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+#legend .key { display: inline-flex; align-items: center; gap: 6px; color: var(--text); }
+#legend .key svg { width: 18px; height: 18px; border-radius: 3px; box-shadow: 0 0 0 1px var(--border); flex: none; }
 #log { display: flex; flex-direction: column; gap: 4px; }
 
 .drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); display: none; }
@@ -150,6 +154,9 @@ body.drawer-open .drawer-backdrop { display: block; }
 .menu { position: absolute; top: 60px; right: 20px; width: 260px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; display: none; flex-direction: column; gap: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.12); z-index: 5; }
 .menu.open { display: flex; }
 .menu label { font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 6px; }
+.menu .check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+.menu .check input { width: 16px; height: 16px; margin: 0; }
+.menu hr { border: none; border-top: 1px solid var(--border); margin: 2px 0; width: 100%; }
 .menu select, .menu button { height: 40px; border-radius: 8px; border: 1px solid var(--field-border); background: var(--bg); color: var(--text); padding: 0 10px; font-size: 14px; }
 
 @media (max-width: 1100px) {
@@ -175,6 +182,12 @@ body.drawer-open .drawer-backdrop { display: block; }
     </button>
   </nav>
   <div class="menu" id="menu" role="dialog" aria-label="Settings">
+    <label>Campaign
+      <select id="camp-select"></select>
+    </label>
+    <label class="check"><input type="checkbox" id="camp-end" checked> End the current session first</label>
+    <button type="button" id="camp-switch" disabled>Switch campaign</button>
+    <hr>
     <label>Thinking effort
       <select id="effort"><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option></select>
     </label>
@@ -228,6 +241,8 @@ function esc(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(
 function inline(s) {
   s = esc(s);
   s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
+  // roll markers: *(Rolled: Perception)* → a small chip (the DM rolled a check the player asked for)
+  s = s.replace(/\*\(Rolled: ([^)]*(?:\([^)]*\))?[^)]*)\)\*/g, `<span class="rollchip" title="The DM rolled this check for you">🎲 $1</span>`);
   s = s.replace(/\*\*\*(.+?)\*\*\*/g, "<strong><em>$1</em></strong>");
   s = s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
   s = s.replace(/(^|[^\*\w])\*(?!\s)(.+?)(?<!\s)\*(?![\*\w])/g, "$1<em>$2</em>");
@@ -417,6 +432,17 @@ function renderMap(m) {
   document.getElementById("svgwrap").innerHTML = s;
 }
 
+// Legend: a swatch (drawn with the map's own shapes and patterns) per terrain type on the map.
+function renderLegend(m) {
+  const names = (m && m.terrain_names) || {};
+  const used = new Set(((m && m.grid) || []).join(""));
+  const keys = Object.keys(names).filter(ch => used.has(ch)).map(ch =>
+    `<span class="key"><svg viewBox="0 0 ${CELL} ${CELL}" aria-hidden="true">${terrainShape(ch, 0, 0)}</svg>${esc(names[ch])}</span>`);
+  document.getElementById("legend").innerHTML =
+    (keys.length ? `<div class="keys" aria-label="Terrain">${keys.join("")}</div>` : "") +
+    "<div>Hover for details, click a square or token to add it to your message.</div>";
+}
+
 function mapHit(evt) {
   if (!mapData) return null;
   const svg = document.querySelector("#svgwrap svg");
@@ -490,9 +516,7 @@ function setCombat(c) {
     const label = `${r.name}${r.current ? ", current turn" : ""}: ${r.status}${cond ? ", " + r.conditions.join(", ") : ""}, initiative ${fmtInit(r.init)}`;
     return `<div class="${cls}" aria-label="${esc(label)}"><span class="tok" style="background:${color(r.side)}">${esc(r.token)}</span><span class="name">${esc(r.name)}</span><span class="status">${esc(r.status)}</span><span class="init">${fmtInit(r.init)}</span>${cond}</div>`;
   }).join("");
-  document.getElementById("legend").textContent =
-    ((c.terrain && c.terrain.length) ? "Terrain: " + c.terrain.join(" · ") + ". " : "") +
-    "Hover for details, click a square or token to add it to your message.";
+  renderLegend(c.map);
   const log = document.getElementById("log");
   log.innerHTML = c.events.map(e => `<div class="logline"><span class="r">R${e.round ?? "?"}</span>${esc(e.text)}</div>`).join("");
   log.lastElementChild && log.parentElement.parentElement.scrollTo({ top: 1e9 });
@@ -547,12 +571,16 @@ function connect() {
   es.onmessage = e => handle(JSON.parse(e.data));
   es.onerror = () => { es.close(); setTimeout(connect, 1500); };
 }
+let currentCampaign = null;
+function setTitle(title) {
+  document.getElementById("title").textContent = title || "Claude DM";
+  document.title = `${title || "Claude DM"} · Claude DM`;
+}
 function handle(ev) {
   switch (ev.type) {
     case "hello":
       chat.innerHTML = ""; current = null;
-      document.getElementById("title").textContent = ev.title || "Claude DM";
-      document.title = `${ev.title || "Claude DM"} · Claude DM`;
+      setTitle(ev.title); currentCampaign = ev.campaign;
       ev.history.forEach(renderItem);
       if (!ev.history.length) add("system", "New session. Type <strong>/start-session &lt;campaign&gt;</strong> or <strong>/new-campaign</strong> to begin.");
       setBusy(ev.busy); setStatus(ev.status, ev.status_since); setCombat(ev.combat);
@@ -580,6 +608,7 @@ function handle(ev) {
       setCombat(ev);
       break;
     case "settings": setSettings(ev.effort, ev.debug); break;
+    case "campaign": setTitle(ev.title); currentCampaign = ev.campaign; break;
   }
 }
 
@@ -619,7 +648,34 @@ document.addEventListener("keydown", e => { if (e.key === "Escape") { closeDrawe
 
 const menu = document.getElementById("menu"), settingsBtn = document.getElementById("settings-btn");
 function toggleMenu(open) { menu.classList.toggle("open", open); settingsBtn.setAttribute("aria-expanded", String(open)); }
-settingsBtn.addEventListener("click", () => toggleMenu(!menu.classList.contains("open")));
+settingsBtn.addEventListener("click", () => {
+  const open = !menu.classList.contains("open");
+  toggleMenu(open);
+  if (open) loadCampaigns();
+});
+
+// ---------- campaign switching ----------
+const campSelect = document.getElementById("camp-select"), campSwitch = document.getElementById("camp-switch");
+async function loadCampaigns() {
+  const r = await fetch("/campaigns");
+  if (!r.ok) return;
+  const data = await r.json();
+  campSelect.innerHTML = data.campaigns.map(c =>
+    `<option value="${esc(c.slug)}"${c.slug === data.current ? " selected" : ""}>${esc(c.title)}</option>`).join("");
+  currentCampaign = data.current;
+  updateSwitch();
+}
+function updateSwitch() { campSwitch.disabled = busy || !campSelect.value || campSelect.value === currentCampaign; }
+campSelect.addEventListener("change", updateSwitch);
+campSwitch.addEventListener("click", async () => {
+  const target = campSelect.options[campSelect.selectedIndex].text;
+  const endFirst = document.getElementById("camp-end").checked;
+  if (!confirm(`Switch to ${target}?` + (endFirst ? " The DM wraps up the current session first (this can take a few minutes)." : " The current session is not ended."))) return;
+  toggleMenu(false);
+  const r = await fetch("/switch", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ campaign: campSelect.value, end_current: endFirst }) });
+  if (r.status === 409) add("system", "The DM is still busy. Try switching again when the reply is done.");
+});
 function setSettings(effort, debug) {
   if (effort) document.getElementById("effort").value = effort;
   document.getElementById("debug-btn").textContent = `Debug: ${debug ? "on" : "off"}`;

@@ -56,7 +56,13 @@ WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude 
     - "I try to force the door" → resolve the attempt ("The door grinds open, wide enough to pass") and STOP. Don't have them step through.
     - "I attack" → resolve the attack, then say which actions remain. Don't add a move or a line of dialogue.
   - Checks you roll secretly (Perception, Knowledge, Sense Motive, …) are invisible. Never mention them: not that you rolled, not how many, not whether they succeeded (no "All three succeed", no "Perception 21"). Narrate only what the character notices or knows. A failed check simply produces nothing, or the misleading impression.
+  - Roll markers: when you roll a check the PLAYER initiated ("I examine the hands" → Perception), put `*(Rolled: Perception)*` on its own line before the result (check name only, never the total or DC), unless session zero turns roll markers off. Secret checks never get a marker.
   - Companions and NPCs speak and act for themselves. The PC doesn't, unless the player says so.
+  - No fourth wall: NPCs never mention HP, AC, levels, checks or other game terms (the only exception is a meta character the player asked for in session zero).
+  - PLAYER KNOWLEDGE ONLY: write what the character perceived, was told or can conclude, never what you know as DM. The journal test: could the character write this sentence in their own journal?
+    - Describe NPC behavior, not their minds: "Mordent gives no sign that anything has changed", never "Mordent doesn't know that you know".
+    - Never name a lead, flaw, culprit or connection the character hasn't found, not even as an open question: "you couldn't tell whether the circle was drawn correctly", never "the ritual circle's flaw".
+    - No loaded framing that confirms a hidden truth ("whether it was anything but an accident", "the real culprit"). A failed investigation reports what was checked and what it showed, not that something was missed.
 - COMBAT:
   - The combat script knows the rules. Resolve attacks with `combat.py attack g1 C --with <attack>` (NPC, from its combat profile) or `attack C g1 --total N --damage N` (PC). Flanking, conditions, prone, cover, range, into-melee, flat-footed/touch AC and concealment are applied automatically, so never add modifiers yourself and never roll attacks separately. Timed effects: `cond … --rounds N` (they expire on their own). Areas: `area …`, saves: `save …`, dying PCs: `stabilize C --total N`. NPC spellcasting ALWAYS goes through `cast s1 "spell"` / `sla s1 "ability"` (slots, provoking, concentration), with the effect in the same command (`--area "cone 15" --toward C4 --save ref --dmg 1d4 --half`, or `--target C --save will`). The DC comes from the profile. Never resolve an NPC spell with `area` alone; a PC casting in melee: `provoke C --reason "casting a spell"`. Movement rolls NPC attacks of opportunity itself. If a combatant's stat block has no combat-profile block, add one first, following library/pf1e/combat-profile-guide.md, and run `combat.py profile check <file>`.
   - The interface shows the combat log with all the numbers, after each turn. Narrate EVERY creature's turn in its own line or lines, matching the log. Never merge turns, never skip a creature, never contradict a number.
@@ -199,6 +205,17 @@ class Engine:
         self._reset()
         self.done.set()
         self.start(resume=self.session_id)
+
+    def new_session(self) -> None:
+        """Stop the process and start a fresh conversation (no resume), e.g. for another campaign."""
+        self.stop()
+        if self.proc is not None and self.proc.poll() is None:
+            self.proc.kill()
+        self.emit(type="status", label=None)
+        self._reset()
+        self.done.set()
+        self.session_id = None
+        self.start()
 
     def set_effort(self, level: str) -> None:
         """Change the thinking effort; restarts the process and resumes the session."""
@@ -351,6 +368,14 @@ def active_campaign(explicit: str | None = None) -> str | None:
         if t > best_t:
             best, best_t = camp.name, t
     return best
+
+
+def list_campaigns() -> list[dict[str, str]]:
+    """All playable campaigns (folders with a campaign.md, not _template) as {slug, title}."""
+    root = REPO / "campaigns"
+    return [{"slug": d.name, "title": campaign_title(d.name)}
+            for d in sorted(root.iterdir())
+            if d.is_dir() and not d.name.startswith("_") and (d / "campaign.md").exists()]
 
 
 def campaign_title(camp: str | None) -> str:

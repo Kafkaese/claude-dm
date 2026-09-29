@@ -30,7 +30,7 @@ Write these yourself. They only contain what the player knows:
 1. **Player recap** (`players/recaps/session-NN.md`):
    - Write it from the characters' point of view, in the campaign's tone, in a few paragraphs.
    - Include **only what the characters experienced or learned.** No hidden rolls, no NPC motives they didn't discover, no off-screen events.
-   - End with open questions and leads, as the characters see them.
+   - End with open questions and leads, as the characters see them. Phrase them neutrally, and never name a lead, flaw or connection the characters haven't found (the journal test in "Player knowledge vs. DM knowledge", `running-the-game.md`).
    - Highlight names as in `communication.md`, so the recap works as a reference.
 2. **`players/party.md`:** loot, gold, quests, allies, enemies, and things learned.
 3. **`players/characters/*`:** the XP award, current HP, conditions, and consumables used. Add a changelog line for each. Tell the player the award and whether anyone can level up. For milestones, give the reason only if it's player-safe.

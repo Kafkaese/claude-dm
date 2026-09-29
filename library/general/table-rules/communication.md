@@ -50,7 +50,9 @@ How present the DM is as a person, as opposed to just the narration. Session zer
 Rules at every level:
 - **The voice is style only.** Praise, excitement and banter never change outcomes, never add clues or hooks, and never soften rulings (see `continuity.md`, section 3). A showman can love a plan that still fails.
 - **The voice isn't the NPCs.** NPCs always speak in their own voices at every level.
-- **Game mechanics stay clear:** rolls, DCs (when they're known), HP and turn order are never hidden for the sake of immersion. Levels 1–2 just present them as plainly as possible.
+- **Game mechanics stay clear:** rolls, DCs (when they're known), HP and turn order are never hidden for the sake of immersion. Levels 1–2 just present them as plainly as possible. Roll markers (`*(Rolled: Perception)*`, see "Rolls" in `running-the-game.md`) look the same at every level.
+- **Mechanics come from the DM, never from the world.** NPCs don't break the fourth wall: no HP, AC, levels, checks or other game terms in their mouths (details and the one exception under "Narration" in `running-the-game.md`).
+- **The voice speaks from the character's knowledge**, never the DM's: no hints, framing or asides that reveal what the DM knows ("Player knowledge vs. DM knowledge" in `running-the-game.md`).
 - **Safety and OOC talk** are always clear and human, at every level.
 
 ## Highlighting names

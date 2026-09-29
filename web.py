@@ -9,7 +9,8 @@
 
 Serves web/index.html on http://127.0.0.1:<port>. Only the DM's words reach the page;
 tool calls stay hidden. During a fight, a side panel shows the map, initiative and the
-combat log. Type :effort low|medium|high or :debug in the chat to change settings.
+combat log. Type :effort low|medium|high or :debug in the chat to change settings; switch
+campaigns from the settings menu (it can end the running session first).
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from typing import Any
 
-from dm_engine import (EFFORTS, REPO, Engine, active_campaign, campaign_title, combat_snapshot,
+from dm_engine import (EFFORTS, REPO, Engine, active_campaign, campaign_title, combat_snapshot, list_campaigns,
                        last_combat_events, last_session, load_history, map_png_path)
 
 WEB = REPO / "web"
@@ -47,6 +48,7 @@ class Hub:
         self.combat: dict[str, Any] | None = None  # last snapshot sent
         self.engine: Engine | None = None         # set by main() before the server starts
         self.worker: threading.Thread | None = None
+        self.shown_campaign: str | None = None     # the campaign the page's title shows
 
     @property
     def eng(self) -> Engine:
@@ -82,6 +84,7 @@ class Hub:
         """The first event a browser gets: title, chat history, busy state, status, settings and the fight."""
         camp = self.campaign()
         with self.lock:
+            self.shown_campaign = camp
             return {"type": "hello", "title": campaign_title(camp), "campaign": camp,
                     "session": self.engine.session_id if self.engine else None,
                     "history": list(self.history), "busy": bool(self.engine and self.engine.busy),
@@ -118,6 +121,16 @@ class Hub:
                 self.turn_dm = None
                 if not ev["solicited"]:   # player turns refresh in _run_turn
                     self.refresh_combat()
+                    self.refresh_campaign()
+
+    def refresh_campaign(self) -> None:
+        """Tell the browsers when the campaign in play changed (e.g. after /start-session or /new-campaign)."""
+        camp = self.campaign()
+        with self.lock:
+            if camp == self.shown_campaign:
+                return
+            self.shown_campaign = camp
+            self.publish({"type": "campaign", "campaign": camp, "title": campaign_title(camp)})
 
     def refresh_combat(self) -> None:
         """Send the current fight to the browsers, or a 'fight is over' card when it just ended."""
@@ -147,8 +160,9 @@ class Hub:
         if text.startswith(":"):
             return self.command(text)
         with self.lock:
-            if self.eng.busy or (self.worker and self.worker.is_alive()):
+            if self.busy():
                 return 409, "The DM is still busy."
+            self.follow_command(text)
             self.history.append({"role": "player", "text": text})
             self.turn_dm = None
             self.publish({"type": "player", "text": text})
@@ -157,16 +171,66 @@ class Hub:
             self.worker.start()
         return 202, "ok"
 
+    def busy(self) -> bool:
+        """Whether a turn (or a campaign switch) is running."""
+        return self.eng.busy or bool(self.worker and self.worker.is_alive())
+
+    def follow_command(self, text: str) -> None:
+        """Point the page at the campaign a typed /start-session or /new-campaign is about."""
+        parts = text.split()
+        if parts[0] == "/start-session" and len(parts) > 1 and (REPO / "campaigns" / parts[1]).is_dir():
+            self.campaign_arg = parts[1]
+        elif parts[0] == "/new-campaign":
+            self.campaign_arg = None   # the new one will be the most recently touched
+
     def _run_turn(self, text: str) -> None:
         """Worker thread: send the message to the engine and wait for the reply."""
+        self._exchange(text)
+        self.refresh_combat()
+        self.refresh_campaign()
+        self.publish({"type": "busy", "busy": False})
+
+    def _exchange(self, text: str) -> None:
+        """Send one message and wait for the reply; restart (resuming) if the process died."""
         ok = self.eng.send(text)
         if not ok:
             self.system("The DM process stopped. Restarting and resuming the session…")
             self.eng.restart()
         with self.lock:
             self.turn_dm = None
-        self.refresh_combat()
-        self.publish({"type": "busy", "busy": False})
+
+    def switch(self, slug: str, end_current: bool) -> tuple[int, str]:
+        """Switch to another campaign: optionally end the running session, then start a fresh
+        conversation and run /start-session for the new campaign. Returns (HTTP status, message)."""
+        if not any(c["slug"] == slug for c in list_campaigns()):
+            return 404, "No such campaign."
+        with self.lock:
+            if self.busy():
+                return 409, "The DM is still busy."
+            self.publish({"type": "busy", "busy": True})
+            self.worker = threading.Thread(target=self._run_switch, args=(slug, end_current), daemon=True)
+            self.worker.start()
+        return 202, "ok"
+
+    def _run_switch(self, slug: str, end_current: bool) -> None:
+        """Worker thread for switch()."""
+        old = self.campaign()
+        if end_current and old and self.history:
+            self.system(f"Ending the session of {campaign_title(old)} before switching…")
+            self._exchange(f"[The player is switching to another campaign. If a session of {old} is in progress "
+                           f"in this conversation, run /end-session for it now. If not, reply only: "
+                           f"\"No session in progress.\"]")
+        self.eng.new_session()
+        with self.lock:
+            self.campaign_arg = slug
+            self.history, self.turn_dm = [], None
+            self.combat = combat_snapshot(slug) or {"active": False}
+            self.publish(self.hello())
+            text = f"/start-session {slug}"
+            self.history.append({"role": "player", "text": text})
+            self.publish({"type": "player", "text": text})
+            self.publish({"type": "busy", "busy": True})
+        self._run_turn(text)
 
     def system(self, text: str) -> None:
         """Add a system note (not from the DM) to the chat."""
@@ -243,6 +307,8 @@ def make_handler(hub: Hub) -> type[BaseHTTPRequestHandler]:
                 if png and png.exists():
                     return self._send(200, png.read_bytes(), "image/png")
                 return self._send(404, "{}")
+            if url.path == "/campaigns":
+                return self._send(200, json.dumps({"current": hub.campaign(), "campaigns": list_campaigns()}))
             if url.path == "/doc":
                 name = parse_qs(url.query).get("name", [""])[0]
                 doc = player_doc(hub.campaign(), name)
@@ -250,15 +316,19 @@ def make_handler(hub: Hub) -> type[BaseHTTPRequestHandler]:
             return self._send(404, "{}")
 
         def do_POST(self) -> None:
-            """Accept a player message at /send."""
-            if urlparse(self.path).path != "/send":
+            """Accept a player message at /send, or a campaign switch at /switch."""
+            path = urlparse(self.path).path
+            if path not in ("/send", "/switch"):
                 return self._send(404, "{}")
             length = int(self.headers.get("Content-Length") or 0)
             try:
-                text = json.loads(self.rfile.read(length) or b"{}").get("text", "")
+                body = json.loads(self.rfile.read(length) or b"{}")
             except ValueError:
                 return self._send(400, json.dumps({"error": "bad json"}))
-            code, msg = hub.send(text)
+            if path == "/switch":
+                code, msg = hub.switch(str(body.get("campaign", "")), bool(body.get("end_current", True)))
+            else:
+                code, msg = hub.send(body.get("text", ""))
             return self._send(code, json.dumps({"message": msg}))
 
         def _events(self) -> None:

@@ -94,7 +94,7 @@ python3 scripts/combat.py -c <camp> do "move g1 D4" "hp C -6" "next" "show"   # 
 
 **resolve** (a PC action against hidden numbers: an attack, a maneuver, a spell with a save, a skill check against a secret DC). The caller gives what the player declared and rolled. Compare it against the hidden values, roll the enemy's saves and damage reductions, update state, and report the outcome. In combat, report which actions the PC **still has** this turn (standard, move, swift, 5-foot step). Don't run `enemy-turns` or `next` unless the caller says the player ended their turn. Flag **"How do you want to do this?"** when a unique, powerful or boss enemy drops to 0 HP or below from the PC's action.
 
-**secret-checks.** Roll the requested checks for the PCs (modifiers from `players/characters/`, including situational ones) against the hidden DCs or opposed rolls. Report only what each character notices. A failure reports nothing noticed, or the misleading result a failure produces.
+**secret-checks.** Roll the requested checks for the PCs (modifiers from `players/characters/`, including situational ones) against the hidden DCs or opposed rolls. Report only what each character notices. A failure reports nothing noticed, or the misleading result a failure produces. The caller says which checks the player initiated ("I examine the hands"); list those as `ROLLED: <check>` in PLAYER-SAFE if roll markers are on in session zero. Reactive and system-secret checks never appear.
 
 **world-turn.** Run the procedure in `living-world.md` for the transition the caller describes (class, from and to, time passed), including the cooldown and the session budget. Update `dm/world.md`, `dm/state.md` and the log header.
 
@@ -122,4 +122,4 @@ DM ONLY
 <Everything else: hidden rolls, enemy stats, remaining HP, secrets, what the enemy
  intends, mercy used, and narration hints, e.g. "Brask is frustrated, show it".>
 ```
-Never put in PLAYER-SAFE: enemy AC, attack bonuses, save bonuses, DCs of secret checks, exact enemy HP, hidden tokens, or anything the characters didn't perceive.
+Never put in PLAYER-SAFE: enemy AC, attack bonuses, save bonuses, DCs of secret checks, exact enemy HP, hidden tokens, or anything the characters didn't perceive. Phrase it as what the character perceives or knows (the journal test in "Player knowledge vs. DM knowledge", `running-the-game.md`): behavior rather than NPC thoughts, no loaded framing, no naming of leads the characters haven't found. For a check the player initiated, add `ROLLED: <check name>` (no total) so the narrator can show the roll marker; secret checks get no such line.

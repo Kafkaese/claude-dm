@@ -58,6 +58,7 @@ See `library/general/table-rules/communication.md`. These can be changed any tim
 - **In-character direct speech:** "double quotes"
 - **Instructions to the system:** [square brackets]
 - **End of combat turn:** "end turn"
+- **Roll markers:** on (a line like *(Rolled: Perception)* when the DM rolls a check you asked for; never for secret checks) / off
 - **Name highlighting:** on (people **bold**, places ***bold italic***, spells and items *italic*) / off
 - **DM voice:** invisible / narrator / table DM / showman
 - **Combat display:** map when positions change, tracker every PC turn; enemy health shown as words; image view: off / on (live PNG in a VS Code tab)
