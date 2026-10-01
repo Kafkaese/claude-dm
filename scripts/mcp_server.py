@@ -277,6 +277,11 @@ TOOLS: list[Tool] = [
          {"what": S("what", ["show", "show_dm", "events", "sight", "spells", "dist", "threat", "light_map", "actions"]),
           "token": S(TOK), "other": S("dist: second token or square"), "all": B("events: all lines")},
          ["what"], _info),
+    Tool("combat_options", "A creature's tactical options (DM only): reachable squares that threaten each target with the d20 roll "
+         "needed (flanking, cover, light included), what provokes, charge lanes, ranged positions, retreat squares; with area, "
+         "the best placements of an area effect (most enemies, no allies).",
+         {"token": S(TOK), "area": S('e.g. "burst 20", "cone 15", "line 60"'), "range": I("burst range in ft"), "target": S("only this target")},
+         ["token"], lambda a: ["options", a["token"]] + flags(a, {"area": "--area", "range": "--range", "target": "--target"})),
     Tool("combat_log", "Add a free-text line to the player-visible combat log.", {"text": S("the line")}, ["text"],
          lambda a: ["log", a["text"]]),
     Tool("combat_end", "End the encounter: XP summary, PC HP back to the sheets, combat log into the session log, archive.",

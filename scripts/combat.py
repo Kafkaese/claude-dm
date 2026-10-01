@@ -25,6 +25,10 @@ Every action reports what's left. --override: a feat or ability changes it (Spri
                                   prone and provokes; an immediate action off-turn takes the next swift
   move TOKEN POS --as charge|withdraw|run   movement as part of that full-round action
   actions TOKEN                   what the creature has left this turn
+  options TOKEN [--target T] [--area "burst 20" --range 100]
+                                  tactical options (DM only): squares that threaten each target and the d20
+                                  roll needed there, what provokes, charge lanes, ranged spots, retreat
+                                  squares, the best area placements
   surprise on|off                 the surprise round: one standard or move action each
 Prepared encounters (dm/combat/encounters/<name>.md, a ```encounter block; library/general/encounter.schema.json)
   encounter list | check [NAME …] list them, or validate (map, profiles, squares, lights) without creating anything
@@ -1895,6 +1899,251 @@ def spend_moves(st: State, c: Token, n: int, what: str) -> None:
         raise
 
 
+# ---------- tactical options ----------
+# `options g1`: the geometry of a creature's turn, so the DM decides tactics without counting
+# squares: where it can reach, where it threatens and flanks its targets, what it needs on the
+# d20 from there (the same modifiers attack_mods applies), what provokes, charge lanes, ranged
+# positions, area placements and retreat squares. DM only.
+
+@contextlib.contextmanager
+def _placed(c: Token, sq: Square) -> Any:
+    """Temporarily put a token on another square (all the rules code then sees it there)."""
+    old = (c["x"], c["y"])
+    c["x"], c["y"] = sq
+    try:
+        yield c
+    finally:
+        c["x"], c["y"] = old
+
+
+def reach_map(st: State, c: Token, max_feet: int) -> dict[Square, int]:
+    """Every square the token can end its movement on within max_feet, with the cost in feet."""
+    import heapq
+    start = (c["x"], c["y"])
+
+    def fits(x: int, y: int, final: bool) -> bool:
+        for cx, cy in cells(c, (x, y)):
+            if cost(st, cx, cy) is None or blocked_by_hostile(st, c, cx, cy):
+                return False
+            if final and occupied(st, c, cx, cy):
+                return False
+        return True
+
+    best = {(start, 0): 0}
+    out = {start: 0}
+    heap = [(0, start, 0)]
+    while heap:
+        feet, (x, y), parity = heapq.heappop(heap)
+        if feet > best.get(((x, y), parity), 10 ** 9):
+            continue
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if dx == dy == 0:
+                    continue
+                nx, ny = x + dx, y + dy
+                if not fits(nx, ny, False):
+                    continue
+                diag = dx != 0 and dy != 0
+                if diag and (not fits(x + dx, y, False) or not fits(x, y + dy, False)):
+                    continue
+                mult = max(cost(st, cx, cy) or 1 for cx, cy in cells(c, (nx, ny)))
+                squares, npar = ((3 if mult > 1 else (1 if parity == 0 else 2)), 1 - parity) if diag else (mult, parity)
+                nf = feet + 5 * squares
+                if nf > max_feet or nf >= best.get(((nx, ny), npar), 10 ** 9):
+                    continue
+                best[((nx, ny), npar)] = nf
+                heapq.heappush(heap, (nf, (nx, ny), npar))
+                if fits(nx, ny, True):
+                    out[(nx, ny)] = min(out.get((nx, ny), 10 ** 9), nf)
+    return out
+
+
+def _foes(st: State, c: Token) -> list[Token]:
+    """Active creatures on the other side, nearest first."""
+    return sorted(V.enemies(st, c), key=lambda o: feet_between(c, o))
+
+
+def _threatened_by(st: State, c: Token) -> list[str]:
+    """Enemies that threaten the token where it stands and could make an AoO."""
+    return [o["token"] for o in _foes(st, c) if threatens(o, c) and not aoo_blocked(o)
+            and V.concealment(st, o, c)[0] < 50]
+
+
+def _needs(st: State, a: Token, t: Token, w: dict[str, Any], kind: str, charge: bool = False) -> tuple[int, int, list[str]]:
+    """(d20 roll needed to hit, miss chance %, notes) for one attack from where `a` stands."""
+    delta, ac, notes, _dm, miss = attack_mods(st, a, t, kind, bool(w.get("touch")), charge, w)
+    b = w["bonus"][0] if isinstance(w.get("bonus"), list) else (w.get("bonus") or 0)
+    return max(2, min(20, ac - (b + delta))), miss, notes
+
+
+def _straight_clear(st: State, c: Token, dest: Square) -> bool:
+    """A charge lane: every square between here and dest passable, not difficult, and empty."""
+    with _placed(c, dest):
+        p2 = R.center(c)
+        dest_cells = set(cells(c))
+    with _placed(c, (c["x"], c["y"])):
+        p1 = R.center(c)
+        own = set(cells(c))
+    for cell in set(R.segment_cells(p1, p2, 0.1)) | dest_cells:
+        if cell in own:
+            continue
+        if (cost(st, *cell) or 99) != 1:
+            return False
+        if any(o is not c and not o.get("removed") and o["hp"] > 0 and cell in cells(o) for o in st["tokens"]):
+            return False
+    return True
+
+
+def tactical_options(st: State, c: Token, area: str | None = None, area_range: int | None = None,
+                     only: str | None = None, per_target: int = 3) -> str:
+    """The options report (see the section comment)."""
+    prof = c.get("profile") or {}
+    speed = c.get("speed") or 30
+    start = (c["x"], c["y"])
+    one = reach_map(st, c, speed)
+    two = reach_map(st, c, 2 * speed)
+    here_threat = _threatened_by(st, c)
+    out = [f"Options for {c['token']} ({c['name']}) at {fmt_pos(*start)}: speed {speed} ft "
+           f"({len(one)} squares in one move, {len(two)} in a double move), reach {c.get('reach', 5)} ft. "
+           + (f"Threatened here by {', '.join(here_threat)}: moving away provokes (a 5-foot step doesn't)."
+              if here_threat else "Not threatened here.")]
+    attacks = prof.get("attacks") or {}
+    melee = [(n, w) for n, w in attacks.items() if w.get("type", "melee") == "melee"]
+    ranged = [(n, w) for n, w in attacks.items() if w.get("type") == "ranged"]
+    full = prof.get("full_attack") or [n for n, w in melee if isinstance(w.get("bonus"), list)]
+    foes = [o for o in _foes(st, c) if not only or o["token"] == only][:3]
+    for t in foes:
+        unseen = V.concealment(st, c, t)[0] >= 50
+        line = f"vs {t['token']} ({t['name']}, {feet_between(c, t)} ft away, AC {t.get('ac')}, {t['hp']}/{t['max_hp']} HP)"
+        out.append(line + (": it can't see it from here (50% miss chance, has to guess the square)" if unseen else ":"))
+        if melee:
+            name, w = melee[0]
+            rows = []
+            for sq, feet in one.items():
+                with _placed(c, sq):
+                    if not threatens(c, t):
+                        continue
+                    need, miss, notes = _needs(st, c, t, w, "melee")
+                    others = [o for o in _threatened_by(st, c) if o != t["token"]]
+                    flank = flanking(st, c, t)
+                step = sq == start or (feet == 5 and R.sq_dist(start, sq) == 1)
+                provokes = [] if step else here_threat
+                act = (("full attack" if full else "attack") + (" after a 5-foot step" if sq != start else " from where it stands")
+                       if step else f"attack after moving {feet} ft")
+                score = need + (0 if step and full else 3) + 4 * len(provokes) + 2 * len(others) + feet / 30
+                rows.append((score, f"    {name} from {fmt_pos(*sq)}: {act}, hits on {need}+"
+                                    + (f", {miss}% miss" if miss else "") + (" [flanking]" if flank else "")
+                                    + (f"; provokes from {', '.join(provokes)}" if provokes else "")
+                                    + (f"; also threatened there by {', '.join(others)}" if others else "")))
+            rows.sort()
+            out += [r for _, r in rows[:per_target]] or [f"    {name}: can't reach a square threatening it this turn (double move: "
+                                                         f"{'yes' if any(_reach_threat(st, c, t, sq) for sq in two) else 'no'})"]
+            lanes = []
+            for sq, feet in two.items():
+                d = 5 * R.sq_dist(start, sq)
+                if d < 10:
+                    continue
+                with _placed(c, sq):
+                    if not threatens(c, t):
+                        continue
+                if not _straight_clear(st, c, sq):
+                    continue
+                with _placed(c, sq):
+                    need, miss, _ = _needs(st, c, t, w, "melee", charge=True)
+                lanes.append((need, d, sq, miss))
+            if lanes:
+                need, d, sq, miss = min(lanes)
+                out.append(f"    charge: to {fmt_pos(*sq)} ({d} ft, straight and clear), hits on {need}+ (incl. +2)"
+                           + (f", {miss}% miss" if miss else "") + "; −2 AC until its next turn; full-round"
+                           + (f"; provokes from {', '.join(here_threat)}" if here_threat else ""))
+        for name, w in ranged:
+            rrows = []
+            for sq, feet in one.items():
+                with _placed(c, sq):
+                    need, miss, notes = _needs(st, c, t, w, "ranged")
+                    threat = _threatened_by(st, c)
+                provokes = sorted(set(threat + ([] if sq == start or (feet == 5) else here_threat)))
+                score = need + miss / 10 + 5 * len(provokes) + feet / 30
+                where = "from here" if sq == start else f"from {fmt_pos(*sq)} ({feet} ft)"
+                rrows.append((score, sq == start, f"    {name} {where}: hits on {need}+" + (f", {miss}% miss" if miss else "")
+                             + (f" ({', '.join(n for n in notes if not n.startswith('target'))})" if notes else "")
+                             + (f"; provokes from {', '.join(provokes)}" if provokes else "")))
+            rrows.sort()
+            here = next((r for r in rrows if r[1]), None)
+            best = [r for r in rrows if not r[1]][:2]
+            out += [r[2] for r in ([here] if here else []) + [b for b in best if not here or b[0] < here[0]]]
+    if area:
+        out.append(_area_options(st, c, area, area_range))
+    safe = []
+    for sq, feet in one.items():
+        if sq == start:
+            continue
+        with _placed(c, sq):
+            if any(threatens(o, c) for o in _foes(st, c)):
+                continue
+            hidden = all(V.hidden_from(st, c, o) for o in _foes(st, c))
+            unseen = all(V.concealment(st, o, c)[0] >= 50 for o in _foes(st, c))
+            covered = all(R.cover(st, o, c) for o in _foes(st, c))
+        if hidden or covered:
+            safe.append((0 if unseen else 1 if covered else 2, feet, fmt_pos(*sq),
+                         "unseen" if unseen else "cover" if covered else "concealed"))
+    safe.sort()
+    if safe:
+        out.append("Out of reach and hidden or in cover (one move): "
+                   + ", ".join(f"{p} ({how}, {f} ft)" for _, f, p, how in safe[:5])
+                   + (f"; leaving provokes from {', '.join(here_threat)}" if here_threat else ""))
+    return "\n".join(out)
+
+
+def _reach_threat(st: State, c: Token, t: Token, sq: Square) -> bool:
+    with _placed(c, sq):
+        return threatens(c, t)
+
+
+def _area_options(st: State, c: Token, area: str, area_range: int | None) -> str:
+    """The best placements of an area effect: most enemies, fewest allies."""
+    m = re.match(r"^\s*(burst|cone|line)\s+(\d+)\s*$", area)
+    if not m:
+        raise CombatError('--area must look like "burst 20", "cone 15" or "line 60"')
+    shape, size = m.group(1), int(m.group(2))
+    friendly = c["side"] in FRIENDLY
+    seen: set[frozenset[Square]] = set()
+    rows = []
+    for y in range(st["h"]):
+        for x in range(st["w"]):
+            if R.blocks_line(st, x, y):
+                continue
+            if shape == "burst":
+                if area_range is not None and 5 * min(R.sq_dist(cc, (x, y)) for cc in cells(c)) > area_range:
+                    continue
+                sq_cells = R.area_cells(st, "burst", size, origin=(x, y))
+                opt = f'--area "burst {size}" --at {fmt_pos(x, y)}'
+            else:
+                if (x, y) in cells(c):
+                    continue
+                sq_cells = R.area_cells(st, shape, size, frm=c, toward=(x, y))
+                opt = f'--area "{shape} {size}" --toward {fmt_pos(x, y)}'
+            key = frozenset(sq_cells)
+            if key in seen:
+                continue
+            seen.add(key)
+            hit = [o for o in R.tokens_in(st, sq_cells) if not o.get("removed") and o["hp"] > 0 and o is not c]
+            foes = [o["token"] for o in hit if (o["side"] in FRIENDLY) != friendly]
+            allies = [o["token"] for o in hit if (o["side"] in FRIENDLY) == friendly]
+            if foes:
+                rows.append((-len(foes), len(allies), opt, foes, allies))
+    rows.sort(key=lambda r: (r[1] > 0, r[0], r[1]))
+    if not rows:
+        return f"Area {shape} {size}: no placement reaches an enemy" + (f" within {area_range} ft" if area_range else "")
+    return f"Area {shape} {size}:\n" + "\n".join(
+        f"    {opt}: hits {', '.join(f)}" + (f" — and allies {', '.join(a)}!" if a else "") for _, _, opt, f, a in rows[:3])
+
+
+def cmd_options(args: Args, st: State) -> str:
+    """The tactical options report for a creature (DM only)."""
+    return tactical_options(st, token(st, args.token), args.area, args.range, args.target)
+
+
 # ---------- combat maneuvers ----------
 # Rules: library/pf1e/rules/combat-maneuvers.md (Core Rulebook pg. 198-201, APG). d20 + CMB vs CMD;
 # a tie succeeds, a natural 20 always succeeds and a natural 1 always fails.
@@ -3146,6 +3395,9 @@ def main(argv: list[str] | None = None) -> int:
     ac_.add_argument("--override", action="store_true", help="don't charge it (a feat or ability)")
     sub.add_parser("surprise").add_argument("mode", choices=["on", "off"])
     sub.add_parser("actions").add_argument("token")
+    op = sub.add_parser("options"); op.add_argument("token")
+    op.add_argument("--area", help='also place an area effect, e.g. "burst 20", "cone 15"'); op.add_argument("--range", type=int, help="burst range in ft")
+    op.add_argument("--target", help="only this target")
     m.add_argument("--as", dest="as_", choices=["charge", "withdraw", "run"], help="movement as part of a full-round charge, withdraw or run")
     for nm in ("cast", "sla"):
         sub.choices[nm].add_argument("--time", choices=["standard", "full", "round", "swift", "immediate"],
@@ -3165,7 +3417,7 @@ def main(argv: list[str] | None = None) -> int:
                 "order": cmd_order, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
                 "provoke": cmd_provoke, "endturn": cmd_endturn, "maneuver": cmd_maneuver,
                 "light": cmd_light, "sight": cmd_sight, "act": cmd_act, "surprise": cmd_surprise,
-                "actions": lambda a, st: action_status(st, token(st, a.token)).strip()}
+                "actions": lambda a, st: action_status(st, token(st, a.token)).strip(), "options": cmd_options}
     if args.command == "profile":
         return cmd_profile(args)
     if args.command == "do":
@@ -3194,7 +3446,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "show":
             print(render(st, dm=args.dm))
             return 0
-        if args.command not in ("ask", "dist", "threat", "events", "image", "sight", "actions"):
+        if args.command not in ("ask", "dist", "threat", "events", "image", "sight", "actions", "options"):
             st.pop("awaiting", None)   # any real change answers an open question
         actor_tok = getattr(args, ACTOR_ARG.get(args.command, "") or "_", None)
         actor = next((t for t in st["tokens"] if t["token"] == actor_tok), None)

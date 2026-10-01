@@ -68,7 +68,7 @@ WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude 
   - The script does all the rule math (modifiers, AoOs, maneuvers, light and vision, durations, dying). Never compute modifiers, count squares or roll attacks yourself. NPCs: combat_attack with `with` (a profile attack); PCs: the player's rolls (combat_attack with `total` and `damage`).
   - Every NPC spell or SLA goes through combat_cast (sla=true for SLAs), with its effect in the same call. Effects beyond damage, after a failed save: combat_condition with rounds.
   - Setup: a prepared encounter (combat_encounters action=list) is ONE combat_setup call once the player's initiative is in. Otherwise: every combatant needs a valid combat profile (add one from the stat block first; a PC's sheet must pass the PC schema, so ask the player for missing values). Decide the lighting as part of the encounter. PC tokens use the first letter of the name (Corin → C). After setup, stop.
-  - THE INTERFACE RUNS THE TURN ORDER. Never run `next` (it's refused). A bracketed "[Combat step …]" message names ONE actor and what it can see: resolve exactly that actor in ONE combat_batch call, narrate only that actor, and stop. Play it by its nature and what it sees. A hidden actor's step: reply "…" unless it gets revealed.
+  - THE INTERFACE RUNS THE TURN ORDER. Never run `next` (it's refused). A bracketed "[Combat step …]" message names ONE actor, what it can see, and its tactical options (squares, the roll it needs there, what provokes; combat_options with area for area effects): resolve exactly that actor in ONE combat_batch call, narrate only that actor, and stop. Play it by its nature and what it sees. A hidden actor's step: reply "…" unless it gets revealed.
   - Every action is charged to the actor's turn, and the tool results say what's left; actions without their own tool (draw a weapon, stand up, drink a potion) are combat_act. On the PC's turn, resolve what the player declares and say which actions remain, from that report. If the player ends the turn in other words or together with their actions, call combat_endturn.
   - When a tool result sets a question (an AoO, a save, a stabilization check) or the player must decide something mid-round, ask them (combat_ask for your own questions). A dying PC rolls their own stabilization checks; never play the fight forward without the player.
   - The interface shows the map, initiative and combat log with all the numbers. Narrate EVERY creature's turn in its own line or lines, matching the log. Never merge turns, skip a creature, or contradict a number.
@@ -774,6 +774,10 @@ def _step_context(st: dict[str, Any], c: dict[str, Any]) -> str:
         hp = f"{o['hp']}/{o['max_hp']} HP"
         pos.append(f"{o['token']} {o['name']} ({o['side']}{', hidden' if o.get('hidden') else ''}) at "
                    f"{cm.fmt_pos(o['x'], o['y'])}, {d} ft away, {hp}" + (f", {', '.join(cm.R.labels(o, st))}" if cm.R.conditions(o) else ""))
+    try:   # the geometry of its turn: reach, flanking, what it needs to hit, charge lanes, cover
+        lines.append("Tactical options (computed; pick by its nature and knowledge):\n" + cm.tactical_options(st, c))
+    except Exception as e:   # never block a step on the helper
+        lines.append(f"(tactical options unavailable: {e})")
     lines.append(f"{c['token']} is at {cm.fmt_pos(c['x'], c['y'])} ({c['hp']}/{c['max_hp']} HP"
                  + (f", {', '.join(cm.R.labels(c, st))}" if cm.R.conditions(c) else "") + "). Others: " + "; ".join(pos))
     return "\n".join(lines)
