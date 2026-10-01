@@ -6,7 +6,7 @@
   "required": ["kind", "init", "hp", "ac", "touch", "ff", "saves"],
   "additionalProperties": false,
   "properties": {
-    "kind": {"enum": ["creature", "pc"], "description": "creature: NPCs and monsters (the DM rolls their attacks). pc: player characters (the player rolls; only defensive numbers needed)."},
+    "kind": {"enum": ["creature"], "description": "Always 'creature' here: NPCs, monsters and DM-run allies (the DM rolls their attacks). Player characters use combat-profile-pc.schema.json."},
     "init": {"type": "integer", "description": "Init modifier."},
     "hp": {"type": "integer", "minimum": 1, "description": "Hit points as listed (a PC's current HP lives on the sheet's HP line)."},
     "max_hp": {"type": "integer", "minimum": 1},

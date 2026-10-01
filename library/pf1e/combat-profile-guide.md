@@ -88,7 +88,16 @@ Each spellcasting class or source becomes one entry in `spellcasting`:
 Where the stat block lists the spell's level, put it in `level`, because the concentration DC depends on it.
 
 ## Player characters
-`"kind": "pc"` needs only the defensive numbers (`init`, `hp`, `ac`, `touch`, `ff`, `saves`, and ideally `con`, `dex`, `cmd`, `uncanny_dodge`, `feats`), because the player rolls their own attacks and tracks their own spells. The PC's current HP lives on the sheet's HP line.
+**Player characters** use their own schema, `combat-profile-pc.schema.json`, in the character sheet's block (template: `library/pf1e/character-sheet.md`). It requires only what the script uses for a PC:
+- `init` (the modifier: the player rolls initiative, the script breaks ties with it)
+- `max_hp` (current HP stays on the sheet's HP line)
+- `ac`, `touch`, `ff` and `cmd` (what enemies roll against)
+- `str`, `dex` and `con` (conditions, and death at −Con)
+- `speed` and `size`
+- `senses` (`{}` = normal vision) and `perception`
+- `feats` (Combat Reflexes, Blind-Fight, Precise Shot, Improved maneuvers; `[]` if none)
+
+Optional: `max_dex`, `reach`, `uncanny_dodge`, `cmd_vs`, DR, resistances and immunities. Attacks, spells, saves and CMB aren't needed, because the player rolls them. `combat.py add` refuses a PC without a passing block. The DM fills it from the sheet and asks the player for anything missing.
 
 ## A complete example
 ```combat-profile

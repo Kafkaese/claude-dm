@@ -25,6 +25,8 @@ Session number: `NN` = "Sessions played" in `campaign.md` + 1, zero-padded to tw
 - **Description:** "Prepare the DM brief"
 - **Prompt:** "campaign `<slug>`, session NN: `brief`. Create `dm/session-log/session-NN.md` from `.claude/skills/start-session/session-log-template.md` if it doesn't exist, and set `campaign.md` status to `active`."
 
+**Check the character sheets for combat:** run `python3 scripts/combat.py -c <slug> profile check players/characters/*.md`. Every PC's `combat-profile` block must pass `library/<system>/combat-profile-pc.schema.json`, or they can't be added to a fight. Fill in what the sheet already shows yourself. Collect whatever is still missing and ask the player for it in Step 3 (e.g. "For combat I still need your Strength score, Perception modifier and any special senses"). Then update the block.
+
 Run `python3 scripts/world.py -c <slug> session` to reset the session's interruption count (and `day "<in-game date>"` if the date changed).
 
 Keep the brief in mind for the whole session. It replaces reading the DM files.
@@ -32,7 +34,8 @@ Keep the brief in mind for the whole session. It replaces reading the DM files.
 ## Step 3: Out-of-character check-in
 Keep this short, in one message:
 - **"Session NN of <campaign>."**
-- **Character changes:** ask whether anything changed since last time, e.g. a level-up, new gear or an HP change. If so, update the sheet, or run the `/add-character` update flow for bigger changes.
+- **Character changes:** ask whether anything changed since last time, e.g. a level-up, new gear or an HP change. If so, update the sheet and its combat-profile block, or run the `/add-character` update flow for bigger changes.
+- **Missing combat values:** if the sheet check in Step 2 found gaps, ask for exactly those values here.
 - **Safety reminder:** for session 1, show the table of in-chat signals from `safety-tools.md`. After that, fold it into the one-line reminder below.
 - **Session 1 only:** introduce the table conventions from `players/session-zero.md` in a short table (player text, "speech", [system], "end turn" in combat). Explain who has the last word, mention that they can be changed any time, and confirm how the player rolls dice.
 - **Later sessions:** add the conventions to the one-line reminder, e.g. *"(Reminder: "quotes" = speech, [brackets] = talk to the system; X, pause, rewind, fade, check work any time.)"*

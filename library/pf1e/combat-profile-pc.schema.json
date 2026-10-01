@@ -1,0 +1,304 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PF1e combat profile: player character",
+  "description": "The ```combat-profile block in a PC's character sheet (players/characters/<slug>.md), read by scripts/combat.py. Only what the script needs for a PC is required: the defenses enemies roll against, the numbers conditions and vision change, and the HP. The player rolls their own attacks, saves, spells and checks, so those aren't needed. The creature schema (combat-profile.schema.json) has the full field descriptions. Check with: python3 scripts/combat.py -c <campaign> profile check <sheet>.",
+  "type": "object",
+  "required": [
+    "kind",
+    "init",
+    "max_hp",
+    "ac",
+    "touch",
+    "ff",
+    "cmd",
+    "str",
+    "dex",
+    "con",
+    "speed",
+    "size",
+    "senses",
+    "perception",
+    "feats"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "enum": [
+        "pc"
+      ],
+      "description": "Always 'pc' (NPCs and monsters use combat-profile.schema.json)."
+    },
+    "init": {
+      "type": "integer",
+      "description": "Initiative modifier. The player rolls initiative; the script uses the modifier to break ties."
+    },
+    "max_hp": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Maximum hit points. Current HP comes from the sheet's '**HP:** current / max' line."
+    },
+    "hp": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Optional: current HP, only if the sheet has no HP line."
+    },
+    "ac": {
+      "type": "integer",
+      "description": "Armor Class (enemy attacks roll against it)."
+    },
+    "touch": {
+      "type": "integer",
+      "description": "Touch AC."
+    },
+    "ff": {
+      "type": "integer",
+      "description": "Flat-footed AC."
+    },
+    "cmd": {
+      "type": "integer",
+      "description": "Combat Maneuver Defense (enemy trips, grapples, bull rushes)."
+    },
+    "cmd_vs": {
+      "type": "object",
+      "propertyNames": {
+        "enum": [
+          "bull-rush",
+          "dirty-trick",
+          "disarm",
+          "drag",
+          "grapple",
+          "overrun",
+          "reposition",
+          "steal",
+          "sunder",
+          "trip"
+        ]
+      },
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "description": "CMD against specific maneuvers, if different (Improved Trip etc.): {\"trip\": 21}."
+    },
+    "str": {
+      "type": "integer",
+      "description": "Strength score. Conditions (fatigued, exhausted) change what it feeds."
+    },
+    "dex": {
+      "type": "integer",
+      "description": "Dexterity score. Conditions (grappled, entangled, helpless) change AC, touch, flat-footed and CMD through it."
+    },
+    "con": {
+      "type": [
+        "integer",
+        "null"
+      ],
+      "description": "Constitution score: the PC dies at -Con HP."
+    },
+    "max_dex": {
+      "type": "integer",
+      "description": "The armor's max Dex bonus, if it limits the PC's Dex bonus to AC (e.g. Dex 18 in a breastplate, max +3)."
+    },
+    "speed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Base land speed in feet, with armor (the script tracks movement)."
+    },
+    "speeds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fly": {
+          "type": "integer"
+        },
+        "swim": {
+          "type": "integer"
+        },
+        "climb": {
+          "type": "integer"
+        },
+        "burrow": {
+          "type": "integer"
+        },
+        "fly_maneuverability": {
+          "enum": [
+            "clumsy",
+            "poor",
+            "average",
+            "good",
+            "perfect"
+          ]
+        }
+      }
+    },
+    "size": {
+      "type": "integer",
+      "enum": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "description": "Squares per side: 1 for Small and Medium PCs."
+    },
+    "reach": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Natural reach in feet, if not 5."
+    },
+    "senses": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Vision and other senses. Required, and {} is a valid answer: it means normal vision. Race matters: elves, half-elves and gnomes have low-light vision; dwarves, half-orcs and tieflings have darkvision 60 ft.",
+      "properties": {
+        "darkvision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "low_light": {
+          "type": "boolean"
+        },
+        "see_in_darkness": {
+          "type": "boolean"
+        },
+        "blindsight": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "blindsense": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tremorsense": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "scent": {
+          "type": "boolean"
+        },
+        "light_sensitivity": {
+          "type": "boolean"
+        },
+        "light_blindness": {
+          "type": "boolean"
+        }
+      }
+    },
+    "perception": {
+      "type": "integer",
+      "description": "Perception modifier (for noticing creatures in plain sight, and the DM's secret checks)."
+    },
+    "feats": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Feats, at least the ones the script uses: Combat Reflexes, Blind-Fight, Precise Shot, Improved <maneuver>. Listing all is fine; [] if none."
+    },
+    "uncanny_dodge": {
+      "type": "boolean",
+      "description": "Uncanny dodge (rogue, barbarian): keeps the Dex bonus when flat-footed."
+    },
+    "aoo": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "AoOs per round, only if it differs from the rules (1, +Dex with Combat Reflexes)."
+    },
+    "dr": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Damage reduction amount (hardness for objects). combat.py subtracts it from every hit."
+    },
+    "dr_bypass": {
+      "type": "string",
+      "description": "What overcomes the DR, e.g. 'magic', 'silver', 'cold iron/good', '-' for DR x/-. Not automated yet."
+    },
+    "resist": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "description": "Energy resistance, e.g. {\"fire\": 10}. Not automated yet."
+    },
+    "immune": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Immunities, e.g. ['fire', 'sleep', 'mind-affecting']. Not automated yet."
+    },
+    "sr": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Spell resistance. Not automated yet."
+    },
+    "fast_healing": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "regeneration": {
+      "type": "object",
+      "required": [
+        "amount"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "type": "integer"
+        },
+        "stopped_by": {
+          "type": "string"
+        }
+      }
+    },
+    "ac_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Conditional AC bonuses, e.g. '+4 dodge vs. giants'."
+    },
+    "save_notes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Conditional save bonuses, e.g. '+2 vs. fear'. Not automated: the DM applies them."
+    },
+    "saves": {
+      "type": "object",
+      "required": [
+        "fort",
+        "ref",
+        "will"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "fort": {
+          "type": "integer"
+        },
+        "ref": {
+          "type": "integer"
+        },
+        "will": {
+          "type": "integer"
+        }
+      },
+      "description": "Optional: the player rolls their own saves; kept here only as a reference."
+    },
+    "cmb": {
+      "type": "integer",
+      "description": "Optional: the player rolls their own maneuvers."
+    },
+    "special": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Other combat-relevant abilities in one line each, e.g. 'ferocity', 'pounce', 'grab (Medium)'. Not automated."
+    },
+    "source": {
+      "type": "string",
+      "description": "Where the numbers come from, e.g. 'Bestiary pg. 156'."
+    }
+  }
+}

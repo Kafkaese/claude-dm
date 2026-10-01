@@ -994,8 +994,29 @@ def cmd_add(args: Args, st: State) -> str:
             raise CombatError(f"bad combat-profile block in {args.ref}: {e}")
     if args.profile:
         prof.update(json.loads(args.profile))
+    system = campaign_system(args.campaign)
+    if args.side == "pc":
+        # a PC always needs a complete profile on their sheet: enemies roll against it, and
+        # conditions, vision and dying all read it
+        schema = R.schema_path(system, "pc").relative_to(PROJECT)
+        if not prof:
+            raise CombatError(
+                f"{args.name} has no combat profile. Their character sheet (players/characters/<slug>.md, "
+                f"pass it with --ref) needs a ```combat-profile block that passes {schema}. Fill in what the "
+                f"sheet already has, ASK THE PLAYER for anything missing, then add them")
+        if prof.get("kind") != "pc":
+            raise CombatError(f"{args.name} is a PC, so the profile needs \"kind\": \"pc\" (and must pass {schema})")
+    elif prof.get("kind") == "pc":
+        raise CombatError(f"{args.token} has a PC profile (\"kind\": \"pc\") but isn't on side pc")
     if prof:
-        errs, warns = R.check_profile(prof, campaign_system(args.campaign))
+        errs, warns = R.check_profile(prof, system)
+        if errs and args.side == "pc":
+            missing = [e.split("'")[1] for e in errs if "missing required field" in e]
+            raise CombatError(
+                f"{args.name}'s character sheet isn't complete for combat"
+                + (f": missing {', '.join(missing)}" if missing else "") + ". Fill in what the sheet already "
+                f"shows; ASK THE PLAYER for the rest (senses: {{}} means normal vision), update the sheet's "
+                f"combat-profile block, then add them.\n  " + "\n  ".join(errs))
         if errs:
             raise CombatError(f"the combat profile for {args.token} has errors (fix the stat block's block, "
                               f"see library/<system>/combat-profile-guide.md):\n  " + "\n  ".join(errs))

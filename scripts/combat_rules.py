@@ -149,9 +149,17 @@ def expire(st: State, token_now: str, round_now: int) -> list[tuple[Token, str]]
 
 # ---------- profile validation ----------
 
-def schema_for(system: str = 'pf1e') -> dict[str, Any] | None:
-    """Load library/<system>/combat-profile.schema.json, or None if the system has no schema."""
-    path = PROJECT / "library" / system / "combat-profile.schema.json"
+def schema_path(system: str = 'pf1e', kind: str | None = None) -> Path:
+    """The schema file for a profile kind: combat-profile-pc.schema.json for player characters
+    (if the system has one), else combat-profile.schema.json."""
+    base = PROJECT / "library" / system
+    pc = base / "combat-profile-pc.schema.json"
+    return pc if kind == "pc" and pc.exists() else base / "combat-profile.schema.json"
+
+
+def schema_for(system: str = 'pf1e', kind: str | None = None) -> dict[str, Any] | None:
+    """Load the system's schema for this profile kind, or None if the system has no schema."""
+    path = schema_path(system, kind)
     return json.loads(path.read_text(encoding="utf-8")) if path.exists() else None
 
 
@@ -216,9 +224,10 @@ def _validate(v: Any, s: dict[str, Any], path: str, errs: list[str]) -> list[str
 
 def check_profile(p: Any, system: str = 'pf1e') -> tuple[list[str], list[str]]:
     """Returns (errors, warnings) for a combat profile: the schema plus checks it can't express."""
-    schema = schema_for(system)
+    kind = p.get("kind") if isinstance(p, dict) else None
+    schema = schema_for(system, kind)
     errs = _validate(p, schema, "profile", []) if schema else []
-    warns = [] if schema else [f"no schema at library/{system}/combat-profile.schema.json; only basic checks"]
+    warns = [] if schema else [f"no schema at {schema_path(system, kind).relative_to(PROJECT)}; only basic checks"]
     if not isinstance(p, dict):
         return errs or ["profile: must be a JSON object"], warns
     import random
