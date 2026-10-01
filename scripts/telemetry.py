@@ -62,6 +62,23 @@ def combat_command(call: str) -> str | None:
     return m.group(1)
 
 
+def game_command(name: str, call: str) -> str | None:
+    """The game command of a tool call: a combat.py subcommand run through Bash, or a dm MCP tool
+    (mcp__dm__combat_attack → 'combat_attack'; a batch → 'combat_batch: move+attack')."""
+    if name == "Bash":
+        return combat_command(call)
+    if not name.startswith("mcp__dm__"):
+        return None
+    tool = name[len("mcp__dm__"):]
+    if tool == "combat_batch":
+        try:
+            acts = json.loads(call).get("actions", [])
+            return "combat_batch: " + "+".join(a.get("tool", "?").replace("combat_", "") for a in acts[:6])
+        except ValueError:
+            return tool   # the call text is truncated in the log for long batches
+    return tool
+
+
 def pct(values: list[float], q: float) -> float:
     """The q-quantile (0..1) of a list, nearest-rank."""
     v = sorted(values)
@@ -101,17 +118,17 @@ def summarize(recs: list[dict[str, Any]], details: bool) -> str:
     for r in recs:
         for t in r.get("tools", []):
             tools[t.get("name", "?")] += 1
-            cc = combat_command(t.get("call", "")) if t.get("name") == "Bash" else None
+            cc = game_command(t.get("name", ""), t.get("call", ""))
             if cc:
-                combat[cc.split(":")[0] if cc.startswith("do") else cc] += 1
+                combat[cc.split(":")[0]] += 1
             if t.get("error"):
                 errors[f"{t.get('name')}{' ' + cc if cc else ''}: {mask(t['error'])}"] += 1
                 if cc:
-                    combat_err[cc.split(":")[0] if cc.startswith("do") else cc] += 1
+                    combat_err[cc.split(":")[0]] += 1
                 raw.append(f"{r['ts']} {r.get('kind')}: {t.get('call', '')[:160]}\n      → {t['error']}")
     out.append("\nTools: " + ", ".join(f"{k} {v}" for k, v in tools.most_common()))
     if combat:
-        out.append("combat.py: " + ", ".join(f"{k} {v}" + (f" ({combat_err[k]} failed)" if combat_err[k] else "")
+        out.append("Game commands: " + ", ".join(f"{k} {v}" + (f" ({combat_err[k]} failed)" if combat_err[k] else "")
                                          for k, v in combat.most_common()))
     total_calls = sum(tools.values())
     total_err = sum(errors.values())
@@ -123,7 +140,7 @@ def summarize(recs: list[dict[str, Any]], details: bool) -> str:
     if combat_steps:
         multi = [r for r in combat_steps if r.get("tool_calls", 0) > 1]
         out.append(f"\nCombat steps needing more than one tool call: {len(multi)} of {len(combat_steps)} "
-                   f"(ideal: one `combat.py do` call)")
+                   f"(ideal: one combat_batch call)")
     slow = sorted(recs, key=lambda r: -r.get("seconds", 0))[:5]
     out.append("\nSlowest exchanges:")
     for r in slow:

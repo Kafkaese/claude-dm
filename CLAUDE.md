@@ -15,6 +15,7 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
 - `scripts/roll.py`: dice roller. Run `python3 scripts/roll.py -h` for the syntax.
 - `scripts/combat.py` (+ `combat_rules.py`): combat state, map, initiative, and the rule math (profiles, modifiers, durations, areas, saves, AoOs, dying). Run `-h` for the syntax.
 - `scripts/world.py`: world turns: random-event chance, cooldown, budget and table rolls. Run `-h` for the syntax.
+- `scripts/mcp_server.py` (`.mcp.json`, server `dm`): the three scripts above as typed MCP tools (`dice_roll`, `world`, `combat_*`; `combat_attack` = `combat.py attack`, one `combat_batch` = one `combat.py do`). `web.py`/`play.py` use only these, so where the docs show a command line there, call the matching tool. The command line stays for the Claude Code UI and gm-screen.
 - `scripts/telemetry.py`: how play sessions went (timing, tool calls, errors, cost per exchange), from `.play/telemetry.jsonl`, which `web.py`/`play.py` write. Spoiler-free unless `--details`.
 - `web.py` (browser) and `play.py` (terminal): the player-facing interfaces, both built on `dm_engine.py`. They run Claude Code headless and show only the DM's text, plus the combat map, initiative and combat log.
 - `.claude/skills/`: `/new-campaign`, `/add-character`, `/start-session`, `/end-session`, plus `lookup` (Claude-only)

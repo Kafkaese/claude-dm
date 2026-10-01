@@ -38,7 +38,7 @@ STATE = REPO / ".play"
 ALLOWED_TOOLS = [
     "Read", "Glob", "Grep", "Edit", "Write", "Agent", "Task", "Skill", "TodoWrite",
     "WebFetch", "WebSearch",
-    "Bash(python3 scripts/roll.py:*)", "Bash(python3 scripts/combat.py:*)", "Bash(python3 scripts/world.py:*)",
+    "mcp__dm",   # the game tools (scripts/mcp_server.py): dice_roll, world, combat_*; the scripts aren't run via Bash here
     "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(grep:*)",
     "Bash(sed -n:*)", "Bash(wc:*)", "Bash(find:*)", "Bash(mkdir:*)",
     "Bash(cp -R campaigns/_template:*)",
@@ -47,7 +47,7 @@ ALLOWED_TOOLS = [
 
 WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude DM (play.py in a terminal, or the web UI).
 - The player sees ONLY your own text. Tool calls, tool results, subagent activity and subagent text are hidden from them.
-- Play mode (web/terminal): do hidden mechanics yourself. Roll with scripts/roll.py, run scripts/combat.py, and read and write dm/ files directly. Don't delegate them to the gm-screen agent. Keep using dm-scribe, dm-researcher and continuity-checker for heavy jobs (prep, research, the continuity check), and always wait for their results.
+- Play mode (web/terminal): do hidden mechanics yourself, with the `dm` tools (dice_roll, world, combat_*; give `campaign` on the first call), and read and write dm/ files directly. Where the docs show a script command line, use the matching tool: `combat.py attack …` = combat_attack, `combat.py do "…" "…"` = ONE combat_batch, `roll.py` = dice_roll, `world.py turn …` = world. Don't delegate them to the gm-screen agent. Keep using dm-scribe, dm-researcher and continuity-checker for heavy jobs (prep, research, the continuity check), and always wait for their results.
 - Everything you write as text is shown to the player. So never think out loud ("Let me check…", "Now I need…"), never mention files, tools or DM-only content, and write only what the DM says at the table.
 - The interface shows the combat map, the initiative order and the combat log after each turn in which the combat state changed. Don't paste the map yourself.
 - NARRATION CONTRACT (these override your instincts as a writer):
@@ -64,19 +64,19 @@ WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude 
     - Describe NPC behavior, not their minds: "Mordent gives no sign that anything has changed", never "Mordent doesn't know that you know".
     - Never name a lead, flaw, culprit or connection the character hasn't found, not even as an open question: "you couldn't tell whether the circle was drawn correctly", never "the ritual circle's flaw".
     - No loaded framing that confirms a hidden truth ("whether it was anything but an accident", "the real culprit"). A failed investigation reports what was checked and what it showed, not that something was missed.
-- COMBAT (details: combat.md; syntax: `combat.py -h`):
-  - The script does all the rule math (modifiers, AoOs, maneuvers, light and vision, durations, dying). Never compute modifiers, count squares or roll attacks yourself. NPCs: `attack g1 C --with <attack>`; PCs: the player's rolls (`attack C g1 --total N --damage N`).
-  - Every NPC spell or SLA goes through `cast` / `sla`, with its effect in the same command. Effects beyond damage, after a failed save: `cond … --rounds N`.
+- COMBAT (details: combat.md; the combat tools' descriptions have the options):
+  - The script does all the rule math (modifiers, AoOs, maneuvers, light and vision, durations, dying). Never compute modifiers, count squares or roll attacks yourself. NPCs: combat_attack with `with` (a profile attack); PCs: the player's rolls (combat_attack with `total` and `damage`).
+  - Every NPC spell or SLA goes through combat_cast (sla=true for SLAs), with its effect in the same call. Effects beyond damage, after a failed save: combat_condition with rounds.
   - Setup: every combatant needs a valid combat profile (add one from the stat block first; a PC's sheet must pass the PC schema, so ask the player for missing values). Decide the lighting as part of the encounter. PC tokens use the first letter of the name (Corin → C). After setup, stop.
-  - THE INTERFACE RUNS THE TURN ORDER. Never run `next` (it's refused). A bracketed "[Combat step …]" message names ONE actor and what it can see: resolve exactly that actor in ONE `combat.py do` call, narrate only that actor, and stop. Play it by its nature and what it sees. A hidden actor's step: reply "…" unless it gets revealed.
-  - On the PC's turn, resolve what the player declares and say which actions remain. If the player ends the turn in other words or together with their actions, add `combat.py endturn C`.
-  - When the script sets a question (an AoO, a save, a stabilization check) or the player must decide something mid-round, ask them (`combat.py ask "…"` for your own questions). A dying PC rolls their own stabilization checks; never play the fight forward without the player.
+  - THE INTERFACE RUNS THE TURN ORDER. Never run `next` (it's refused). A bracketed "[Combat step …]" message names ONE actor and what it can see: resolve exactly that actor in ONE combat_batch call, narrate only that actor, and stop. Play it by its nature and what it sees. A hidden actor's step: reply "…" unless it gets revealed.
+  - On the PC's turn, resolve what the player declares and say which actions remain. If the player ends the turn in other words or together with their actions, call combat_endturn.
+  - When a tool result sets a question (an AoO, a save, a stabilization check) or the player must decide something mid-round, ask them (combat_ask for your own questions). A dying PC rolls their own stabilization checks; never play the fight forward without the player.
   - The interface shows the map, initiative and combat log with all the numbers. Narrate EVERY creature's turn in its own line or lines, matching the log. Never merge turns, skip a creature, or contradict a number.
 - Do lookups before you start writing to the player, so you never send the same text twice.
 - Before any in-game narration, the /start-session skill must have run in this conversation (it loads the table rules). If the player wants to play and it hasn't, run it first.
 - AskUserQuestion isn't available here. Ask questions in plain text, with the options as a short list.
 - Keep turns fast. Every tool call costs the player waiting time:
-  - put all rolls for a turn in ONE roll.py call, and all combat steps in ONE `combat.py do "…" "…"` call
+  - put all rolls for a turn in ONE dice_roll call, and all combat actions of a step in ONE combat_batch call
   - don't re-read files you've already read this session
   - log tersely, at scene breaks only: one short Edit to the live log, not one per action
   - read files by section (grep -n '^#' to find the heading, then Read with offset and limit)"""
@@ -89,12 +89,12 @@ def flavor(tool_name: str | None, sub: bool) -> str:
     if sub:
         return "working behind the screen"
     return {
-        "Bash": "rolling dice and moving pieces", "Read": "checking notes", "Grep": "checking notes",
+        "Bash": "checking notes", "Read": "checking notes", "Grep": "checking notes",
         "Glob": "checking notes", "Edit": "taking notes", "Write": "taking notes",
         "Agent": "working behind the screen", "Task": "working behind the screen",
         "WebFetch": "consulting references", "WebSearch": "consulting references",
         "Skill": "getting ready", "TodoWrite": "planning",
-    }.get(tool_name or "", "thinking")
+    }.get(tool_name or "", "rolling dice and moving pieces" if (tool_name or "").startswith("mcp__dm__") else "thinking")
 
 
 def save_session(sid: str | None) -> None:
@@ -144,6 +144,8 @@ def _tool_summary(name: str, inp: dict[str, Any]) -> str:
         return str(inp.get("subagent_type") or "") + ": " + str(inp.get("description") or "")[:120]
     if name == "Skill":
         return str(inp.get("skill") or inp.get("command") or "")
+    if name.startswith("mcp__"):
+        return json.dumps(inp, separators=(",", ":"))[:300]
     return ""
 
 
@@ -240,7 +242,9 @@ class Engine:
         if resume:
             cmd += ["--resume", resume]
             self.session_id = resume
-        env = dict(os.environ, CLAUDE_DM_MODE="play")
+        cmd += ["--mcp-config", str(REPO / ".mcp.json"), "--strict-mcp-config"]
+        # load the game tools up front (no tool-search round trip before the first use of each)
+        env = dict(os.environ, CLAUDE_DM_MODE="play", ENABLE_TOOL_SEARCH="false")
         self.proc = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, text=True, bufsize=1, env=env)
         threading.Thread(target=self._drain_stderr, args=(self.proc,), daemon=True).start()
@@ -380,6 +384,10 @@ class Engine:
         t = m.get("type")
         top = m.get("parent_tool_use_id") is None
         if t == "system" and m.get("subtype") == "init":
+            dm = next((x for x in m.get("mcp_servers") or [] if x.get("name") == "dm"), None)
+            if not dm or dm.get("status") != "connected":
+                self.emit(type="error", message="The game tools (dice, combat, world) didn't start: "
+                                                f"{(dm or {}).get('status', 'not loaded')}. Check scripts/mcp_server.py.")
             sid = m.get("session_id")
             if sid and sid != self.session_id:
                 self.session_id = sid
@@ -737,24 +745,58 @@ def _sight(camp: str, st: dict[str, Any], tok: str) -> str:
             "go for light sources if darkness favors it):\n" + r.stdout.strip())
 
 
+def _step_context(st: dict[str, Any], c: dict[str, Any]) -> str:
+    """What the DM needs to play the actor without looking things up: its attacks, spells and
+    speed, and where everyone is (DM data; the player never sees this message)."""
+    cm = _combat_module()
+    prof = c.get("profile") or {}
+    opts = []
+    for name, w in (prof.get("attacks") or {}).items():
+        b = w.get("bonus")
+        b = "/".join(f"{x:+d}" for x in b) if isinstance(b, list) else f"{b:+d}"
+        opts.append(f"{name} ({w.get('type', 'melee')} {b}, {w.get('damage')}{', reach ' + str(w['reach']) if w.get('reach') else ''})")
+    lines = [f"Its attacks (combat_attack `with`): {', '.join(opts) or 'none in its profile'}"
+             + (f"; full attack: {', '.join(prof['full_attack'])}" if prof.get("full_attack") else "")
+             + f". Speed {c.get('speed') or 30} ft, reach {c.get('reach', 5)} ft."]
+    spells = []
+    for sc in prof.get("spellcasting") or []:
+        for lvl, names in (sc.get("spells") or {}).items():
+            spells += [f"{n} ({lvl})" for n in names]
+    slas = [s_["name"] for s_ in prof.get("sla") or []]
+    if spells or slas:
+        lines.append("Spells: " + (", ".join(spells) or "none") + ("; SLAs (sla=true): " + ", ".join(slas) if slas else "")
+                     + " (combat_info what=spells for what's left)")
+    pos = []
+    for o in cm.order(st):
+        if o.get("removed") or o is c:
+            continue
+        d = cm.feet_between(c, o)
+        hp = f"{o['hp']}/{o['max_hp']} HP"
+        pos.append(f"{o['token']} {o['name']} ({o['side']}{', hidden' if o.get('hidden') else ''}) at "
+                   f"{cm.fmt_pos(o['x'], o['y'])}, {d} ft away, {hp}" + (f", {', '.join(cm.R.labels(o, st))}" if cm.R.conditions(o) else ""))
+    lines.append(f"{c['token']} is at {cm.fmt_pos(c['x'], c['y'])} ({c['hp']}/{c['max_hp']} HP"
+                 + (f", {', '.join(cm.R.labels(c, st))}" if cm.R.conditions(c) else "") + "). Others: " + "; ".join(pos))
+    return "\n".join(lines)
+
+
 def _visible_prompt(c: dict[str, Any], started: str, pc_after: bool) -> str:
     """The instruction for one visible non-PC actor's step."""
     end = ("The player's turn comes right after this one: end with one short line saying so."
            if pc_after else "Don't end with a question: the player sends the next go signal.")
     return (f"[Combat step, sent by the interface (not the player). The turn pointer is on {c['token']} "
-            f"({c['name']}); `next` already ran:\n{started}{c.get('_sight', '')}\n"
+            f"({c['name']}); `next` already ran:\n{started}\n{c.get('_ctx', '')}{c.get('_sight', '')}\n"
             f"Resolve ONLY {c['name']}'s turn: choose its actions from its tactics and the situation, and "
-            f"resolve them in ONE `combat.py do \"…\"` call. Don't run `next`: the interface advances turns. "
+            f"resolve them in ONE combat_batch call. Don't run `next`: the interface advances turns. "
             f"Then narrate only {c['name']}'s turn and stop. {end}]")
 
 
 def _hidden_prompt(c: dict[str, Any], started: str) -> str:
     """The instruction for a hidden actor's step (its text is only shown if it gets revealed)."""
     return (f"[Combat step, sent by the interface. The turn pointer is on {c['token']} ({c['name']}), which "
-            f"the player hasn't noticed; `next` already ran:\n{started}{c.get('_sight', '')}\n"
-            f"Resolve its turn with combat.py (don't run `next`). If it stays unnoticed, reply with only \"…\": "
+            f"the player hasn't noticed; `next` already ran:\n{started}\n{c.get('_ctx', '')}{c.get('_sight', '')}\n"
+            f"Resolve its turn with the combat tools (don't run `next`). If it stays unnoticed, reply with only \"…\": "
             f"nothing you write is shown. If its action reveals it (it attacks, or the character notices it), "
-            f"run `combat.py reveal {c['token']}` in the same call and narrate its turn.]")
+            f"reveal it (combat_flag action=reveal) in the same call and narrate its turn.]")
 
 
 def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool]) -> str:
@@ -800,7 +842,9 @@ def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool]) -> s
             return "error"
         if c["side"] == "pc":
             return "pc" if acted else "pc-quiet"
-        c = dict(c, _sight=_sight(camp, combat_state(camp) or st, c["token"]))
+        now = combat_state(camp) or st
+        live = next((o for o in now.get("tokens", []) if o["token"] == c["token"]), c)
+        c = dict(c, _sight=_sight(camp, now, c["token"]), _ctx=_step_context(now, live))
         if c.get("hidden"):
             engine.hold()
             try:
