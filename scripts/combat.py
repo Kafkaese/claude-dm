@@ -15,6 +15,17 @@ Setup
       [--init 15] [--hp 11] [--ac 16] [--touch 12] [--ff 14] [--size 1|2|3|4] [--reach 5]
       [--speed 30] [--dr 5] [--con 14] [--profile '{json}']
                                   TOKEN is 1-2 chars: PCs uppercase (C), others lowercase+digit (g1)
+Action economy (each turn: standard + move, or two moves, or one full-round action; one swift; one
+5-foot step if it doesn't otherwise move). Commands charge the actor: attack = standard (a second attack
+turns it into a full attack if it hasn't moved), --full = full-round, cast/sla = --time (default
+standard), maneuvers by kind, movement by distance (a stretch can't be split around a standard action).
+Every action reports what's left. --override: a feat or ability changes it (Spring Attack, …).
+  act TOKEN standard|move|full|swift|immediate|free ["what"] [--provokes] [--log TEXT]
+                                  any other action ("draw weapon", "drink potion"); "stand up" removes
+                                  prone and provokes; an immediate action off-turn takes the next swift
+  move TOKEN POS --as charge|withdraw|run   movement as part of that full-round action
+  actions TOKEN                   what the creature has left this turn
+  surprise on|off                 the surprise round: one standard or move action each
 Prepared encounters (dm/combat/encounters/<name>.md, a ```encounter block; library/general/encounter.schema.json)
   encounter list | check [NAME …] list them, or validate (map, profiles, squares, lights) without creating anything
   setup NAME --init C=17 [--place C=E5] [--force]
@@ -1149,11 +1160,15 @@ def cmd_next(args: Args, st: State) -> str:
             lapsed.append(f"  {g['by']} didn't maintain its grapple on {g['target']}: the grapple ends")
             event(st, f"{who(token(st, g['by']))} lets go of {who(token(st, g['target']))}")
     c, wraps = found
+    surprise_over = False
     if wraps:
         st["round"] = st.get("round", 1) + 1
+        surprise_over = bool(st.pop("surprise", None))
     st["turn"] = c["token"]
     st.pop("end_turn", None)
     out = [f"Round {st['round']}: {label(c)} ({c['name']}) acts"] + lapsed
+    if surprise_over:
+        out.append("  the surprise round is over: full actions from now on")
     # start of this creature's turn
     for o, name in R.expire(st, c["token"], st["round"]):
         out.append(f"  ended: {name} on {label(o)}")
@@ -1164,6 +1179,10 @@ def cmd_next(args: Args, st: State) -> str:
     c["moved"] = 0
     c.pop("stepped", None)
     c.pop("overrun_through", None)
+    for k in ("turn_actions", "move_mode", "mode_feet", "chain_feet", "chain_moves", "move_closed"):
+        c.pop(k, None)
+    if c.get("immediate_used"):   # an immediate action since its last turn took this turn's swift
+        turn_actions(c)["swift"] = f"immediate action before this turn ({c.pop('immediate_used')})"
     for src in list(V.light_state(st).get("sources", [])):
         e = src.get("expires")
         if e and (e["round"] < st["round"] or (e["round"] == st["round"] and e["token"] == c["token"])):
@@ -1176,7 +1195,7 @@ def cmd_next(args: Args, st: State) -> str:
             out.append(f"  {c['token']} is grappling {g['target']}{' (pinned)' if g['pinned'] else ''}: maintain it this "
                        f"turn (`maneuver {c['token']} {g['target']} grapple`, +5) or `release`; not maintaining ends it")
         elif g["target"] == c["token"]:
-            can = "only verbal and mental actions" if g["pinned"] else "act without two hands"
+            can = "only verbal and mental actions" if g["pinned"] else "actions that don't need two hands"
             out.append(f"  {c['token']} is {'pinned' if g['pinned'] else 'grappled'} by {g['by']}: it can try to escape "
                        f"(`maneuver {c['token']} {g['by']} escape`, CMB or Escape Artist) or take {can}")
     for x in R.conditions(c):
@@ -1576,32 +1595,304 @@ def cmd_move(args: Args, st: State) -> str:
     feet = path_cost(st, c, dest)
     frm = fmt_pos(c["x"], c["y"])
     out = []
+    speed = c.get("speed") or 30
+    charged = not (args.out_of_turn or args.override)   # forced movement and overrides cost no actions
+    mode = args.as_
     if args.step:
         if feet != 5:
             raise CombatError(f"a 5-foot step moves exactly one square (this move costs {feet} ft)")
-        if c.get("moved"):
+        if c.get("moved") or c.get("stepped"):
             raise CombatError(f"{c['token']} already moved this turn; no 5-foot step allowed")
+        if charged and c.get("move_mode") in ("run", "withdraw", "charge"):
+            raise CombatError(f"no 5-foot step in a round with a {c['move_mode']}")
         c["stepped"] = True
-    elif c.get("stepped"):
-        out.append("  WARNING: took a 5-foot step this turn, so no other movement is allowed")
-    # attacks of opportunity for leaving threatened squares (not on a 5-foot step)
-    if not args.step:
+    elif charged:
+        if c.get("stepped"):
+            raise CombatError(f"{c['token']} took a 5-foot step this turn, so it can't move any further distance")
+        if mode:
+            limit = {"charge": 2, "withdraw": 2, "run": 4}[mode] * speed
+            if c.get("move_mode") not in (None, mode):
+                raise CombatError(f"{c['token']} is already moving as part of a {c['move_mode']}")
+            if c.get("move_mode") != mode:
+                if c.get("moved"):
+                    raise CombatError(f"a {mode} is a full-round action: {c['token']} already moved this turn")
+                spend(st, c, "full", mode)
+                c["move_mode"], c["mode_feet"] = mode, 0
+            if c["mode_feet"] + feet > limit:
+                raise CombatError(f"a {mode} moves at most {limit} ft ({c['mode_feet'] + feet} ft)")
+            c["mode_feet"] += feet
+        else:
+            if c.get("move_mode"):
+                raise CombatError(f"{c['token']} is moving as part of a {c['move_mode']}: add --as {c['move_mode']}")
+            # one stretch of movement: it can't be split around a standard action, so moving again
+            # after one starts a new stretch, with its own move action(s)
+            if c.pop("move_closed", None):
+                c["chain_feet"], c["chain_moves"] = 0, 0
+            chain = c.get("chain_feet", 0) + feet
+            need = -(-chain // speed)
+            if need > 2:
+                raise CombatError(f"{chain} ft in one go is more than a double move ({2 * speed} ft); a run is `--as run`")
+            extra = need - c.get("chain_moves", 0)
+            if extra > 0:
+                spend_moves(st, c, extra, "movement")
+            c["chain_feet"], c["chain_moves"] = chain, max(need, c.get("chain_moves", 0))
+    # attacks of opportunity for leaving threatened squares (not on a 5-foot step; a withdraw's
+    # first square isn't threatened by foes it can see)
+    if not args.step and not (mode == "withdraw" and c.get("mode_feet", 0) == feet):
         lines, _dmg = provoke_aoos(st, c, args.no_aoo, "moving out of a threatened square")
         out += lines
         if c["hp"] <= 0:
             out.insert(0, f"{c['token']} is dropped by an attack of opportunity at {frm} and doesn't move")
             return "\n".join(out)
     c["x"], c["y"] = dest
-    c["moved"] = c.get("moved", 0) + feet
-    speed = c.get("speed") or 30
+    if not args.step:
+        c["moved"] = c.get("moved", 0) + feet
     warn = ""
-    if c["moved"] > 2 * speed:
-        warn = f"  EXCEEDS a double move ({c['moved']} ft this turn, max {2 * speed})"
-    elif c["moved"] > speed:
+    if mode == "run" and "run" not in _feats(c) and not R.has(c, "running"):
+        R.add_condition(st, c, "running", rounds=1)
+        warn = "  (running: loses its Dex bonus to AC until its next turn)"
+    elif mode:
+        warn = f"  (part of a {mode}: {c['mode_feet']} ft so far)"
+    elif c.get("moved", 0) > speed:
         warn = f"  (double move: {c['moved']} ft this turn)"
     kind = "5-foot step" if args.step else "moves"
     out.insert(0, f"{c['token']} {kind} {frm} → {fmt_pos(*dest)}: {feet} ft{warn}")
     return "\n".join(out)
+
+
+# ---------- action economy ----------
+# Rules: library/pf1e/rules/actions-in-combat.md (Core Rulebook pg. 178-189). Per turn: a standard
+# and a move action (or two moves), or one full-round action; plus one swift action (an immediate
+# action used outside the creature's turn takes the swift of its next turn), free actions, and one
+# 5-foot step if it doesn't otherwise move. Restricted (surprise round, staggered): one standard or
+# move. Nauseated: one move. Actions taken with --out-of-turn (readied, forced) or --override
+# (a feat or ability that changes the economy, e.g. Spring Attack) aren't charged.
+
+ACTION_KINDS = ("standard", "move", "full", "swift", "immediate", "free")
+
+
+def turn_actions(c: Token) -> dict[str, Any]:
+    """The token's action record for its current turn (reset by `next`)."""
+    return c.setdefault("turn_actions", {"standard": None, "move": [], "full": None, "swift": None})
+
+
+def restriction(st: State, c: Token) -> str | None:
+    """Why the token is limited to a single action this turn, if it is."""
+    if R.has(c, "nauseated"):
+        return "nauseated (a single move action)"
+    if st.get("surprise"):
+        return "surprise round (a standard or move action)"
+    if R.has(c, "staggered") or (c["hp"] == 0 and c["side"] in FRIENDLY):
+        return "staggered or disabled (a standard or move action)"
+    return None
+
+
+def can_take(st: State, c: Token, kind: str) -> str | None:
+    """None if the token can take this kind of action now, else why not."""
+    a = turn_actions(c)
+    used_main = a["standard"] or a["move"] or a["full"]
+    limit = restriction(st, c)
+    if kind == "free":
+        return None
+    if kind in ("swift", "immediate"):
+        if a["swift"]:
+            return f"its swift/immediate action is already used ({a['swift']})"
+        if kind == "immediate" and not c.get("acted"):
+            return "it's flat-footed (hasn't acted yet): no immediate actions"
+        return None
+    if a["full"]:
+        return f"it took a full-round action ({a['full']})"
+    if limit and used_main:
+        return f"it can take only one action this turn: {limit}"
+    if kind == "full":
+        if limit:
+            return f"no full-round actions: {limit}"
+        if a["standard"] or a["move"]:
+            return f"it already used {', '.join(filter(None, [a['standard'] and 'its standard action'] + (['a move action'] if a['move'] else [])))}"
+        return None
+    if limit and limit.startswith("nauseated") and kind == "standard":
+        return f"no standard actions: {limit}"
+    if kind == "standard":
+        if a["standard"]:
+            return f"its standard action is already used ({a['standard']})"
+        return None
+    if kind == "move":
+        if not a["move"]:
+            return None
+        if a["standard"]:
+            return "its move action and its standard action are both used"
+        return None   # a second move action uses the standard action
+    raise CombatError(f"unknown action kind {kind}")
+
+
+def take_action(st: State, c: Token, kind: str, what: str) -> None:
+    """Record an action (call can_take first)."""
+    a = turn_actions(c)
+    if kind == "move":
+        if a["move"]:
+            a["standard"] = f"a second move action ({what})"
+        a["move"].append(what)
+    elif kind in ("swift", "immediate"):
+        a["swift"] = what
+    elif kind != "free":
+        a[kind] = what
+    if kind in ("standard", "full"):
+        c["move_closed"] = True   # movement after this needs a new move action (no splitting)
+
+
+def spend(st: State, c: Token, kind: str, what: str) -> None:
+    """Check and record an action in one go.
+
+    Raises:
+        CombatError: if the token can't take it this turn.
+    """
+    why = can_take(st, c, kind)
+    if why:
+        raise CombatError(f"{c['token']} can't take a {kind} action ({what}) now: {why}. "
+                          f"If a feat or ability allows it, add --override")
+    take_action(st, c, kind, what)
+
+
+def actions_left(st: State, c: Token) -> str:
+    """e.g. 'move, swift, 5-foot step', or 'nothing but free actions'."""
+    a = turn_actions(c)
+    left = [k for k in ("standard", "move", "swift") if not can_take(st, c, k)]
+    if a["move"] and "standard" in left:   # one move used: the other slot is the standard (or a 2nd move)
+        left = ["standard (or a second move)"] + [k for k in left if k not in ("standard", "move")]
+    if not can_take(st, c, "full"):
+        left.append("or a full-round action instead")
+    if not c.get("moved") and not c.get("stepped") and not R.condition_names(c, ("no_move",)) \
+            and c.get("move_mode") not in ("run", "withdraw", "charge"):
+        left.append("5-foot step")
+    return ", ".join(left) or "nothing but free actions"
+
+
+def action_status(st: State, c: Token) -> str:
+    """The line every action command adds for the creature whose turn it is."""
+    return f"  actions left for {c['token']}: {actions_left(st, c)}"
+
+
+def charge_action(st: State, args: Args, c: Token) -> str | None:
+    """What an action command costs the actor: an action kind, or None (nothing to charge).
+    Movement is charged in cmd_move, by distance."""
+    cmd = args.command
+    if getattr(args, "out_of_turn", False) or getattr(args, "override", False) or getattr(args, "aoo", False):
+        return None
+    if cmd in ("cast", "sla"):
+        t = getattr(args, "time", None) or "standard"
+        return "full" if t in ("full", "round") else t
+    if cmd == "area":
+        return "standard" if args.frm else None
+    if cmd == "attack":
+        if args.charge:
+            return None if c.get("move_mode") == "charge" else "full"
+        if args.full:
+            return "full"
+        return "attack"
+    if cmd == "maneuver":
+        if args.kind == "release":
+            return "free"
+        if args.charge and args.kind in ("bull-rush", "overrun"):
+            return None if c.get("move_mode") == "charge" else "full"
+        if args.kind in ("trip", "disarm", "sunder"):
+            return "attack"
+        if args.kind == "grapple" and _grapple(st, c["token"], args.target) and "greater grapple" in _feats(c):
+            return "move"
+        return "standard"
+    return None
+
+
+def charge_attack(st: State, c: Token, what: str) -> None:
+    """A single attack: the standard action, or, for a second attack in the same turn, a full attack
+    (allowed when it hasn't moved: "after your first attack, you can decide to take a move action
+    instead of making your remaining attacks", and the reverse needs no move)."""
+    a = turn_actions(c)
+    if a.get("full", "") and str(a["full"]).startswith("full attack"):
+        return   # more attacks of a full attack
+    if a["standard"] and a.get("attacked") and not a["move"]:
+        a["standard"], a["full"] = None, f"full attack ({what})"
+        return
+    spend(st, c, "standard", what)
+    a["attacked"] = True
+
+
+def cmd_act(args: Args, st: State) -> str:
+    """Any other action: draw a weapon, stand up, drink a potion, total defense, … Charges the
+    action, and resolves what's deterministic: standing up removes prone and provokes."""
+    c = token(st, args.token)
+    what = args.what or args.kind
+    out = []
+    off_turn = st.get("turn") != c["token"]
+    if args.kind == "immediate" and off_turn:
+        if c.get("immediate_used") or turn_actions(c)["swift"]:
+            raise CombatError(f"{c['token']} already used its immediate/swift action until after its next turn")
+        if not c.get("acted"):
+            raise CombatError(f"{c['token']} is flat-footed (hasn't acted yet): no immediate actions")
+        c["immediate_used"] = what   # takes the swift action of its next turn
+        out.append(f"{c['token']} uses an immediate action: {what} (its next turn has no swift action)")
+    elif off_turn and args.kind == "free":
+        out.append(f"{c['token']}: free action: {what}")
+    elif off_turn and not args.override:
+        raise CombatError(f"it isn't {c['token']}'s turn: only immediate and free actions (or --override)")
+    elif not args.override:
+        spend(st, c, args.kind, what)
+        out.append(f"{c['token']}: {args.kind} action: {what}")
+    else:
+        out.append(f"{c['token']}: {what} (not charged: --override)")
+    stand = what.lower().strip() in ("stand up", "stand", "get up")
+    if args.provokes or stand:   # the AoOs come first: standing up provokes while it's still prone
+        lines, _ = provoke_aoos(st, c, reason=what)
+        out += lines
+    if stand and c["hp"] > 0:
+        if not R.remove_condition(c, "prone"):
+            out.append("  (it wasn't prone)")
+        else:
+            event(st, f"{who(c)} gets up")
+    if args.log:
+        event(st, f"{who(c)}: {args.log}")
+    if not off_turn:
+        out.append(action_status(st, c))
+    return "\n".join(out)
+
+
+def cmd_surprise(args: Args, st: State) -> str:
+    """Mark the current round as the surprise round (only a standard or move action each)."""
+    st["surprise"] = args.mode == "on"
+    return f"surprise round: {args.mode} (ends when the next round starts)"
+
+
+def action_ok(st: State, c: Token, kind: str) -> str | None:
+    """None if an action of this kind (or "attack": a single attack) is possible now, else why not."""
+    a = turn_actions(c)
+    if kind == "attack":
+        if str(a["full"] or "").startswith("full attack") or (a["standard"] and a.get("attacked") and not a["move"]):
+            return None   # further attacks of a full attack
+        return can_take(st, c, "standard")
+    if kind == "full" and a.get("attacked") and a["standard"] and not a["move"] and not a["full"]:
+        return None       # the first attack turns into a full attack
+    return can_take(st, c, kind)
+
+
+def record_action(st: State, c: Token, kind: str, what: str) -> None:
+    """Record an action whose command succeeded (action_ok was checked before)."""
+    a = turn_actions(c)
+    if kind == "attack":
+        charge_attack(st, c, what)
+    elif kind == "full" and a.get("attacked") and a["standard"] and not a["move"] and not a["full"]:
+        a["standard"], a["full"] = None, f"full attack ({what})"
+    else:
+        take_action(st, c, kind, what)
+
+
+def spend_moves(st: State, c: Token, n: int, what: str) -> None:
+    """Charge n move actions, all or nothing."""
+    backup = json.loads(json.dumps(turn_actions(c)))
+    try:
+        for _ in range(n):
+            spend(st, c, "move", what)
+    except CombatError:
+        c["turn_actions"] = backup
+        raise
 
 
 # ---------- combat maneuvers ----------
@@ -2450,6 +2741,8 @@ def cmd_setup(args: Args) -> str:
             rolls.append(f"{argv[1]}: {m.group(1)}")
     st = load(args.campaign)
     st["encounter"] = {"file": str(path.relative_to(PROJECT)), "title": enc.get("title") or path.stem}
+    if enc.get("surprise"):
+        st["surprise"] = True
     save(args.campaign, st)
     out = [f"Encounter '{st['encounter']['title']}' is set up ({len(st['tokens'])} combatants, {len(steps)} steps).",
            render(st, dm=True)]
@@ -2846,6 +3139,19 @@ def main(argv: list[str] | None = None) -> int:
     lt.add_argument("--radius", type=int); lt.add_argument("--increased", type=int)
     lt.add_argument("--for", dest="for_", help="show: the light as this creature sees it")
     sub.add_parser("sight").add_argument("token")
+    ac_ = sub.add_parser("act"); ac_.add_argument("token"); ac_.add_argument("kind", choices=ACTION_KINDS)
+    ac_.add_argument("what", nargs="?", help='e.g. "draw weapon", "stand up", "drink potion", "total defense"')
+    ac_.add_argument("--provokes", action="store_true", help="it provokes attacks of opportunity (Table 8-2)")
+    ac_.add_argument("--log", help="a line for the player-visible combat log")
+    ac_.add_argument("--override", action="store_true", help="don't charge it (a feat or ability)")
+    sub.add_parser("surprise").add_argument("mode", choices=["on", "off"])
+    sub.add_parser("actions").add_argument("token")
+    m.add_argument("--as", dest="as_", choices=["charge", "withdraw", "run"], help="movement as part of a full-round charge, withdraw or run")
+    for nm in ("cast", "sla"):
+        sub.choices[nm].add_argument("--time", choices=["standard", "full", "round", "swift", "immediate"],
+                                     help="casting time (default standard; quickened = swift)")
+    for sp in (at, m, mn, ar, sub.choices["cast"], sub.choices["sla"]):
+        sp.add_argument("--override", action="store_true", help="don't charge an action (a feat or ability changes the economy)")
     for sp in (at, m, pv, ar, mn, sub.choices["cast"], sub.choices["sla"]):
         sp.add_argument("--out-of-turn", action="store_true",
                         help="the actor isn't the current one: a readied or immediate action, forced movement, setup")
@@ -2858,7 +3164,8 @@ def main(argv: list[str] | None = None) -> int:
                 "ask": cmd_ask, "stabilize": cmd_stabilize, "save": cmd_save, "area": cmd_area,
                 "order": cmd_order, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
                 "provoke": cmd_provoke, "endturn": cmd_endturn, "maneuver": cmd_maneuver,
-                "light": cmd_light, "sight": cmd_sight}
+                "light": cmd_light, "sight": cmd_sight, "act": cmd_act, "surprise": cmd_surprise,
+                "actions": lambda a, st: action_status(st, token(st, a.token)).strip()}
     if args.command == "profile":
         return cmd_profile(args)
     if args.command == "do":
@@ -2887,9 +3194,24 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "show":
             print(render(st, dm=args.dm))
             return 0
-        if args.command not in ("ask", "dist", "threat", "events", "image", "sight"):
+        if args.command not in ("ask", "dist", "threat", "events", "image", "sight", "actions"):
             st.pop("awaiting", None)   # any real change answers an open question
+        actor_tok = getattr(args, ACTOR_ARG.get(args.command, "") or "_", None)
+        actor = next((t for t in st["tokens"] if t["token"] == actor_tok), None)
+        cost = charge_action(st, args, actor) if actor and st.get("turn") == actor["token"] else None
+        if cost and actor:
+            why = action_ok(st, actor, cost)
+            if why:
+                raise CombatError(f"{actor['token']} can't do that now ({'an attack' if cost == 'attack' else 'a ' + cost + ' action'}): "
+                                  f"{why}. If a feat or ability allows it, add --override")
         result = handlers[args.command](args, st)
+        if cost and actor:
+            what = {"attack": f"attack {args.target}", "maneuver": f"{getattr(args, 'kind', '')} {getattr(args, 'target', '')}",
+                    "cast": f"cast {getattr(args, 'spell', '')}", "sla": f"use {getattr(args, 'name', '')}",
+                    "area": "area effect"}.get(args.command, args.command)
+            record_action(st, actor, cost, what)
+        if actor and st.get("turn") == actor["token"] and args.command in ("attack", "maneuver", "cast", "sla", "area", "move"):
+            result += "\n" + action_status(st, actor)
         ended = clean_grapples(st) + reveal_observed(st)
         if ended:
             result += "\n" + "\n".join(ended)

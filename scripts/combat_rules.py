@@ -56,7 +56,8 @@ CONDITIONS: dict[str, dict[str, Any]] = {
     "prone": {"prone": True},
     "invisible": {"concealment": 50},
     "concealed": {"concealment": 20},
-    "charged": {"ac": -2},                    # until the start of its next turn
+    "charged": {"ac": -2},
+    "running": {"flatfooted": True},           # a run without the Run feat: no Dex bonus to AC                    # until the start of its next turn
     "fighting defensively": {"atk": -4, "ac": 2},
     "total defense": {"ac": 4},
     "fatigued": {"str": -2, "dex": -2},

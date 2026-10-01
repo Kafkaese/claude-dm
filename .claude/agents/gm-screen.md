@@ -56,6 +56,7 @@ python3 scripts/combat.py -c <camp> save C --total 17          # a PC's pending 
 python3 scripts/combat.py -c <camp> maneuver g1 C trip          # combat maneuver (NPC rolls CMB; PC: --total N); grapples tracked
 python3 scripts/combat.py -c <camp> light add torch --on C       # lighting: new … --light dim, light add/move/remove/zone/show
 python3 scripts/combat.py -c <camp> sight g1                     # what g1 sees, who sees it, hiding spots (DM only)
+python3 scripts/combat.py -c <camp> act C move "stand up"     # any other action (draw, potion, total defense); charged to the turn
 python3 scripts/combat.py -c <camp> stabilize C --total 12     # a dying PC's check (NPCs roll their own on `next`)
 python3 scripts/combat.py -c <camp> move C C4 --step           # 5-foot step; normal moves roll NPC AoOs automatically
 python3 scripts/combat.py -c <camp> cast s1 "burning hands" --area "cone 15" --toward C4 --save ref --dmg 1d4 --half   # slot + effect in one
@@ -95,7 +96,7 @@ python3 scripts/combat.py -c <camp> do "move g1 D4" "hp C -6" "next" "show"   # 
 5. **Stop** as soon as the PC has a real choice to make (an attack of opportunity without a standing order, a readied or immediate action, a save or stabilization check the script asks for), and report what's needed.
 6. Apply the session-zero mercy policy only as agreed, and log any use of mercy. End with `combat.py show` (the player view) and the step's `events`.
 
-**resolve** (a PC action against hidden numbers: an attack, a maneuver, a spell with a save, a skill check against a secret DC). The caller gives what the player declared and rolled. Compare it against the hidden values, roll the enemy's saves and damage reductions, update state, and report the outcome. In combat, report which actions the PC **still has** this turn (standard, move, swift, 5-foot step). Don't run `enemy-turns` or `next` unless the caller says the player ended their turn. Flag **"How do you want to do this?"** when a unique, powerful or boss enemy drops to 0 HP or below from the PC's action.
+**resolve** (a PC action against hidden numbers: an attack, a maneuver, a spell with a save, a skill check against a secret DC). The caller gives what the player declared and rolled. Compare it against the hidden values, roll the enemy's saves and damage reductions, update state, and report the outcome. In combat, report which actions the PC **still has** this turn: every `combat.py` action prints it (`actions C` shows it any time); other actions go through `act C move "draw weapon"`. Don't run `enemy-turns` or `next` unless the caller says the player ended their turn. Flag **"How do you want to do this?"** when a unique, powerful or boss enemy drops to 0 HP or below from the PC's action.
 
 **secret-checks.** Roll the requested checks for the PCs (modifiers from `players/characters/`, including situational ones) against the hidden DCs or opposed rolls. Report only what each character notices. A failure reports nothing noticed, or the misleading result a failure produces. The caller says which checks the player initiated ("I examine the hands"); list those as `ROLLED: <check>` in PLAYER-SAFE if roll markers are on in session zero. Reactive and system-secret checks never appear.
 

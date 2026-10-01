@@ -38,6 +38,7 @@
         "hp": {"type": "integer", "minimum": 1, "description": "Override (e.g. already wounded)."},
         "cr": {"type": "string", "description": "CR for the XP summary, e.g. 1/3."}
       }}},
+    "surprise": {"type": "boolean", "description": "The fight opens with a surprise round (only a standard or move action each; the PCs' side, if unaware, doesn't act)."},
     "tactics": {"type": "string", "description": "How the enemies fight (DM only; shown by setup)."},
     "morale": {"type": "string", "description": "When they flee or surrender."},
     "exit_ramp": {"type": "string", "description": "How the fight can end without the PC dying."},

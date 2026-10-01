@@ -100,20 +100,22 @@ EFFECT = {  # the effect options shared by cast and sla
     "light_at": S("light/darkness spells: the square it's cast on"),
     "light_on": S("light/darkness spells: the carrier token"),
     "rounds": I("light/darkness spells: duration in rounds"), "out_of_turn": OOT,
+    "time": S("casting time (default standard; quickened = swift)", ["standard", "full", "round", "swift", "immediate"]),
+    "override": B("don't charge an action"),
 }
 EFFECT_FLAGS = {"area": "--area", "at": "--at", "toward": "--toward", "target": "--target", "save": "--save",
                 "dmg": "--dmg", "half": "--half", "dc": "--dc", "defensive": "--defensive",
                 "no_provoke": "--no-provoke", "light_at": "--light-at", "light_on": "--light-on",
-                "rounds": "--rounds", "out_of_turn": "--out-of-turn"}
+                "rounds": "--rounds", "out_of_turn": "--out-of-turn", "time": "--time", "override": "--override"}
 
 
 def _info(a: Args) -> list[str]:
     what, tok = a["what"], a.get("token")
-    need = {"sight", "spells", "dist", "threat"}
+    need = {"sight", "spells", "dist", "threat", "actions"}
     if what in need and not tok:
         raise ValueError(f"'{what}' needs token")
     return {"show": ["show"], "show_dm": ["show", "--dm"], "events": ["events"] + (["--all"] if a.get("all") else []),
-            "sight": ["sight", tok or ""], "spells": ["spells", tok or ""],
+            "sight": ["sight", tok or ""], "actions": ["actions", tok or ""], "spells": ["spells", tok or ""],
             "dist": ["dist", tok or "", a.get("other") or ""], "threat": ["threat", tok or ""],
             "light_map": ["light", "show"] + (["--for", tok] if tok else [])}[what]
 
@@ -164,8 +166,9 @@ TOOLS: list[Tool] = [
              "size": "--size", "reach": "--reach", "speed": "--speed"})),
     Tool("combat_move", "Move a token along the cheapest legal path. NPC attacks of opportunity are rolled; a PC's chance opens a question.",
          {"token": S(TOK), "to": S(SQ), "step": B("a 5-foot step (no AoO)"), "no_aoo": B("don't roll NPC AoOs (deliberate exception)"),
-          "out_of_turn": OOT},
-         ["token", "to"], lambda a: ["move", a["token"], a["to"]] + flags(a, {"step": "--step", "no_aoo": "--no-aoo", "out_of_turn": "--out-of-turn"})),
+          "as": S("movement as part of this full-round action", ["charge", "withdraw", "run"]), "out_of_turn": OOT, "override": B("don't charge move actions")},
+         ["token", "to"], lambda a: ["move", a["token"], a["to"]] + flags(a, {"step": "--step", "no_aoo": "--no-aoo", "as": "--as",
+                                                                               "out_of_turn": "--out-of-turn", "override": "--override"})),
     Tool("combat_attack", "An attack. NPC: `with` names a profile attack (the script rolls). PC: `total` and `damage` are the player's rolls. "
          "Situational modifiers (flanking, conditions, cover, light, range) are applied automatically.",
          {"attacker": S(TOK), "target": S(TOK), "with": S("attack name from the attacker's profile"),
@@ -173,13 +176,13 @@ TOOLS: list[Tool] = [
           "total": I("PC: the player's attack total"), "damage": I("PC: the player's damage"), "nat": I("PC: natural 1 or 20"),
           "confirm": I("PC: crit confirmation total"), "ranged": B("PC/raw: a ranged attack"), "name": S("weapon label for the log"),
           "roll": S('NPC without profile: e.g. "1d20+5"'), "dmg": S("NPC without profile: damage dice"),
-          "crit": I("threat range low end"), "mult": I("crit multiplier"), "nonlethal": B("nonlethal damage"), "out_of_turn": OOT},
+          "crit": I("threat range low end"), "mult": I("crit multiplier"), "nonlethal": B("nonlethal damage"), "out_of_turn": OOT, "override": B("don't charge an action: a feat or ability changes the action economy")},
          ["attacker", "target"],
          lambda a: ["attack", a["attacker"], a["target"]] + flags(a, {
              "with": "--with", "full": "--full", "charge": "--charge", "touch": "--touch", "aoo": "--aoo", "total": "--total",
              "damage": "--damage", "nat": "--nat", "confirm": "--confirm", "ranged": "--ranged", "name": "--name",
              "roll": "--roll", "dmg": "--dmg", "crit": "--crit", "mult": "--mult", "nonlethal": "--nonlethal",
-             "out_of_turn": "--out-of-turn"})),
+             "out_of_turn": "--out-of-turn", "override": "--override"})),
     Tool("combat_maneuver", "A combat maneuver (NPC rolls its CMB; PC: total). Provokes from the target unless the Improved feat or grab. "
          "Grapple again = maintain (+5, with option). escape: the held creature (attacker) vs its grappler (target). release: let go.",
          {"attacker": S(TOK), "target": S(TOK),
@@ -192,14 +195,14 @@ TOOLS: list[Tool] = [
           "condition": S("dirty trick", ["blinded", "dazzled", "deafened", "entangled", "shaken", "sickened"]),
           "item": S("disarm/steal/sunder: the item"), "dmg": S("NPC damage dice"), "damage": I("PC damage"),
           "nonlethal": B("nonlethal"), "reverse": B("escape: become the grappler"), "reach": I("reach of the weapon used"),
-          "mod": I("other situational modifier"), "out_of_turn": OOT},
+          "mod": I("other situational modifier"), "out_of_turn": OOT, "override": B("don't charge an action: a feat or ability changes the action economy")},
          ["attacker", "target", "kind"],
          lambda a: ["maneuver", a["attacker"], a["target"], a["kind"]] + flags(a, {
              "total": "--total", "nat": "--nat", "charge": "--charge", "grab": "--grab", "aoo": "--aoo",
              "no_provoke": "--no-provoke", "aoo_damage": "--aoo-damage", "option": "--option", "to": "--to",
              "place": "--place", "follow": "--follow", "condition": "--condition", "item": "--item", "dmg": "--dmg",
              "damage": "--damage", "nonlethal": "--nonlethal", "reverse": "--reverse", "reach": "--reach",
-             "mod": "--mod", "out_of_turn": "--out-of-turn"})),
+             "mod": "--mod", "out_of_turn": "--out-of-turn", "override": "--override"})),
     Tool("combat_cast", "An NPC casts a spell (or, with sla, uses a spell-like ability): spends the slot or use, provokes or casts "
          "defensively, and applies the effect given here. Every NPC spell and SLA goes through this.",
          {"caster": S(TOK), "spell": S("spell or ability name"), "sla": B("a spell-like ability"),
@@ -244,6 +247,16 @@ TOOLS: list[Tool] = [
     Tool("combat_flag", "Reveal, hide (only after a successful Stealth check) or remove a token.",
          {"token": S(TOK), "action": S("what", ["reveal", "hide", "remove"]), "force": B("hide although a PC sees it clearly")},
          ["token", "action"], lambda a: [a["action"], a["token"]] + (["--force"] if a.get("force") and a["action"] == "hide" else [])),
+    Tool("combat_act", "Any other action, charged to the creature's turn: draw a weapon (move), drink a potion (standard, provokes), "
+         "total defense (standard), activate boots (swift), speak (free), … \"stand up\" removes prone and provokes. "
+         "An immediate action off-turn takes the swift action of its next turn.",
+         {"token": S(TOK), "kind": S("action type", ["standard", "move", "full", "swift", "immediate", "free"]),
+          "what": S("what it does"), "provokes": B("it provokes attacks of opportunity (Table 8-2)"),
+          "log": S("a line for the player-visible combat log"), "override": B("don't charge it")},
+         ["token", "kind", "what"],
+         lambda a: ["act", a["token"], a["kind"], a["what"]] + flags(a, {"provokes": "--provokes", "log": "--log", "override": "--override"})),
+    Tool("combat_surprise", "Turn the surprise round on or off (one standard or move action each; ends when the next round starts).",
+         {"on": B("true: surprise round")}, ["on"], lambda a: ["surprise", "on" if a["on"] else "off"]),
     Tool("combat_next", "Advance the turn pointer (Claude Code UI / gm-screen only; in web/terminal play the interface does this).",
          {}, [], lambda a: ["next"]),
     Tool("combat_endturn", "The player ended the PC's turn in other words, or together with their actions: the interface plays the next step.",
@@ -261,7 +274,7 @@ TOOLS: list[Tool] = [
          lambda a: ["order", a["token"], "aoo", a["value"]]),
     Tool("combat_info", "Look things up: show (player view), show_dm (never show it), events (new log lines), sight (what a creature "
          "sees, hiding spots), spells (what's left), dist (token to token/square), threat (who threatens/flanks), light_map.",
-         {"what": S("what", ["show", "show_dm", "events", "sight", "spells", "dist", "threat", "light_map"]),
+         {"what": S("what", ["show", "show_dm", "events", "sight", "spells", "dist", "threat", "light_map", "actions"]),
           "token": S(TOK), "other": S("dist: second token or square"), "all": B("events: all lines")},
          ["what"], _info),
     Tool("combat_log", "Add a free-text line to the player-visible combat log.", {"text": S("the line")}, ["text"],
