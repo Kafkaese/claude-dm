@@ -33,7 +33,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from dm_engine import EFFORTS, REPO, Engine, combat_state, is_go_signal, last_session, run_combat_step, step_due
+from dm_engine import (EFFORTS, REPO, Engine, active_campaign, campaign_for_session, combat_state, is_campaign,
+                       is_go_signal, last_session, load_history, remember_campaign, run_combat_step, step_due)
 
 # ---------- terminal formatting ----------
 
@@ -184,7 +185,8 @@ class MapWatcher:
         """The watched campaign, or the one whose fight changed most recently."""
         if self.campaign:
             return self.campaign
-        states = sorted(REPO.glob("campaigns/*/dm/combat/current.json"), key=lambda p: p.stat().st_mtime)
+        states = sorted((p for p in REPO.glob("campaigns/*/dm/combat/current.json") if is_campaign(p.parents[2].name)),
+                        key=lambda p: p.stat().st_mtime)
         return states[-1].parents[2].name if states else None
 
     def _changed(self, path: Path) -> bool:
@@ -352,7 +354,8 @@ def main() -> None:
             print("No previous session found; starting a new one.")
 
     spinner = Spinner()
-    maps = MapWatcher(args.campaign, not args.no_images)
+    campaign = args.campaign or (campaign_for_session(resume, load_history(resume)) if resume else None)
+    maps = MapWatcher(campaign, not args.no_images)
     maps.prime()
     term = Terminal(spinner, maps)
     dm = Engine(term.on_event, model=args.model, effort=args.effort, debug=args.debug)
@@ -399,6 +402,12 @@ def main() -> None:
             continue
         print()
         term.before_turn()
+        detect = False   # follow /start-session and /new-campaign to the campaign they're about
+        words = text.split()
+        if words[0] == "/start-session" and len(words) > 1 and is_campaign(words[1]):
+            maps.campaign = words[1]
+        elif words[0] in ("/start-session", "/new-campaign"):
+            maps.campaign, detect = None, True
         camp = maps.current_campaign()
         st = combat_state(camp)
         try:
@@ -424,6 +433,9 @@ def main() -> None:
                 print(f"{DIM}{dm.stderr_lines[-1]}{RESET}")
             dm.restart()
             continue
+        if detect:
+            maps.campaign = active_campaign(None)
+        remember_campaign(dm.session_id, maps.campaign)   # so --resume comes back to this campaign
         maps.show()
 
     dm.stop()

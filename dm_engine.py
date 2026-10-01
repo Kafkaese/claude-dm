@@ -482,6 +482,45 @@ def _combat_module() -> ModuleType:
     return mod
 
 
+SESSION_CAMPAIGNS = STATE / "session-campaigns.json"
+
+
+def is_campaign(name: str | None) -> bool:
+    """A real campaign folder: has campaign.md, and isn't _template or a test folder (_test_*, _zz_*)."""
+    return bool(name) and not str(name).startswith("_") and (REPO / "campaigns" / str(name) / "campaign.md").is_file()
+
+
+def remember_campaign(session_id: str | None, campaign: str | None) -> None:
+    """Record which campaign a session plays (.play/session-campaigns.json), so --resume finds it again."""
+    if not session_id or not is_campaign(campaign):
+        return
+    try:
+        data = json.loads(SESSION_CAMPAIGNS.read_text()) if SESSION_CAMPAIGNS.exists() else {}
+    except ValueError:
+        data = {}
+    if data.get(session_id) != campaign:
+        data[session_id] = campaign
+        STATE.mkdir(exist_ok=True)
+        SESSION_CAMPAIGNS.write_text(json.dumps(data, indent=1))
+
+
+def campaign_for_session(session_id: str | None, history: list[dict[str, str]] | None = None) -> str | None:
+    """The campaign a resumed session plays: the recorded one, else the last `/start-session <slug>` in its
+    chat history, else None (the caller falls back to the most recently played campaign)."""
+    if session_id and SESSION_CAMPAIGNS.exists():
+        try:
+            camp = json.loads(SESSION_CAMPAIGNS.read_text()).get(session_id)
+        except ValueError:
+            camp = None
+        if is_campaign(camp):
+            return camp
+    for m in reversed(history or []):
+        found = re.match(r"^/start-session\s+(\S+)", m.get("text", "")) if m.get("role") == "player" else None
+        if found and is_campaign(found.group(1)):
+            return found.group(1)
+    return None
+
+
 def active_campaign(explicit: str | None = None) -> str | None:
     """The given campaign, or the one touched most recently (fight, session log, campaign file)."""
     if explicit:
@@ -489,7 +528,7 @@ def active_campaign(explicit: str | None = None) -> str | None:
     best: str | None = None
     best_t = 0.0
     for camp in (REPO / "campaigns").iterdir():
-        if not camp.is_dir() or camp.name.startswith("_"):
+        if not is_campaign(camp.name):
             continue
         paths = [camp / "campaign.md", camp / "dm" / "combat" / "current.json"]
         paths += list((camp / "dm" / "session-log").glob("session-*.md"))

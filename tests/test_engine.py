@@ -121,3 +121,43 @@ class Telemetry(CampaignCase):
                 self.assertEqual(rec["tools"][0]["error"], "combat error: nope")
             finally:
                 E.TELEMETRY = old
+
+
+class CampaignTracking(CampaignCase):
+    """A session stays with its campaign, even when test campaigns are touched later."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self._old = E.SESSION_CAMPAIGNS
+        self._tmp = tempfile.TemporaryDirectory()
+        E.SESSION_CAMPAIGNS = Path(self._tmp.name) / "sc.json"
+
+    def tearDown(self) -> None:
+        E.SESSION_CAMPAIGNS = self._old
+        self._tmp.cleanup()
+        super().tearDown()
+
+    def test_test_folders_are_not_campaigns(self) -> None:
+        self.assertFalse(E.is_campaign(self.slug))          # _test_…: never picked up
+        self.assertFalse(E.is_campaign("_template"))
+        self.assertNotEqual(E.active_campaign(None), self.slug)
+
+    def test_recorded_and_history_fallback(self) -> None:
+        real = next(p.name for p in (E.REPO / "campaigns").iterdir() if E.is_campaign(p.name))
+        E.remember_campaign("sid-1", real)
+        E.remember_campaign("sid-2", self.slug)              # a test folder is never recorded
+        self.assertEqual(E.campaign_for_session("sid-1"), real)
+        self.assertIsNone(E.campaign_for_session("sid-2"))
+        hist = [{"role": "player", "text": f"/start-session {real}"}, {"role": "dm", "text": "Welcome back."}]
+        self.assertEqual(E.campaign_for_session("unknown", hist), real)
+
+    def test_web_hub_pins_the_campaign(self) -> None:
+        import web
+        real = next(p.name for p in (E.REPO / "campaigns").iterdir() if E.is_campaign(p.name))
+        hub = web.Hub(None)
+        hub.engine = type("FakeEngine", (), {"session_id": "sid-3"})()
+        hub.follow_command(f"/start-session {real}")
+        hub._pin_campaign()
+        self.run_cmd("new", "--blank", "5x5")                 # a test campaign gets touched afterwards…
+        self.assertEqual(hub.campaign(), real)                # …and the page stays with the real one
+        self.assertEqual(E.campaign_for_session("sid-3"), real)

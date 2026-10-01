@@ -25,7 +25,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from typing import Any
 
-from dm_engine import (EFFORTS, REPO, Engine, active_campaign, campaign_title, combat_snapshot, combat_state,
+from dm_engine import (EFFORTS, REPO, Engine, active_campaign, campaign_for_session, campaign_title, is_campaign, remember_campaign, combat_snapshot, combat_state,
                        is_go_signal, list_campaigns, run_combat_step, step_due,
                        last_combat_events, last_session, load_history, map_png_path)
 
@@ -40,6 +40,7 @@ class Hub:
             campaign_arg: the --campaign option, or None to use the most recently played campaign.
         """
         self.campaign_arg = campaign_arg
+        self.detect_campaign = False   # a /start-session without a slug or /new-campaign: pin what it touched
         self.lock = threading.RLock()
         self.subs: list[queue.Queue[dict[str, Any]]] = []
         self.history: list[dict[str, Any]] = []   # {"role": "player"|"dm"|"system"|"log", ...}
@@ -181,10 +182,17 @@ class Hub:
     def follow_command(self, text: str) -> None:
         """Point the page at the campaign a typed /start-session or /new-campaign is about."""
         parts = text.split()
-        if parts[0] == "/start-session" and len(parts) > 1 and (REPO / "campaigns" / parts[1]).is_dir():
+        if parts[0] == "/start-session" and len(parts) > 1 and is_campaign(parts[1]):
             self.campaign_arg = parts[1]
-        elif parts[0] == "/new-campaign":
-            self.campaign_arg = None   # the new one will be the most recently touched
+        elif parts[0] in ("/start-session", "/new-campaign"):
+            self.campaign_arg, self.detect_campaign = None, True   # pinned after the reply (see _pin_campaign)
+
+    def _pin_campaign(self) -> None:
+        """After a reply: fix the campaign this session plays and record it for --resume, so a test
+        campaign touched later (or elsewhere) can't take over the page."""
+        if self.detect_campaign:
+            self.campaign_arg, self.detect_campaign = active_campaign(None), False
+        remember_campaign(self.engine.session_id if self.engine else None, self.campaign_arg)
 
     def _run_turn(self, text: str) -> None:
         """Worker thread: send the message to the engine and wait for the reply. If that reply
@@ -194,6 +202,7 @@ class Hub:
         self.refresh_combat()
         if ok and step_due(self.campaign(), text):
             self._step()
+        self._pin_campaign()
         self.refresh_campaign()
         self.publish({"type": "busy", "busy": False})
 
@@ -407,6 +416,7 @@ def main() -> None:
     hub = Hub(args.campaign)
     if resume:
         hub.history = load_history(resume)
+        hub.campaign_arg = args.campaign or campaign_for_session(resume, hub.history)
     engine = Engine(hub.on_event, model=args.model, effort=args.effort, debug=args.debug)
     hub.engine = engine
     engine.start(resume=resume)
