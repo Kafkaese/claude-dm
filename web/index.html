@@ -141,7 +141,10 @@ body.combat #divider { display: block; }
 #legend .keys { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 #legend .key { display: inline-flex; align-items: center; gap: 6px; color: var(--text); }
 #legend .key svg { width: 18px; height: 18px; border-radius: 3px; box-shadow: 0 0 0 1px var(--border); flex: none; }
-#log { display: flex; flex-direction: column; gap: 4px; }
+/* the combat log takes the space left under the map and initiative, and scrolls on its own */
+.panel > * { flex-shrink: 0; }
+.panel > .logsection { flex: 1 1 0; min-height: 140px; display: flex; flex-direction: column; }
+#log { display: flex; flex-direction: column; gap: 4px; flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px; }
 
 .drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); display: none; }
 .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100%); background: var(--surface); border-left: 1px solid var(--border); padding: 24px 28px; overflow-y: auto; transform: translateX(100%); transition: transform .25s; }
@@ -224,7 +227,7 @@ body.drawer-open .drawer-backdrop { display: block; }
       <div id="map"><div id="svgwrap"></div><div id="tip" hidden></div></div>
       <div id="legend"></div>
       <div><div class="section-label">Initiative</div><div class="init-head" aria-hidden="true"><span></span><span>Name</span><span>Health</span><span>Init</span></div><div id="init"></div></div>
-      <div><div class="section-label">Combat log</div><div id="log"></div></div>
+      <div class="logsection"><div class="section-label">Combat log</div><div id="log" tabindex="0" aria-label="Combat log"></div></div>
     </div>
   </aside>
 </div>
@@ -574,8 +577,10 @@ function setCombat(c) {
   }).join("");
   renderLegend(c.map);
   const log = document.getElementById("log");
+  // follow new entries, unless the player scrolled up to read older ones
+  const follow = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   log.innerHTML = c.events.map(e => `<div class="logline"><span class="r">R${e.round ?? "?"}</span>${esc(e.text)}</div>`).join("");
-  log.lastElementChild && log.parentElement.parentElement.scrollTo({ top: 1e9 });
+  if (follow) log.scrollTop = log.scrollHeight;
 }
 
 // ---------- resizable side panel ----------
