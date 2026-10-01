@@ -35,7 +35,7 @@ Fill in the template files in `campaigns/<slug>/`:
 - `dm/factions/`: a file for each antagonist group with an agenda (`_faction-template.md`), with its next moves and its reactions at each awareness level
 - `dm/tables/<starting-region>.md`: a random event table for the starting region (`_region-template.md`)
 - **Companion** (if session zero has one and the DM builds it): an official NPC stat block, or a build at the PC's level minus 1, filling a role the PC lacks (e.g. a healer or a front-liner for a caster). Give it a personality, voice and wants of its own. The sheet goes in `players/characters/<companion>.md`, marked as a companion. It's visible to the player, since it's an ally. Any secrets or hooks go in `dm/characters/<companion>.md`. If the player builds it, leave a note for `/add-character` instead.
-- Stat blocks for the opening encounters: save them to the library, following the stat block order in `library/general/table-rules/combat.md`
+- The opening encounters as encounter files in `dm/combat/encounters/` (format: `campaigns/_template/dm/combat/encounters/README.md`), each passing `combat.py encounter check`. Stat blocks for them: save them to the library, following the stat block order in `library/general/table-rules/combat.md`
 
 ## 3. Design principles
 - **Addressable files.** Give every scene, room, handout, encounter and NPC section its own heading (`###`), with an ID where it helps (e.g. `### H2. Tally-stele`). Agents read files section by section, so clear headings make every call during play faster and cheaper. Prefer several focused files over one huge one.

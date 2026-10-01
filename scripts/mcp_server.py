@@ -138,6 +138,19 @@ TOOLS: list[Tool] = [
          {"map": S("map file, e.g. campaigns/<c>/dm/combat/maps/cave.txt"), "blank": S('blank grid "WxH", e.g. "10x8"'),
           "light": S("ambient light", ["dark", "dim", "normal", "bright"]), "force": B("replace an active encounter")},
          [], lambda a: ["new"] + ([a["map"]] if a.get("map") else []) + flags(a, {"blank": "--blank", "light": "--light", "force": "--force"})),
+    Tool("combat_setup", "Build a PREPARED encounter (dm/combat/encounters/<name>.md) in one call: map, lighting, every combatant "
+         "(NPC initiative rolled), light sources. Checks everything first. Returns the DM view, tactics, morale and exit ramp.",
+         {"encounter": S("encounter name or file"), "init": {"type": "object", "additionalProperties": {"type": "integer"},
+                                                            "description": "the PCs' initiative rolls by token, e.g. {\"C\": 17}"},
+          "place": {"type": "object", "additionalProperties": {"type": "string"},
+                    "description": "override start squares by token, e.g. {\"C\": \"E5\"}"},
+          "force": B("replace an active encounter")},
+         ["encounter"],
+         lambda a: ["setup", a["encounter"]] + [x for k, v in (a.get("init") or {}).items() for x in ("--init", f"{k}={v}")]
+         + [x for k, v in (a.get("place") or {}).items() for x in ("--place", f"{k}={v}")] + (["--force"] if a.get("force") else [])),
+    Tool("combat_encounters", "List the campaign's prepared encounters, or check them (all, or the named ones) without creating anything.",
+         {"action": S("what", ["list", "check"]), "names": {"type": "array", "items": {"type": "string"}}},
+         ["action"], lambda a: ["encounter", a["action"], *(a.get("names") or [])]),
     Tool("combat_add", "Add a combatant. Numbers come from the combat-profile block in `ref` (a stat block, or a PC's sheet, "
          "which must pass the PC schema). init: a number (the PC's roll) or \"roll\" (from the profile).",
          {"token": S("1-2 chars: PCs uppercase (C), others lowercase+digit (g1)"), "name": S("display name"),

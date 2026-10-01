@@ -15,6 +15,11 @@ Setup
       [--init 15] [--hp 11] [--ac 16] [--touch 12] [--ff 14] [--size 1|2|3|4] [--reach 5]
       [--speed 30] [--dr 5] [--con 14] [--profile '{json}']
                                   TOKEN is 1-2 chars: PCs uppercase (C), others lowercase+digit (g1)
+Prepared encounters (dm/combat/encounters/<name>.md, a ```encounter block; library/general/encounter.schema.json)
+  encounter list | check [NAME …] list them, or validate (map, profiles, squares, lights) without creating anything
+  setup NAME --init C=17 [--place C=E5] [--force]
+                                  build the whole fight in one go: map, lighting, combatants (NPC
+                                  initiative rolled), light sources; prints tactics, morale, exit ramp
 Play
   show [--dm]                     player view (paste verbatim) / DM view (never paste)
   next                            advance the turn pointer. Also: ends expiring conditions, applies
@@ -107,6 +112,8 @@ damage per hit (and what hardness/DR absorbed), PC/ally HP, enemy health in word
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import math
 import os
@@ -933,25 +940,27 @@ def cmd_events(args: Args, st: State) -> str:
 
 # ---------- commands ----------
 
-def cmd_new(args: Args) -> str:
-    """Start an encounter from a map file or a blank grid."""
-    path = state_path(args.campaign)
-    if path.exists() and not args.force:
-        raise CombatError("an encounter is already active; 'end' it first or pass --force")
-    ambient, light_rows = (args.light or "normal"), None
-    if args.blank:
-        w, h = (int(v) for v in args.blank.lower().split("x"))
+def fresh_state(mapfile: str | None, blank: str | None, light: str | None = None) -> State:
+    """A new, unsaved encounter state from a map file or a blank 'WxH' grid. A map file may carry
+    lighting: an "ambient: dim" line, and a "light:" line followed by zone rows (X dark, D dim,
+    N normal, B bright, anything else = ambient), the same size as the map."""
+    ambient, light_rows = "normal", None
+    if blank:
+        try:
+            w, h = (int(v) for v in blank.lower().split("x"))
+        except ValueError:
+            raise CombatError(f"--blank must look like 10x8, not {blank!r}")
         grid = ["." * w for _ in range(h)]
     else:
-        mp = Path(args.mapfile)
+        if not mapfile:
+            raise CombatError("give a MAPFILE or --blank WxH")
+        mp = Path(mapfile)
         if not mp.is_file():
-            mp = PROJECT / args.mapfile
+            mp = PROJECT / mapfile
         if not mp.is_file():
-            raise CombatError(f"no such map file: {args.mapfile}")
+            raise CombatError(f"no such map file: {mapfile}")
         lines = [l.rstrip("\n") for l in mp.read_text(encoding="utf-8").splitlines()]
         lines = [l for l in lines if l.strip() and not l.lstrip().startswith("//")]
-        # optional lighting: an "ambient: dim" line, and a "light:" line followed by zone rows
-        # (X dark, D dim, N normal, B bright, anything else = ambient), same size as the map
         for l in [l for l in lines if l.strip().lower().startswith("ambient:")]:
             ambient = l.split(":", 1)[1].strip().lower()
             lines.remove(l)
@@ -967,14 +976,21 @@ def cmd_new(args: Args) -> str:
             raise CombatError(f"unknown map characters: {''.join(sorted(bad))}")
     if not (1 <= w <= 26 and h >= 1):
         raise CombatError("map must be 1-26 columns wide")
-    if args.light:
-        ambient = args.light
+    if light:
+        ambient = light
     if ambient not in V.LEVELS:
         raise CombatError(f"ambient light must be one of: {', '.join(V.LEVELS)}")
-    st = {"w": w, "h": h, "grid": grid, "tokens": [], "round": 1, "turn": None,
-          "started": datetime.now().isoformat(timespec="minutes"),
-          "light": {"ambient": ambient, "sources": [],
-                    "grid": [r.ljust(w)[:w] for r in light_rows][:h] if light_rows else None}}
+    return {"w": w, "h": h, "grid": grid, "tokens": [], "round": 1, "turn": None,
+            "started": datetime.now().isoformat(timespec="minutes"),
+            "light": {"ambient": ambient, "sources": [],
+                      "grid": [r.ljust(w)[:w] for r in light_rows][:h] if light_rows else None}}
+
+
+def cmd_new(args: Args) -> str:
+    """Start an encounter from a map file or a blank grid."""
+    if state_path(args.campaign).exists() and not args.force:
+        raise CombatError("an encounter is already active; 'end' it first or pass --force")
+    st = fresh_state(args.mapfile, args.blank, args.light)
     save(args.campaign, st)
     return render(st, dm=True)
 
@@ -2174,6 +2190,277 @@ def cmd_sight(args: Args, st: State) -> str:
     return V.sight_report(st, c, fmt_pos, (c.get("speed") or 30) // 5)
 
 
+# ---------- prepared encounters ----------
+# An encounter file (campaigns/<c>/dm/combat/encounters/<name>.md) holds DM notes plus a
+# ```encounter JSON block (library/general/encounter.schema.json). `encounter check` validates it
+# at prep time; `setup` builds the whole fight from it in one call at play time.
+
+ENCOUNTER_SCHEMA = PROJECT / "library" / "general" / "encounter.schema.json"
+
+
+def encounters_dir(campaign: str) -> Path:
+    """Where a campaign's prepared encounters live."""
+    return PROJECT / "campaigns" / campaign / "dm" / "combat" / "encounters"
+
+
+def encounter_path(campaign: str, name: str) -> Path:
+    """An encounter file by path or by name (the file name without .md).
+
+    Raises:
+        CombatError: if there's no such file.
+    """
+    base = encounters_dir(campaign)
+    for c in (Path(name), PROJECT / name, PROJECT / "campaigns" / campaign / name, base / name, base / f"{name}.md"):
+        if c.is_file():
+            return c.resolve()
+    raise CombatError(f"no encounter '{name}' (see `encounter list`)")
+
+
+def load_encounter(path: Path) -> dict[str, Any]:
+    """The ```encounter JSON block of a file."""
+    m = re.search(r"```encounter\s*\n(.*?)\n```", path.read_text(encoding="utf-8"), re.S)
+    if not m:
+        raise CombatError(f"{path.name} has no ```encounter block")
+    try:
+        enc = json.loads(m.group(1))
+    except ValueError as e:
+        raise CombatError(f"bad JSON in the encounter block of {path.name}: {e}")
+    if not isinstance(enc, dict):
+        raise CombatError(f"the encounter block of {path.name} must be a JSON object")
+    return enc
+
+
+def camp_ref(campaign: str, rel: str) -> str:
+    """A path from an encounter file, as the project-relative path `add --ref` takes: library/… and
+    campaigns/… as they are, everything else relative to the campaign folder."""
+    return rel if rel.startswith(("library/", "campaigns/")) else f"campaigns/{campaign}/{rel}"
+
+
+def pc_sheets(campaign: str) -> list[tuple[str, str, str]]:
+    """The campaign's PCs from players/characters/: (sheet ref, name from its '# ' heading, token)."""
+    out: list[tuple[str, str, str]] = []
+    folder = PROJECT / "campaigns" / campaign / "players" / "characters"
+    for f in sorted(folder.glob("*.md")) if folder.is_dir() else []:
+        if f.name.lower() == "readme.md":
+            continue
+        m = re.search(r"^#\s+(.+)$", f.read_text(encoding="utf-8"), re.M)
+        name = (m.group(1).strip() if m else f.stem.replace("-", " ").title()).split(" (")[0]
+        used = {t for _, _, t in out}
+        tok = next((ch.upper() for ch in name if ch.isalpha() and ch.upper() not in used), "P")
+        out.append((f"campaigns/{campaign}/players/characters/{f.name}", name, tok))
+    return out
+
+
+def plan_encounter(campaign: str, enc: dict[str, Any], inits: dict[str, int] | None = None,
+                   place: dict[str, str] | None = None) -> tuple[State | None, list[list[str]], list[str]]:
+    """Validate an encounter and turn it into the commands that build it (after `new`).
+
+    Args:
+        inits: the PCs' initiative rolls by token; None checks the file without them (prep time).
+        place: start squares by token that override the file's (e.g. the PC came from the east).
+
+    Returns:
+        (the map's fresh state, the command lines, errors). Nothing is created.
+    """
+    schema = json.loads(ENCOUNTER_SCHEMA.read_text(encoding="utf-8"))
+    errs = R._validate(enc, schema, "encounter", [])
+    if errs:
+        return None, [], errs
+    place = place or {}
+    try:
+        probe = fresh_state(camp_ref(campaign, enc["map"]) if enc.get("map") else None, enc.get("blank"), enc.get("light"))
+    except CombatError as e:
+        return None, [], [f"map: {e}"]
+    steps: list[list[str]] = []
+    system = campaign_system(campaign)
+
+    def square(sq: str, what: str) -> Square | None:
+        try:
+            return parse_pos(sq, probe)
+        except CombatError as e:
+            errs.append(f"{what}: {e}")
+            return None
+
+    for i, z in enumerate(enc.get("zones") or []):
+        if square(z["from"], f"zones[{i}].from") and square(z["to"], f"zones[{i}].to"):
+            steps.append(["light", "zone", z["from"], z["to"], z["level"]])
+
+    # every combatant: (token, name, ref, square, side, extra add options)
+    entries: list[tuple[str, str, str, str, str, list[str]]] = []
+    if enc.get("pcs"):
+        for p in enc["pcs"]:
+            entries.append((p["token"], p.get("name") or p["token"], camp_ref(campaign, p["ref"]),
+                            place.get(p["token"], p["pos"]), "pc", []))
+    else:
+        sheets = pc_sheets(campaign)
+        if not sheets:
+            errs.append("no PC sheets in players/characters/ (and no 'pcs' in the encounter)")
+        starts = enc.get("pc_start") or []
+        for k, (ref, name, tok) in enumerate(sheets):
+            pos = place.get(tok) or (starts[k] if k < len(starts) else None)
+            if not pos:
+                errs.append(f"no start square for {name} ({tok}): add pc_start, or setup --place {tok}=D4")
+                continue
+            entries.append((tok, name, ref, pos, "pc", []))
+    for c in enc["combatants"]:
+        n = c.get("count", 1)
+        poss = c["pos"] if isinstance(c["pos"], list) else [c["pos"]]
+        if len(poss) != n:
+            errs.append(f"{c['token']}: count {n} needs {n} squares in pos, got {len(poss)}")
+            continue
+        extra = ["--init", str(c.get("init", "roll"))]
+        extra += ["--hidden"] if c.get("hidden") else []
+        extra += ["--hp", str(c["hp"])] if c.get("hp") else []
+        extra += ["--cr", c["cr"]] if c.get("cr") else []
+        for k in range(n):
+            tok = f"{c['token']}{k + 1}" if n > 1 or not c["token"][-1:].isdigit() else c["token"]
+            if n > 1 and len(c["token"]) != 1:
+                errs.append(f"{c['token']}: with count, token is a one-letter prefix (g → g1, g2, …)")
+                break
+            name = f"{c['name']} {k + 1}" if n > 1 else c["name"]
+            entries.append((tok, name, camp_ref(campaign, c["ref"]), str(place.get(tok, poss[k])), c.get("side", "enemy"), extra))
+
+    seen: set[str] = set()
+    occupied_sq: dict[Square, str] = {}
+    for tok, name, ref, pos, side, extra in entries:
+        if tok in seen:
+            errs.append(f"token {tok} is used twice")
+            continue
+        seen.add(tok)
+        prof = None
+        if not (PROJECT / ref).is_file():
+            errs.append(f"{tok}: no such file {ref}")
+        else:
+            try:
+                prof = R.load_profile(ref)
+                if prof is None:
+                    errs.append(f"{tok}: {ref} has no combat-profile block")
+            except ValueError as e:
+                errs.append(f"{tok}: bad combat-profile block in {ref}: {e}")
+            if prof is not None:
+                p_errs, _ = R.check_profile(prof, system)
+                if side == "pc" and prof.get("kind") != "pc":
+                    p_errs.append('a PC profile needs "kind": "pc"')
+                errs += [f"{tok} ({ref}): {e}" for e in p_errs]
+        at = square(pos, f"{tok} pos")
+        if at:
+            size = (prof or {}).get("size", 1) if isinstance(prof, dict) else 1
+            for cell in cells({"x": at[0], "y": at[1], "size": size}):
+                if cost(probe, *cell) is None:
+                    errs.append(f"{tok}: {fmt_pos(*cell)} is a wall, pit or off the map")
+                elif cell in occupied_sq:
+                    errs.append(f"{tok}: {fmt_pos(*cell)} is already taken by {occupied_sq[cell]}")
+                else:
+                    occupied_sq[cell] = tok
+        add = ["add", tok, name, "--pos", pos, "--ref", ref, "--side", side] + extra
+        if side == "pc":
+            if inits is not None:
+                if tok not in inits:
+                    errs.append(f"{name} ({tok}) needs the player's initiative roll: setup … --init {tok}=N")
+                    continue
+                add += ["--init", str(inits[tok])]
+        steps.append(add)
+
+    for i, li in enumerate(enc.get("lights") or []):
+        kind = li["kind"].lower()
+        if kind not in V.SOURCES:
+            errs.append(f"lights[{i}]: unknown light source '{li['kind']}' (known: {', '.join(V.SOURCES)})")
+            continue
+        if bool(li.get("at")) == bool(li.get("on")):
+            errs.append(f"lights[{i}]: give exactly one of 'at' or 'on'")
+            continue
+        if li.get("on") and li["on"] not in seen:
+            errs.append(f"lights[{i}]: no combatant '{li['on']}' to carry the {kind}")
+        if li.get("at"):
+            square(li["at"], f"lights[{i}].at")
+        if V.SOURCES[kind].get("cone") and not li.get("toward"):
+            errs.append(f"lights[{i}]: a {kind} needs 'toward'")
+        steps.append(["light", "add", kind] + [x for k in ("at", "on", "toward") if li.get(k) for x in (f"--{k}", li[k])]
+                     + (["--rounds", str(li["rounds"])] if li.get("rounds") else []))
+    return probe, steps, errs
+
+
+def cmd_encounter(args: Args) -> str:
+    """List prepared encounters, or check them (all, or the named ones) without creating anything."""
+    files = sorted(encounters_dir(args.campaign).glob("*.md")) if args.action == "list" or not args.names else \
+        [encounter_path(args.campaign, n) for n in args.names]
+    files = [f for f in files if f.name.lower() != "readme.md"]
+    if not files:
+        return "No prepared encounters in dm/combat/encounters/."
+    out = []
+    bad = 0
+    for f in files:
+        rel = f.relative_to(PROJECT / "campaigns" / args.campaign) if f.is_relative_to(PROJECT / "campaigns" / args.campaign) else f
+        try:
+            enc = load_encounter(f)
+        except CombatError as e:
+            out.append(f"{rel}: ERROR {e}")
+            bad += 1
+            continue
+        title = enc.get("title") or f.stem
+        if args.action == "list":
+            n = sum(c.get("count", 1) for c in enc.get("combatants") or [] if isinstance(c, dict))
+            out.append(f"{f.stem}: {title} ({n} combatants{', ' + enc['light'] + ' light' if enc.get('light') else ''})")
+            continue
+        _, _, errs = plan_encounter(args.campaign, enc)
+        out.append(f"{rel}: {'OK' if not errs else 'ERRORS'} ({title})")
+        out += [f"  {e}" for e in errs]
+        bad += bool(errs)
+    if args.action == "check" and bad:
+        raise CombatError("\n".join(out))
+    return "\n".join(out)
+
+
+def _kv(pairs: list[str] | None, what: str) -> dict[str, str]:
+    """Parse ['C=17', 'K=12'] into {'C': '17', 'K': '12'}."""
+    out = {}
+    for p in pairs or []:
+        k, sep, v = p.partition("=")
+        if not sep or not k or not v:
+            raise CombatError(f"{what} must look like C=17, not {p!r}")
+        out[k.strip()] = v.strip()
+    return out
+
+
+def cmd_setup(args: Args) -> str:
+    """Build a prepared encounter in one go: map and lighting, every combatant (NPC initiative
+    rolled), light sources. Checks everything first, so a broken file creates nothing."""
+    path = encounter_path(args.campaign, args.name)
+    enc = load_encounter(path)
+    try:
+        inits = {k: int(v) for k, v in _kv(args.init, "--init").items()}
+    except ValueError:
+        raise CombatError("--init values must be numbers, e.g. --init C=17")
+    probe, steps, errs = plan_encounter(args.campaign, enc, inits, _kv(args.place, "--place"))
+    if errs or probe is None:
+        raise CombatError(f"{path.name} isn't ready:\n  " + "\n  ".join(errs))
+    if state_path(args.campaign).exists() and not args.force:
+        raise CombatError("an encounter is already active; 'end' it first or pass --force")
+    save(args.campaign, probe)
+    rolls = []
+    for argv in steps:
+        buf, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            rc = main(["-c", args.campaign] + argv)
+        if rc:
+            state_path(args.campaign).unlink(missing_ok=True)   # don't leave a half-built fight
+            raise CombatError(f"setup stopped at `{' '.join(argv)}` (nothing was kept): {err.getvalue().strip()}")
+        m = re.search(r"initiative (1d20[^→]*→ .*? = -?\d+)", buf.getvalue())
+        if m:
+            rolls.append(f"{argv[1]}: {m.group(1)}")
+    st = load(args.campaign)
+    st["encounter"] = {"file": str(path.relative_to(PROJECT)), "title": enc.get("title") or path.stem}
+    save(args.campaign, st)
+    out = [f"Encounter '{st['encounter']['title']}' is set up ({len(st['tokens'])} combatants, {len(steps)} steps).",
+           render(st, dm=True)]
+    if rolls:
+        out.append("NPC initiative: " + "; ".join(rolls))
+    for k, label_ in (("tactics", "Tactics"), ("morale", "Morale"), ("exit_ramp", "Exit ramp"), ("notes", "Notes")):
+        if enc.get(k):
+            out.append(f"{label_} (DM only): {enc[k]}")
+    return "\n".join(out)
+
+
 def resolve(st: State, ref: str) -> Token:
     """A token by id, or a 1x1 pseudo-token for a square name (for distances)."""
     try:
@@ -2547,6 +2834,12 @@ def main(argv: list[str] | None = None) -> int:
     mn.add_argument("--damage", type=int, help="damage (PC)"); mn.add_argument("--nonlethal", action="store_true")
     mn.add_argument("--reverse", action="store_true", help="escape: become the grappler instead")
     mn.add_argument("--reach", type=int, help="reach of the weapon used, if longer (whip, reach weapon)")
+    en = sub.add_parser("encounter"); en.add_argument("action", choices=["list", "check"])
+    en.add_argument("names", nargs="*", help="check: encounter names or files (default: all)")
+    su = sub.add_parser("setup"); su.add_argument("name", help="encounter name (dm/combat/encounters/<name>.md) or file")
+    su.add_argument("--init", action="append", help="a PC's initiative roll, e.g. C=17 (repeat per PC)")
+    su.add_argument("--place", action="append", help="override a start square, e.g. C=E5")
+    su.add_argument("--force", action="store_true", help="replace an active encounter")
     lt = sub.add_parser("light"); lt.add_argument("action", choices=["ambient", "add", "remove", "move", "zone", "show"])
     lt.add_argument("what", nargs="*"); lt.add_argument("--at"); lt.add_argument("--on"); lt.add_argument("--toward")
     lt.add_argument("--rounds", type=int); lt.add_argument("--magic", type=int, help="spell level (magical light)")
@@ -2578,9 +2871,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         if args.command == "new":
-            if not args.mapfile and not args.blank:
-                raise CombatError("give a MAPFILE or --blank WxH")
             print(cmd_new(args))
+            return 0
+        if args.command == "encounter":
+            print(cmd_encounter(args))
+            return 0
+        if args.command == "setup":
+            print(cmd_setup(args))
             return 0
         st = load(args.campaign)
         if args.command == "next" and os.environ.get("CLAUDE_DM_MODE") == "play":

@@ -42,6 +42,7 @@ python3 scripts/roll.py -c <camp> -H --table campaigns/<camp>/dm/tables/<region>
 # modifiers: 2d20kh1, 4d6dl1, d%, 2d6+1d4-1; NAT 20 / NAT 1 flagged automatically
 
 # combat (tokens: PCs uppercase, others lowercase+digit; squares like D4)
+python3 scripts/combat.py -c <camp> setup <encounter> --init C=17 [--place C=E5]   # a prepared encounter in one call (encounter list / check)
 python3 scripts/combat.py -c <camp> new campaigns/<camp>/dm/combat/maps/<map>.txt   # or: new --blank 10x8
 python3 scripts/combat.py -c <camp> move C E5      # path, feet used, AoO warning
 python3 scripts/combat.py -c <camp> dist C g1      # feet, also squares: dist C D4
