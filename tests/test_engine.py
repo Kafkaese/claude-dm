@@ -209,3 +209,44 @@ class CombatVisibility(CampaignCase):
         self.assertIsNone(hub.fight())                       # saved, but this session hasn't engaged it
         hub.engine.combat_engaged = True
         self.assertIsNotNone(hub.fight())
+
+
+class NoBriefingLeaks(CampaignCase):
+    """The DM-only combat briefing never reaches the player: not as history, not as thinking out loud."""
+
+    def test_history_skips_interface_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "s.jsonl"
+            rows = [{"type": "user", "message": {"content": "I attack the goblin"}},
+                    {"type": "user", "message": {"content": "[Combat step, sent by the interface. Tactical options: hits on 12+"}},
+                    {"type": "assistant", "message": {"content": [{"type": "text", "text": "The goblin lunges."}]}}]
+            path.write_text("\n".join(json.dumps(r) for r in rows))
+            old = E.transcript_path
+            E.transcript_path = lambda sid: path   # type: ignore[assignment]
+            try:
+                hist = E.load_history("x")
+            finally:
+                E.transcript_path = old   # type: ignore[assignment]
+        self.assertEqual([m["text"] for m in hist], ["I attack the goblin", "The goblin lunges."])
+
+    def held_text(self, events: list[dict], publish: bool = True) -> str:
+        shown: list[dict] = []
+        eng = E.Engine(lambda ev: shown.append(ev))
+        eng.hold()
+        for ev in events:
+            if ev["type"] == "_tool":
+                eng._held.append(ev)          # what the stream handler records at a tool call
+            else:
+                eng.emit(**ev)
+        eng.release(publish=publish, after_tools=True)
+        return "".join(e.get("delta", "") for e in shown if e["type"] == "text")
+
+    def test_only_the_narration_after_the_tool_call(self) -> None:
+        txt = lambda t: [{"type": "text_start"}, {"type": "text", "delta": t}, {"type": "text_end"}]
+        out = self.held_text(txt("Best shot: move to M9, hits on 12+.") + [{"type": "_tool"}] + txt("The goblin shoots."))
+        self.assertEqual(out, "The goblin shoots.")
+        # narrated, then one more tool call (e.g. a log line): the narration is still shown
+        out = self.held_text(txt("Thinking: hits on 12+.") + [{"type": "_tool"}] + txt("The goblin shoots.") + [{"type": "_tool"}])
+        self.assertEqual(out, "The goblin shoots.")
+        # a hidden actor that stays hidden: nothing at all
+        self.assertEqual(self.held_text(txt("…"), publish=False), "")

@@ -129,6 +129,15 @@ def is_combat_tool(name: str, inp: dict[str, Any]) -> bool:
     return name == "Bash" and "combat.py" in str(inp.get("command", "")) and " profile check" not in str(inp.get("command", ""))
 
 
+INTERFACE_PREFIXES = ("[Combat step", "[The player is switching to another campaign", "[Test setup")
+
+
+def is_interface_message(text: str) -> bool:
+    """A message the interface sent the DM (a combat step with its DM-only briefing, a campaign switch),
+    not something the player wrote: never shown in the chat, live or when history is reloaded."""
+    return text.lstrip().startswith(INTERFACE_PREFIXES)
+
+
 def exchange_kind(text: str) -> str:
     """What an exchange was, from the message the engine sent."""
     t = text.lstrip()
@@ -224,13 +233,26 @@ class Engine:
         with self.lock:
             self._held = []
 
-    def release(self, publish: bool) -> None:
-        """Stop holding text; show what was held back if `publish`, else drop it."""
+    def release(self, publish: bool, after_tools: bool = False) -> None:
+        """Stop holding text; show what was held back if `publish`, else drop it. With after_tools,
+        only the text written after the reply's last tool call is shown: whatever the DM wrote before
+        it is its own reasoning (e.g. weighing the tactical options), not narration."""
         with self.lock:
             held, self._held = self._held or [], None
+        if after_tools:
+            marks = [i for i, ev in enumerate(held) if ev["type"] == "_tool"]
+            if marks:
+                tail = held[marks[-1] + 1:]
+                if not any(ev["type"] == "text" and ev.get("delta", "").strip() for ev in tail):
+                    # nothing after the last tool call (e.g. it narrated, then logged): the last text
+                    # block before that call is the narration
+                    start = marks[-2] + 1 if len(marks) > 1 else 0
+                    tail = held[start:marks[-1]]
+                held = tail
         if publish:
             for ev in held:
-                self._send_event(ev)
+                if ev["type"] != "_tool":
+                    self._send_event(ev)
 
     def _send_event(self, ev: dict[str, Any]) -> None:
         """Pass one event to the frontend's handler."""
@@ -423,6 +445,8 @@ class Engine:
                 block = e.get("content_block", {})
                 if block.get("type") == "tool_use":
                     self._text_end()
+                    if top and self._held is not None:
+                        self._held.append({"type": "_tool"})   # text before this is the DM thinking out loud
                     self.emit(type="status", label=flavor(block.get("name"), not top))
                     if self.debug:
                         self.emit(type="debug", line=f"[tool{'' if top else ' (sub)'}] {block.get('name')}")
@@ -709,7 +733,7 @@ def load_history(session_id: str | None) -> list[dict[str, str]]:
         msg = r.get("message") or {}
         if r.get("type") == "user" and isinstance(msg.get("content"), str):
             text = msg["content"]
-            if text.startswith("<task-notification") or text.startswith("<local-command"):
+            if text.startswith("<task-notification") or text.startswith("<local-command") or is_interface_message(text):
                 continue
             if "<command-name>" in text:
                 name = re.search(r"<command-name>(.*?)</command-name>", text, re.S)
@@ -856,7 +880,9 @@ def _visible_prompt(c: dict[str, Any], started: str, pc_after: bool, next_name: 
             f"({c['name']}); `next` already ran:\n{started}\n{c.get('_ctx', '')}{c.get('_sight', '')}\n"
             f"Resolve ONLY {c['name']}'s turn: choose its actions from its tactics and the situation, and "
             f"resolve them in ONE combat_batch call. Don't run `next`: the interface advances turns. "
-            f"Then narrate only {c['name']}'s turn and stop. {end}]")
+            f"Then narrate only {c['name']}'s turn and stop. {end} The briefing above is for your decision only: "
+            f"don't write any of it (no 'hits on N+', no squares weighed, no enemy AC or HP), and write nothing "
+            f"before your tool call; only the narration after it is shown.]")
 
 
 def _hidden_prompt(c: dict[str, Any], started: str) -> str:
@@ -922,12 +948,16 @@ def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool]) -> s
             finally:
                 after = combat_state(camp) or {}
                 still = next((t.get("hidden") for t in after.get("tokens", []) if t["token"] == c["token"]), True)
-                engine.release(publish=not still)
+                engine.release(publish=not still, after_tools=True)
             acted = acted or not still
         else:
             nxt = _first_visible_after(st, c["token"])
-            ok = send(_visible_prompt(c, started, pc_after=bool(nxt and nxt["side"] == "pc"),
-                                      next_name=nxt["name"] if nxt else None))
+            engine.hold()   # the briefing invites thinking out loud: only the final narration is shown
+            try:
+                ok = send(_visible_prompt(c, started, pc_after=bool(nxt and nxt["side"] == "pc"),
+                                          next_name=nxt["name"] if nxt else None))
+            finally:
+                engine.release(publish=True, after_tools=True)
             acted = True
         if not ok:
             return "error"
