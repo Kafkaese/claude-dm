@@ -1,6 +1,6 @@
 # Running Combat
 
-How combat runs at the table. The system's rules come from `library/<system>/rules/`, and session zero and the table conventions override this guide.
+How combat runs at the table. The system's rules come from `library/<system>/rules/`, and session zero and the table conventions override this guide. **The rules math is code** (`scripts/combat.py`, `combat_rules.py`, `vision.py`; syntax: `combat.py -h`). This guide covers what you decide and how you narrate.
 
 ## Stat blocks
 Always use real stat blocks, never numbers made up in the moment. Stop at the first option that works:
@@ -11,14 +11,18 @@ Always use real stat blocks, never numbers made up in the moment. Stop at the fi
 
 For an **unexpected fight,** take a moment and prefer options 1–3; they're fast and balanced. Save every stat block you use to the library, so the next fight is faster. Size encounters with `library/<system>/rules/encounter-building.md`.
 
+**Combat profiles:** every combatant needs a ` ```combat-profile ` block. Creatures: in the stat block, following `library/<system>/combat-profile-guide.md` and `combat-profile.schema.json`. If a stat block has none yet, add one before the fight, taken exactly from the stat block, and check it with `combat.py profile check <file>`. PCs: in the character sheet, following `combat-profile-pc.schema.json`. `add` refuses a PC whose block is incomplete; fill in what the sheet shows and ask the player for the rest.
+
 ## Starting a fight
 Setting up a fight takes a moment. Use it: give the player something to do while you prepare, so the fight doesn't start with a silent wait.
 
 1. **Call it and stop.** In one short message, with **no tool calls** before it: narrate the moment violence breaks out (only what the PC perceives), then ask the player to **roll initiative** (give their modifier from the sheet) and to get their attack and damage dice ready. Example: *"Steel clears leather. **Roll initiative** (d20+5), and get your dice ready."* End the message there.
-2. **Set up while they roll.** When the answer comes in, do the whole setup in as few calls as possible: one `roll.py` call for all enemy initiatives and surprise checks, then one `combat.py do "new …" "add …" "add …" "light …" "show"` call. Hidden enemies get `--hidden`.
-   - **Decide the lighting as part of the encounter design** (see "Vision and light"): the ambient light (`new … --light dim`, or `ambient:` in the map file), darker or brighter zones (`light:` rows in the map file, or `light zone`), and every light source, including what each creature carries (`light add torch --on C`). A fight without lighting set up is in normal light everywhere.
-3. **Open the fight** without resolving any turn yet, so the pointer starts before the first actor. In `web.py`/`play.py`, never run `next`: if the PC acts first, the interface moves the pointer onto them (resolving unnoticed enemies before them) right after your reply. In the Claude Code UI, run `next` yourself if the PC acts first, resolving unnoticed enemies who act before them silently. Give the initiative order (only combatants the PC knows about), say who acts first, then stop. The player's "next" (or their declarations, if they're first) starts the first step. Include the map (in `play.py` the interface prints it), and a one-line reminder of the turn convention: *"(Declare your actions, and say **end turn** when you're done.)"* Give the reminder at every fight in the first sessions, and later only when it helps.
-4. **Surprise:** if the enemies strike first from hiding, it's fine to narrate the ambush and then ask for initiative in the same message.
+2. **Set up while they roll,** in as few calls as possible: one `roll.py` call for all enemy initiatives and surprise checks, then one `combat.py do "new …" "add …" "light …" "show"` call.
+   - **Map:** a prepared one from `dm/combat/maps/`, a quick map file, or `--blank WxH`.
+   - **Tokens:** `add g1 Goblin --pos D4 --ref <stat block> --init roll`; the PC with `--ref <sheet> --init <their roll>`. Enemies the PC hasn't noticed get `--hidden`.
+   - **Lighting is part of the encounter design:** the ambient light (`new … --light dim`, or `ambient:` in the map file), darker or brighter zones, and every light source, including what each creature carries (`light add torch --on C`). Without it, everything is in normal light.
+3. **Open the fight** without resolving any turn: give the initiative order (only combatants the PC knows about), say who acts first, then stop. Don't run `next` in `web.py`/`play.py`; the interface starts the turns (and moves straight to the PC if they're first). In the Claude Code UI, gm-screen does it. Include the map (the web and terminal interfaces show it themselves) and a one-line reminder of the turn convention: *"(Declare your actions, and say **end turn** when you're done.)"* Give the reminder at every fight in the first sessions, and later only when it helps.
+4. **Surprise:** if the enemies strike first from hiding, it's fine to narrate the ambush and then ask for initiative in the same message. In a surprise round, only aware combatants act (one standard or move action each), each in its own step.
 
 ## Solo and small parties
 Balance is the hardest part of solo play, and challenge ratings underestimate how dangerous enemies are to a lone character. Use the system's solo guideline (for PF1e: `library/pf1e/house-rules/solo-play.md`), plus these principles:
@@ -26,7 +30,7 @@ Balance is the hardest part of solo play, and challenge ratings underestimate ho
 - **Build for the worst plausible case,** e.g. an ally who might not join, or reinforcements who might arrive.
 - **Plan an exit ramp for every serious fight:** morale, surrender, bargaining, escape routes, or capture instead of death. Know it before the fight starts, not only once the PC is dying.
 - **Spread the threat across rounds:** waves, enemies at a distance, a boss who talks before fighting. That beats everything happening at once.
-- **Companions:** a companion played by the player takes PC turns (with its own "end turn"). One played by the DM is resolved by gm-screen along with the other non-PC turns. It acts in character with its own judgment, not as a perfect optimizer, and the player can give it simple instructions like "stay back and heal".
+- **Companions:** a companion played by the player takes PC turns (with its own "end turn"). One played by the DM gets its own steps like the other non-PC actors. It acts in character with its own judgment, not as a perfect optimizer, and the player can give it simple instructions like "stay back and heal".
 - **Listen to feedback.** If stars & wishes say fights feel too hard (or too easy), adjust the campaign's effective APL in session zero, and tell the scribe.
 
 ## Grid or theater of the mind?
@@ -34,171 +38,48 @@ Balance is the hardest part of solo play, and challenge ratings underestimate ho
 - **Theater of the mind** for quick, simple fights, like two thugs in an alley or a single animal. Describe positions in words and keep the tracker in the live log.
 - The player can always ask for either with [brackets].
 
-## The combat script
-Never draw the map by hand, and never count squares in your head. `scripts/combat.py` holds the battle state and does the geometry (run it with `-h` for commands).
+## Working with the script
+**Never draw the map, count squares, add modifiers, or track durations yourself.** The script resolves attacks (flanking, conditions, cover, concealment, light, range, crits, DR), maneuvers and grapples, areas and saves, movement and attacks of opportunity, spellcasting (slots, provoking, concentration), conditions with durations, dying, lighting and vision, and writes the player-safe combat log. Your job is the decisions and the narration. In the Claude Code UI, gm-screen runs it for you.
 
-**In `play.py` mode,** run the script yourself. The interface prints the player view and the image after each turn, so don't paste them. **In the Claude Code UI, the gm-screen agent runs the script.** The narrator only pastes the player view it returns (see "Behind the screen" in `running-the-game.md`). Combat commands reveal stats (`add … --ac 17`) and hidden tokens, so they never run in the main session.
-
-**The script knows the rules, so don't do the math yourself.** Profiles, modifiers, durations, areas, saves and dying checks are deterministic code (`scripts/combat_rules.py`). Your job is the decisions (what each creature does) and the narration. Don't add modifiers by hand, and don't track durations in your head.
-
-**Combat profiles.** Every combatant gets its numbers from a ` ```combat-profile ` JSON block in its stat block (`library/<system>/bestiary/…`, a campaign NPC file) or character sheet (`players/characters/…`):
-```combat-profile
-{"kind": "creature", "init": 6, "hp": 6, "ac": 16, "touch": 13, "ff": 14, "cmb": 1, "cmd": 13,
- "saves": {"fort": 3, "ref": 2, "will": -1}, "speed": 30, "size": 1, "reach": 5, "dr": 0,
- "con": 12, "dex": 15, "feats": ["Improved Initiative"], "uncanny_dodge": false,
- "attacks": {"short sword": {"bonus": 2, "damage": "1d4", "crit": 19, "mult": 2, "type": "melee"},
-             "shortbow": {"bonus": 4, "damage": "1d4", "crit": 20, "mult": 3, "type": "ranged", "range": 60}},
- "full_attack": ["short sword"]}
-```
-Iterative attacks use a list: `"bonus": [10, 5]`. Natural attacks go in `full_attack`, e.g. `["bite", "claw", "claw"]`. A PC's profile only needs the defensive numbers (AC, touch, flat-footed, saves, Con, init), because the player rolls their own attacks. **If a stat block has no profile yet, add one before the fight,** taken exactly from the stat block. That's a one-time cost that makes every attack after it cheaper and error-free.
-
-**The format is fixed by a schema** (`library/<system>/combat-profile.schema.json`: required and optional fields, types, allowed values). **The translation rules** are in `library/<system>/combat-profile-guide.md`: the stat block line by line, crit ranges, iterative and natural attacks, riders, range increments, spellcasting and spell-like abilities. Check every new or edited profile with `combat.py profile check <file>`. `add` validates too, and rejects a broken profile with a list of what to fix.
-
-**Spellcasters:** their `spellcasting` and `sla` entries are tracked per fight.
-- **Every NPC spell or SLA goes through `cast` / `sla`,** including area spells. That's what spends the slot. Write the effect into the same command:
-  - area: `cast s1 "burning hands" --area "cone 15" --toward C4 --save ref --dmg 1d4 --half`
-  - single target: `cast s1 sleep --target C --save will`
-  - no save: `cast s1 "magic missile" --target C --dmg 1d4+1`
-
-  The DC comes from the profile (DC base + spell level, or the SLA's DC). `area` refuses a name that's one of the caster's spells. A non-spell area like a breath weapon uses `area … --no-slot`.
-- **Effects beyond damage** (sleep, hold, fear) aren't automated: after a failed save, add the condition with `cond … --rounds N`.
-- **Rays and touch spells** are attacks: `cast s1 "scorching ray"` (spends the slot and provokes as usual), then `attack s1 C --roll "1d20+N" --dmg 4d6 --touch --ranged --name ray` in the same `do` call.
-- `cast` alone (no effect options) spends a slot (spontaneous) or a prepared copy.
-- **Casting while threatened provokes AoOs.** NPC attacks are rolled, and a PC's AoO opens a question. Damage from them forces a concentration check.
-- `--defensive` casts defensively (concentration DC 15 + 2 × spell level).
-- `sla s1 darkness` does the same for spell-like abilities.
-- `spells s1` shows what's left.
-- The player's log only says "casts a spell". Whether the PC identifies it is a Spellcraft matter, so narrate that separately.
-- **A PC casting in melee:** `provoke C --reason "casting a spell"`. NPCs take their AoOs, and damage opens the PC's concentration question.
-
-**Setup:**
-- Use a prepared map from `dm/combat/maps/` if the prep has one, or write a quick map file. Otherwise use `--blank WxH`.
-- `add TOKEN NAME --pos D4 --ref <stat block or sheet> --init roll` (the PC gets the player's rolled initiative instead: `--init 17`). Add `--hidden` for enemies the PC hasn't noticed, and `reveal` them when they're spotted.
-
-**Attacks:** `attack g1 C --with "short sword"` (add `--full` for a full attack, `--charge`, `--touch`, `--aoo`). For a PC: `attack C g1 --total 17 --damage 9` (plus `--nat 20 --confirm 18` for crits, `--ranged` for ranged attacks). The script applies what it can see:
-- **flanking**
-- **conditions** (shaken, sickened, prone, entangled, grappled, fighting defensively, …)
-- **charge**
-- **flat-footed AC** before a creature's first turn (unless it has uncanny dodge), and **touch AC**
-- **range increments**
-- **firing into melee**, unless the attacker has Precise Shot
-- **cover** from walls, and **soft cover** from creatures for ranged attacks
-- **concealment**, with the miss chance rolled
-
-It confirms crits, rolls damage only on a hit, applies DR, and writes the **combat log**, the player-safe record the interface shows. For PC attacks it applies the target side, and lists attacker-side modifiers as reminders so you can check the player included them. Never roll attacks with `roll.py`. Use `log "…"` for anything else the player should see in the log.
-
-**Conditions and effects:** `cond g1 add shaken --rounds 1`, `cond C add bless --atk 1 --rounds 30`, `cond g1 add bleeding --ongoing 1d4`. Known conditions carry their effects (the catalog is `CONDITIONS` in `combat_rules.py`, the rules text is in `library/<system>/rules/conditions.md`): flat modifiers, ability penalties (grappled −4 Dex, fatigued −2 Str/Dex, helpless Dex 0), which the script turns into the right AC, touch, flat-footed AC, Reflex, attack and damage changes, and restrictions (no moving, no AoOs). Conditions never change the stored numbers; they're applied each time something is resolved. Timed ones end by themselves, and ongoing damage is rolled at the start of the creature's turn.
-
-**Combat maneuvers:** `maneuver g1 C trip` (NPC: rolls its profile CMB, `cmb_vs` per maneuver), `maneuver C g1 bull-rush --total 18` (PC: the player's check). Maneuvers: bull-rush, dirty-trick (`--condition shaken`), disarm, drag, grapple, overrun, reposition (`--to D4`), steal, sunder, trip. The rules are in `library/<system>/rules/combat-maneuvers.md`; the script applies them:
-- **CMD** with conditions (Str/Dex changes, AC penalties, flat-footed loses Dex), automatic success against helpless targets, +4 against stunned ones, size limits and `maneuver_immune`.
-- **Provoking:** only from the target, unless the attacker has the Improved feat or uses `--grab`. An NPC target's AoO is rolled, and its damage becomes a penalty on the check. A PC target gets a question; after their answer, rerun with `--aoo-damage N`.
-- **Results:** prone (and the attacker prone on a trip failed by 10+), pushes and drags that stop at walls and creatures, conditions with durations (dirty trick), dropped items. An overrun lets the attacker move through the target's space afterwards.
-- **Grapples are tracked:** a success grapples both. The grappler must maintain every round on its turn (`maneuver g1 C grapple` again, +5, with `--option pin|damage|move|tie`), or the grapple ends when the turn moves on. The held creature uses `maneuver C g1 escape` (CMB, or `--total` for Escape Artist; `--reverse` to take over). `release` lets go. A grapple ends when either creature drops.
-- Trip, disarm and sunder can be made as AoOs (`--aoo --out-of-turn`).
-
-**Vision and light** (rules: `library/<system>/rules/vision-and-light.md`; the math is in `scripts/vision.py`):
-- **Levels:** dark, dim, normal, bright, plus supernatural darkness (*deeper darkness*). Walls block light.
-- **Setting it up:**
-  - `new … --light dark`, or `ambient: dark` in the map file.
-  - Light zones: a `light:` block after the map rows, with X dark, D dim, N normal, B bright and `.` for the ambient light. Or `light zone A1 C4 dim`.
-  - Sources: `light add torch --on C`, `light add sunrod --at D4`, `light add "bullseye lantern" --on g1 --toward F4`. `light move l1 --at D5` drops one, `--on g2` hands it over, and `light remove l1` snuffs it out.
-  - The catalog: candle, torch, lamp, hooded lantern, bullseye lantern, sunrod, everburning torch, and the spells *light*, *dancing lights*, *continual flame*, *daylight*, *darkness* and *deeper darkness*.
-  - NPC spells create their light or darkness with `cast … --light-at D4` or `--light-on g1` (and `--rounds N`).
-- **Senses** come from the profile (`senses`):
-  - Low-light vision doubles light source radii for that creature.
-  - Darkvision sees dark and dim squares within range, but not inside *deeper darkness*.
-  - See in darkness sees everywhere, and blindsight sees everything within range.
-- **The script applies the rules** (table rulings in `vision.py`'s docstring):
-  - **Miss chance** for each attacker/target pair, judged from the target's square: 20% in dim light, 50% in darkness.
-  - A defender that can't see its attacker loses its Dex bonus, and takes −2 AC when it's in the dark.
-  - No attacks of opportunity against a target the creature can't see.
-  - Blind-Fight rerolls a melee miss chance.
-  - Light sensitivity (dazzled) and light blindness in bright light are applied at the start of the creature's turn.
-  - A *darkness* spell switches off nonmagical light, and magical light only wins with a higher spell level.
-- **Hiding:** Stealth needs cover or concealment while observed.
-  - `hide` refuses a creature the PC sees clearly.
-  - A hidden creature the PC sees clearly (no cover, no concealment, within take-10 Perception range) is revealed automatically once the fight has started.
-- **`sight g1`** (DM only) shows what a creature sees, how each enemy sees it, where it could hide within its speed, and nearby light sources. `light show --for C` prints the light map as a creature sees it.
-- **Creatures act on the light.** In web/terminal play, every combat step message includes the actor's `sight` report. In the Claude Code UI, gm-screen runs `sight` before deciding. Play every creature by what it can see:
-  - Creatures with darkvision fight from the dark, and go for the enemy's light: snuff the torch, sunder the lantern, grab the sunrod, cast *darkness*.
-  - Creatures without darkvision stay in the light or bring their own, and don't wander into darkness they can't see in.
-  - Hiders move to squares where they're unseen, and only `hide` after a successful Stealth check.
-  - Creatures with light sensitivity avoid bright light.
-- **The map** (web UI and PNG) shows the light **as the PC sees it**: dim and dark squares shaded, what darkvision shows in grey, magical darkness hatched, light sources as flames, and known creatures the PC can't currently see faded with a "?". Hovering over a square shows the natural light and what it is for the PC.
-
-**Areas and saves:**
-- `area burst 10 --at D4 --save ref --dc 13 --dmg 2d6 --half --name "burning hands"`, or `area cone 15 --from C --toward E5 …`, or `line`. The damage is rolled once, and NPC saves come from their profiles.
-- A PC's save becomes a pending question. Resolve it with `save C --total 17` when the player answers.
-- A single save: `save g1 will --dc 14`.
-
-**Movement:** `move g1 D4`, or `move C C4 --step` for a 5-foot step. The script tracks feet per turn.
-- **Leaving a threatened square:** NPCs' attacks of opportunity are rolled automatically, and the mover stops if they drop it (use `--no-aoo` only for a deliberate exception). A PC's chance to take an AoO opens a question, unless its standing order says otherwise (`order C aoo never|always|ask`).
-
-**`next`** moves the pointer at the **start** of each step (see "Flow"). In `web.py`/`play.py` only the interface runs it (the script refuses it from the DM). It handles the start of that creature's turn:
-- ends expiring conditions and applies ongoing damage
-- resets its AoOs and movement
-- makes a dying NPC's stabilization check
-- for a dying PC, opens a question asking for their check. Resolve it with `stabilize C --total N`
-
-**Also:** `dist` for ranges, `threat` for who threatens or flanks, and `hp` for healing and other HP changes. **`end`** writes the XP, puts the PC's HP back on their sheet, and appends the combat log to the session log.
-
-**The two views:**
-- `show` is the **player view**. Paste it verbatim in a code block. It hides hidden tokens and shows enemy health as words.
-- `show --dm` is **for you only**. Never paste it.
-- Script output marks hidden tokens `[HIDDEN]`. Never mention those tokens to the player.
-
-**Image view (optional):** if the table uses it (see "Combat display" in session zero), run `image on` right after setup. From then on, every change re-renders `players/combat-map.png`, the player view as a picture. The player keeps it open in a VS Code tab, where it refreshes by itself. The first time, offer to open it with `code campaigns/<campaign>/players/combat-map.png`. Keep pasting the ASCII view unless the player says the image is enough. Hidden tokens never appear in the image.
-
-**Map symbols:** each PC uses the uppercase first letter of their name (Corin → `C`; pick another letter if two PCs share one), allies and enemies are lowercase plus a number (`g1`, `o1`), and `x` marks fallen enemies. Coordinates work like chess: columns A…, rows 1…. The player can use them ("I move to D4 and attack g2").
+What the script can't decide for you:
+- **NPC spells and SLAs always go through `cast` / `sla`,** with the effect in the same command (`--area "cone 15" --toward C4 --save ref --dmg 1d4 --half`, `--target C --save will`, or `--light-at D4` for light and darkness spells). That spends the slot. Rays and touch spells: `cast`, then an `attack … --touch` in the same `do` call. **Effects beyond damage** (sleep, hold, fear) aren't automated: after a failed save, add the condition with `cond … --rounds N`. The player's log only says "casts a spell"; whether the PC identifies it is a Spellcraft matter.
+- **The PC's numbers are the player's rolls:** `attack C g1 --total 17 --damage 9`, `maneuver C g1 trip --total 18`, `save C --total 15`. The script lists attacker-side modifiers as reminders; check the player included them. A PC casting in melee: `provoke C --reason "casting a spell"`.
+- **Questions:** when a result needs the player (an attack of opportunity, a save, a stabilization check, a concentration check), the script sets the question and names the command to resolve it. Ask the player, then run it. For your own mid-round questions (a readied action, a reaction), run `combat.py ask "…"`, so auto-combat pauses.
+- **Hiding:** `hide` a creature only after a successful Stealth check; the script refuses it while the PC sees the creature clearly, and reveals hidden creatures that end up in plain view. When an unnoticed creature reveals itself (an attack, a noise), narrate it from the PC's point of view, and `reveal` it.
+- **Two views:** `show` is the player view. `show --dm`, `sight` and anything marked `[HIDDEN]` are for you only; never paste or mention them.
+- **Map symbols:** each PC uses the uppercase first letter of their name (Corin → `C`), allies and enemies lowercase plus a number (`g1`, `o1`), and `x` marks fallen enemies. Coordinates work like chess: columns A…, rows 1…. The player can use them ("I move to D4 and attack g2").
+- **Image view** (Claude Code UI only, if session zero turned it on): `image on` after setup re-renders `players/combat-map.png` on every change; the first time, offer to open it with `code campaigns/<campaign>/players/combat-map.png`.
 
 ## Flow: one actor per step
-Combat runs **one actor at a time**. Each non-PC actor's turn is its own reply, and the player gives a short go signal before the next one. The map, initiative and combat log update after every step, and the player can react between actors.
+Combat runs **one actor at a time**. Each non-PC actor's turn is its own reply, and the player gives a short go signal ("next", or "end turn" on their own turn; the web UI has a button, the terminal an empty Enter) before the next one. The map, initiative and combat log update after every step, so the player can react between actors. The script's **actor lock** only lets the creature whose turn it is act (exempt: `attack … --aoo`, and `--out-of-turn` for readied or immediate actions, forced movement and setup).
 
-**The turn pointer** (the current turn in `combat.py`) always marks the actor who is **acting now, or acted last**. Every step starts by moving it forward with `next`. The UI reads the pointer to label its button: "End turn" while it's on the PC, otherwise "Next: <the next visible actor>".
+**In `web.py` / `play.py`, the interface runs the turn order.** You never run `next`. On a go signal, it sends you a bracketed **combat step** message naming the one actor to play, with what happened at the start of its turn and what it can see. Resolve exactly that actor in one `combat.py do` call, narrate only that actor, and stop. If the message says the PC's turn comes right after, say so in one short line. A **hidden** actor's step works the same, but your reply is only shown if it gets revealed; if it stays unnoticed, reply "…".
 
-**The signals** (the web UI has a button for both; in the terminal an empty Enter sends "next"):
-- **"next":** play the next actor's turn.
-- **"end turn":** the PC is done. Play the next actor's turn.
+**In the Claude Code UI,** send gm-screen one `enemy-turns` call per step; it runs the step (see its instructions).
 
-**The actor lock:** `attack`, `move`, `cast`, `sla`, `provoke` and `area --from` only work for the creature the pointer is on, so one actor can't act on another's turn. Exempt: attacks of opportunity (`attack … --aoo`), and anything marked `--out-of-turn` (readied or immediate actions, forced movement, repositioning during setup).
-
-### In `web.py` / `play.py`: the interface runs the steps
-The pacing is in code, not in your hands:
-- **On a go signal,** the interface runs `next` itself and sends you a bracketed **combat step** message naming the one actor to play, with what happened at the start of its turn. Resolve exactly that actor in one `combat.py do` call, narrate only that actor, and stop. The message says whether the PC's turn comes right after (then say so in one short line).
-- **Hidden actors** get their own step message. Your reply is only shown if the actor gets revealed (`combat.py reveal`); if it stays unnoticed, reply "…".
-- **The PC's turn:** resolve what the player declares. When the player ends their turn in any words other than the bare signal, or in the same message as their actions ("…attack g2, 17 to hit. Done."), add `combat.py endturn C` to your call. The interface plays the next step after your reply. Never narrate another actor's turn yourself.
-- **Mid-round questions** work as below (`combat.py ask`).
-
-### In the Claude Code UI (gm-screen mode)
-Send one `enemy-turns` call per step, asking for exactly one actor. gm-screen runs the step:
-
-**One step (one non-PC actor), ideally ONE `combat.py do` call:**
-1. `next`, which moves the pointer to the actor who plays now.
-2. **Hidden actors don't get their own step.** A "next" that reveals nothing would give them away. If the pointer lands on a creature the PC hasn't noticed and it stays unnoticed, resolve it silently and `next` again, in the same call, until the pointer is on a visible actor.
-3. Resolve exactly that actor's turn: movement, attacks (`combat.py attack`), conditions.
-4. **If the actor after it is the PC,** add one more `next` at the end, so the pointer rests on the PC and the UI shows "End turn".
-   Example: `combat.py do "next" "move g1 D4" "attack g1 C --roll '1d20+4' --dmg '1d6+1' --name spear" "next"`, where the last `next` is only there because Corin is next.
-5. Narrate that actor in a line or a few (see Narration), then **stop**. If it's the PC's turn now, say so in one line ("Your turn, Corin.") and wait for their declarations. Otherwise, no question at the end: the player sends the next signal.
-6. **If the player must decide something mid-round** (an attack of opportunity without a standing order, a readied or immediate action, a stabilization check), ask. Also run `combat.py ask "…"` so the UI pauses auto-combat. The next state-changing command clears it. (This applies in both modes.)
-
-### In both modes
-
-**The PC's turn** stays open until the player says "end turn". That's the default convention; session zero can set a different phrase.
+**The PC's turn** stays open until the player says "end turn" (or the phrase session zero set).
 - Never assume that a declared action is the whole turn. "I attack, 20 to hit, 5 damage" resolves the attack, and then the player may still want to move, take a 5-foot step, draw a weapon, use a swift action or speak.
 - After resolving what they declared, say briefly which actions remain and wait, e.g. *"Hit, 5 damage; the goblin staggers. You still have a move and a swift action."*
-- Only a full-round action, or the player saying "end turn" (or "done", "that's it"), ends the turn. **When in doubt, ask.**
-- A whole turn declared at once ("Move to D4, attack g2, 17 to hit, 9 damage. End turn.") is resolved, and then the next actor plays right away (the "end turn" is also the go signal). In `web.py`/`play.py`, add `combat.py endturn C` and the interface plays that step; in the Claude Code UI, gm-screen plays it in the same step. Resolving the PC's own actions never moves the pointer; it's already on the PC.
+- Only a full-round action, or the player ending the turn, ends it. **When in doubt, ask.** When the player ends their turn in other words ("done", "that's it") or in the same message as their actions ("Move to D4, attack g2, 17 to hit. End turn."), resolve the actions and add `combat.py endturn C` (web/terminal); the next actor plays right after.
 - Delaying and readying are declared the same way. Free actions like speaking are fine outside the PC's turn when the rules allow them.
 
-**Standing orders** avoid pauses. The player can set them any time, e.g. "always take AoOs", "Feather Fall if anyone falls", or "hold the door". Record them in the live log and apply them without asking.
+**Standing orders** avoid pauses. The player can set them any time, e.g. "always take AoOs" (`combat.py order C aoo always`), "Feather Fall if anyone falls", or "hold the door". Record them in the live log and apply them without asking.
 
-**Surprise round:** only aware combatants act, with one standard or move action each, and each one is still its own step.
+## Tactics
+- **Enemies act by their nature and knowledge,** not by what you know as DM. A goblin doesn't know the wizard is out of spells. Intelligent enemies do use tactics: focus fire, flanking, retreating, surrendering, fleeing.
+- **Play every creature by what it can see** (the `sight` report in each step):
+  - Creatures with darkvision fight from the dark, and go for the enemy's light: snuff the torch, sunder the lantern, grab the sunrod, cast *darkness*.
+  - Creatures without darkvision stay in the light or bring their own, and don't wander into darkness they can't see in.
+  - Hiders move to squares where they're unseen.
+  - Creatures with light sensitivity avoid bright light.
+- **Morale:** most creatures flee or surrender when the fight is clearly lost. Use the morale entry in the stat block, if it has one.
+- **Report rolls truthfully** and apply the session-zero mercy policy only as agreed.
 
 ## Narration
 **The default is one line per action,** with the key rolls: *The bandit leader charges you: 17 vs your AC 16, hit, **6 damage**.* Quick and readable, so combat keeps moving.
 - **Every creature's turn gets its own line,** at least, including companions and allies. Never merge several creatures into one sentence ("the three of them close in and one clips you"). The player needs to see who did what. Narrate **every** attack in the combat log. The log and the narration must match.
 - **Numbers the player always gets:** each attack against the PC as its total against the PC's AC (hit or miss), and **damage taken as a number, per attacker**. The same goes for saves the PC is forced to make (the DC only if the characters would know it). They show the player which enemy is most dangerous. Enemy AC, bonuses and HP stay hidden, as always.
-- **Hidden creatures:** a creature the PC hasn't perceived doesn't appear in the narration, the initiative order or the map. If it acts without being noticed (moving, readying), say nothing. If its action reveals it (an attack, a noise, stepping into view), narrate the reveal from the PC's point of view as a surprise (*"Something low and fast bursts from under the cart: a dog, jaws first."*), then `reveal` it.
+- **Hidden creatures** don't appear in the narration, the initiative order or the map until their action reveals them. Then narrate the reveal as a surprise from the PC's point of view (*"Something low and fast bursts from under the cart: a dog, jaws first."*).
 
 **Some moments get more:** 2–4 vivid sentences instead of one line. Use this for:
 - **A new enemy is revealed:** what the PCs see, hear or smell as it appears. Give details that hint at what it is without handing over its stat block.
@@ -217,14 +98,9 @@ When a **unique, powerful or boss** enemy drops to 0 HP or below from the PC's a
 - If the player wants to spare, capture or interrogate the enemy, that's a valid answer too.
 
 ## When the PC goes down
-- **The player rolls** their stabilization checks while dying (Constitution, per the system's rules). Ask for the roll each turn.
+- **The player rolls** their stabilization checks while dying (Constitution, per the system's rules). The script asks for one at the start of each of their turns.
 - **Resolve the end of the fight in the same reply, step by step:** what the enemies do (per the exit ramp prepared for this fight), what the companion does, what happens to the PC. Never "keep rolling it forward and report back later".
 - **Apply the session-zero mercy policy and lethality openly,** as agreed.
 
-## Honesty and tactics
-- **Enemies act by their nature and knowledge,** not by what you know as DM. A goblin doesn't know the wizard is out of spells. Intelligent enemies do use tactics: focus fire, flanking, retreating, surrendering, fleeing.
-- **Report rolls truthfully** and apply the session-zero mercy policy only as agreed.
-- **Morale:** most creatures flee or surrender when the fight is clearly lost. Use the morale entry in the stat block, if it has one.
-
 ## After combat
-Ask gm-screen for `combat-end`. It runs `end`, logs XP, loot, HP and consequences, and does a checkpoint. Narrate the aftermath from its PLAYER-SAFE report.
+`combat.py end` writes the XP, puts the PC's HP back on their sheet, and appends the combat log to the session log. In the Claude Code UI, ask gm-screen for `combat-end` (it also logs loot and consequences and does a checkpoint) and narrate the aftermath from its PLAYER-SAFE report.

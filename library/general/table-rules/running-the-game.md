@@ -24,7 +24,7 @@ During play, the main session is **the narrator**. Everything involving secret n
 **Writing agent calls:**
 - **Description** (visible in the UI): generic, e.g. "Resolve enemy turns", "Secret check", "Resolve action", "World turn", "Checkpoint".
 - **Prompt:** the campaign slug, the task, what the player declared and rolled, and "Events since last call": a short summary of what happened in the chat since the last call, which the agent logs. **Only put in facts the player already knows.** The agent looks up stat blocks, DCs and secrets itself.
-- **Group work into one call:** all enemy turns until the next PC turn, and all secret checks for a scene.
+- **Group work into one call:** all secret checks for a scene, and everything a combat step needs. In combat, that's one step (one actor) per `enemy-turns` call (`combat.md`, "Flow").
 - **Always wait for the result.** Never run gm-screen, or any DM agent, in the background (`run_in_background: false`). The UI shows a background agent's work inline, including its commands and their output, which can spoil the game. A finished background agent also wakes the narrator again, which produces stray extra messages. A call you wait for shows up as a single collapsed agent row.
 - **No standalone checkpoints during play.** Pass what happened as "Events since last call" with the next call you need anyway, and the agent logs it then. Only if a long stretch passes without any call (e.g. a long conversation scene) do a `checkpoint` call, and make it at the **start** of your next reply, before narrating, so the reply still ends on the narration.
 - **One call at a time,** and ask for everything you need in it (e.g. a secret check plus the log).
@@ -99,8 +99,8 @@ Everything you write to the player describes **what the character has perceived,
 - **Rulings:** if a rules question comes up, make a fair ruling quickly and keep playing. Note it in the live log to check later. Only look things up mid-game (with the `lookup` skill) when the outcome hinges on it.
 
 ## Combat
-- **Follow `combat.md`:** real stat blocks, the combat script for the map and tracker, and the batched flow with standing orders.
-- **Combat mechanics go through gm-screen:** setup, enemy turns, and resolving the PC's actions.
+- **Follow `combat.md`:** real stat blocks, the combat script for all the rule math, one actor per step, and standing orders.
+- **In the Claude Code UI, combat mechanics go through gm-screen:** setup, enemy turns, and resolving the PC's actions. In `web.py`/`play.py` you run the script yourself.
 - **Play enemies according to their nature.** Animals flee when hurt, fanatics don't, and smart enemies target casters. Many creatures will surrender, flee or negotiate.
 - **Follow the system's procedure:** `library/<system>/rules/` has the quick reference.
 

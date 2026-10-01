@@ -47,7 +47,7 @@ ALLOWED_TOOLS = [
 
 WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude DM (play.py in a terminal, or the web UI).
 - The player sees ONLY your own text. Tool calls, tool results, subagent activity and subagent text are hidden from them.
-- Play mode "play.py": do hidden mechanics yourself. Roll with scripts/roll.py, run scripts/combat.py, and read and write dm/ files directly. Don't delegate them to the gm-screen agent. Keep using dm-scribe, dm-researcher and continuity-checker for heavy jobs (prep, research, the continuity check), and always wait for their results.
+- Play mode (web/terminal): do hidden mechanics yourself. Roll with scripts/roll.py, run scripts/combat.py, and read and write dm/ files directly. Don't delegate them to the gm-screen agent. Keep using dm-scribe, dm-researcher and continuity-checker for heavy jobs (prep, research, the continuity check), and always wait for their results.
 - Everything you write as text is shown to the player. So never think out loud ("Let me check…", "Now I need…"), never mention files, tools or DM-only content, and write only what the DM says at the table.
 - The interface shows the combat map, the initiative order and the combat log after each turn in which the combat state changed. Don't paste the map yourself.
 - NARRATION CONTRACT (these override your instincts as a writer):
@@ -64,16 +64,14 @@ WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude 
     - Describe NPC behavior, not their minds: "Mordent gives no sign that anything has changed", never "Mordent doesn't know that you know".
     - Never name a lead, flaw, culprit or connection the character hasn't found, not even as an open question: "you couldn't tell whether the circle was drawn correctly", never "the ritual circle's flaw".
     - No loaded framing that confirms a hidden truth ("whether it was anything but an accident", "the real culprit"). A failed investigation reports what was checked and what it showed, not that something was missed.
-- COMBAT:
-  - The combat script knows the rules. Resolve attacks with `combat.py attack g1 C --with <attack>` (NPC, from its combat profile) or `attack C g1 --total N --damage N` (PC). Flanking, conditions, prone, cover, range, into-melee, flat-footed/touch AC and concealment are applied automatically, so never add modifiers yourself and never roll attacks separately. Timed effects: `cond … --rounds N` (they expire on their own). Combat maneuvers (trip, grapple, bull rush, disarm, …): `combat.py maneuver g1 C trip` (NPC rolls its CMB) or `maneuver C g1 grapple --total N` (PC); grapples are tracked and must be maintained each round (see `-h`). LIGHT: when setting up a fight, decide the lighting (ambient `new … --light dim`, sources `light add torch --on C`, zones) as combat.md "Vision and light" says; the script then applies concealment, darkvision etc. itself, reveals hidden creatures the PC sees clearly, and every combat step includes the actor's `sight` report: play the creature by what it sees. NPC light/darkness spells: `cast … --light-at D4`. Areas: `area …`, saves: `save …`, dying PCs: `stabilize C --total N`. NPC spellcasting ALWAYS goes through `cast s1 "spell"` / `sla s1 "ability"` (slots, provoking, concentration), with the effect in the same command (`--area "cone 15" --toward C4 --save ref --dmg 1d4 --half`, or `--target C --save will`). The DC comes from the profile. Never resolve an NPC spell with `area` alone; a PC casting in melee: `provoke C --reason "casting a spell"`. Movement rolls NPC attacks of opportunity itself. If a combatant's stat block has no combat-profile block, add one first, following library/pf1e/combat-profile-guide.md, and run `combat.py profile check <file>`.
-  - The interface shows the combat log with all the numbers, after each turn. Narrate EVERY creature's turn in its own line or lines, matching the log. Never merge turns, never skip a creature, never contradict a number.
-  - THE INTERFACE RUNS THE TURN ORDER. You never run `combat.py next` (it's refused). On the player's go signal the interface advances the pointer and sends you a bracketed "[Combat step …]" message naming ONE actor: resolve exactly that actor in ONE `combat.py do "…"` call, narrate only that actor, and stop. The actor lock refuses actions by anyone but the current actor (exempt: `attack … --aoo`, and `--out-of-turn` for readied/immediate actions, forced movement and repositioning during setup).
-  - Hidden, unnoticed actors get a step message too. Your reply is only shown if the actor gets revealed (`combat.py reveal`); if it stays unnoticed, reply "…".
-  - On the PC's turn, resolve what the player declares and say which actions remain. When the player ends their turn in any words other than the bare "end turn"/"next" (e.g. "done", or actions plus "that's my turn"), add `combat.py endturn C` to your call; the interface then plays the next step. Never narrate another actor's turn on your own.
-  - Starting a fight: after setup, stop. Never run `next`; if the PC acts first, the interface moves the pointer onto them.
-  - When the player must decide something mid-round (an AoO, a reaction, a stabilization check), ask, and run `combat.py ask "…"` in your call so auto-combat pauses.
-  - A PC who is dying rolls their own stabilization check (ask for it). Never "play it forward" without the player, and never promise to report back later: resolve everything in this reply, step by step.
-  - PC tokens use the first letter of the character's name (Corin → C).
+- COMBAT (details: combat.md; syntax: `combat.py -h`):
+  - The script does all the rule math (modifiers, AoOs, maneuvers, light and vision, durations, dying). Never compute modifiers, count squares or roll attacks yourself. NPCs: `attack g1 C --with <attack>`; PCs: the player's rolls (`attack C g1 --total N --damage N`).
+  - Every NPC spell or SLA goes through `cast` / `sla`, with its effect in the same command. Effects beyond damage, after a failed save: `cond … --rounds N`.
+  - Setup: every combatant needs a valid combat profile (add one from the stat block first; a PC's sheet must pass the PC schema, so ask the player for missing values). Decide the lighting as part of the encounter. PC tokens use the first letter of the name (Corin → C). After setup, stop.
+  - THE INTERFACE RUNS THE TURN ORDER. Never run `next` (it's refused). A bracketed "[Combat step …]" message names ONE actor and what it can see: resolve exactly that actor in ONE `combat.py do` call, narrate only that actor, and stop. Play it by its nature and what it sees. A hidden actor's step: reply "…" unless it gets revealed.
+  - On the PC's turn, resolve what the player declares and say which actions remain. If the player ends the turn in other words or together with their actions, add `combat.py endturn C`.
+  - When the script sets a question (an AoO, a save, a stabilization check) or the player must decide something mid-round, ask them (`combat.py ask "…"` for your own questions). A dying PC rolls their own stabilization checks; never play the fight forward without the player.
+  - The interface shows the map, initiative and combat log with all the numbers. Narrate EVERY creature's turn in its own line or lines, matching the log. Never merge turns, skip a creature, or contradict a number.
 - Do lookups before you start writing to the player, so you never send the same text twice.
 - Before any in-game narration, the /start-session skill must have run in this conversation (it loads the table rules). If the player wants to play and it hasn't, run it first.
 - AskUserQuestion isn't available here. Ask questions in plain text, with the options as a short list.
@@ -115,6 +113,52 @@ def last_session() -> str | None:
     return f.read_text().strip() if f.exists() else None
 
 
+# ---------- telemetry ----------
+# One JSON line per exchange in .play/telemetry.jsonl (local and gitignored; it contains the DM's
+# commands, so it's DM-only). Summarize with: python3 scripts/telemetry.py
+
+TELEMETRY = STATE / "telemetry.jsonl"
+
+
+def exchange_kind(text: str) -> str:
+    """What an exchange was, from the message the engine sent."""
+    t = text.lstrip()
+    if t.startswith("[Combat step"):
+        return "combat-hidden" if "hasn't noticed" in t[:400] else "combat-step"
+    if t.startswith("[The player is switching"):
+        return "switch"
+    if t.startswith("/"):
+        return "command:" + t.split()[0][1:]
+    if t.lower().rstrip(".!") in ("next", "end turn"):
+        return "go-signal"
+    return "player"
+
+
+def _tool_summary(name: str, inp: dict[str, Any]) -> str:
+    """A short description of a tool call: the command for Bash, the file for Read/Edit, etc."""
+    if name == "Bash":
+        return str(inp.get("command", ""))[:300]
+    if name in ("Read", "Write", "Edit", "Glob", "Grep"):
+        return str(inp.get("file_path") or inp.get("pattern") or inp.get("path") or "")[:200]
+    if name in ("Agent", "Task"):
+        return str(inp.get("subagent_type") or "") + ": " + str(inp.get("description") or "")[:120]
+    if name == "Skill":
+        return str(inp.get("skill") or inp.get("command") or "")
+    return ""
+
+
+def _error_line(content: Any) -> str:
+    """The first meaningful line of a failed tool result."""
+    body = content if isinstance(content, str) else json.dumps(content)
+    lines = [l.strip() for l in body.splitlines() if l.strip()]
+    for pick in (lambda l: "combat error:" in l, lambda l: "Error" in l or "error:" in l,
+                 lambda l: "error" in l.lower() and not l.startswith("Exit code")):
+        hit = [l for l in lines if pick(l)]
+        if hit:
+            return hit[-1][:240]   # the last one: a traceback ends with the actual exception
+    return lines[0][:240] if lines else ""
+
+
 class Engine:
     """One headless DM session. `send()` blocks until the reply to that message is complete."""
 
@@ -136,6 +180,8 @@ class Engine:
         self.done = threading.Event()
         self.waiting = False   # a player turn is in progress
         self._held: list[dict[str, Any]] | None = None   # DM text held back (a hidden actor's step)
+        self._tel: dict[str, Any] | None = None           # telemetry of the exchange in progress
+        self.telemetry = True
         self.armed = False     # the echo of the player's message has been seen
         self._reset()
 
@@ -260,6 +306,8 @@ class Engine:
             self.done.clear()
             self.waiting, self.armed = True, False
             self._reset()
+            self._tel = {"start": time.time(), "kind": exchange_kind(text), "chars_in": len(text),
+                         "tools": {}, "sub_tools": 0, "chars_out": 0}
             self.emit(type="status", label="thinking")
         proc.stdin.write(json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n")
         proc.stdin.flush()
@@ -268,8 +316,36 @@ class Engine:
                 break
         with self.lock:
             self.waiting = False
+            if self._tel is not None:   # the process died mid-reply
+                self._write_telemetry({"died": True})
         self.emit(type="status", label=None)
         return self.alive()
+
+    def _write_telemetry(self, result: dict[str, Any]) -> None:
+        """Append the finished exchange to .play/telemetry.jsonl (never raises)."""
+        tel, self._tel = self._tel, None
+        if not tel or not self.telemetry:
+            return
+        tools = list(tel["tools"].values())
+        rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(tel["start"])),
+               "session": self.session_id, "campaign": active_campaign(), "kind": tel["kind"],
+               "seconds": round(time.time() - tel["start"], 1), "effort": self.effort,
+               "chars_in": tel["chars_in"], "chars_out": tel["chars_out"],
+               "tools": tools, "tool_calls": len(tools), "tool_errors": sum(1 for x in tools if x.get("error")),
+               "subagent_tool_calls": tel["sub_tools"]}
+        for k in ("num_turns", "duration_ms", "total_cost_usd", "died", "is_error"):
+            if k in result:
+                rec[k] = result[k]
+        usage = result.get("usage") or {}
+        if usage:
+            rec["tokens"] = {k: usage.get(k, 0) for k in ("input_tokens", "output_tokens",
+                                                       "cache_read_input_tokens", "cache_creation_input_tokens")}
+        try:
+            STATE.mkdir(exist_ok=True)
+            with TELEMETRY.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec) + "\n")
+        except OSError:
+            pass
 
     # --- stream handling ---
     def _read(self, proc: subprocess.Popen[str]) -> None:
@@ -335,6 +411,18 @@ class Engine:
             content = m.get("message", {}).get("content", [])
             mid = m.get("message", {}).get("id")
             texts = [c.get("text", "") for c in content if c.get("type") == "text"]
+            tel = self._tel
+            if tel is not None:
+                for c in content:
+                    if c.get("type") != "tool_use":
+                        continue
+                    if top:
+                        tel["tools"][c.get("id")] = {"name": c.get("name"),
+                                                     "call": _tool_summary(c.get("name", ""), c.get("input") or {})}
+                    else:
+                        tel["sub_tools"] += 1
+                if top:
+                    tel["chars_out"] += sum(len(x) for x in texts)
             if top and texts and mid not in self.streamed:
                 self._text_start()
                 self.emit(type="text", delta="\n".join(texts))
@@ -345,12 +433,17 @@ class Engine:
                 for c in content:
                     if c.get("type") == "tool_use":
                         self.emit(type="debug", line=f"[input] {json.dumps(c.get('input'))[:300]}")
-        elif t == "user" and self.debug:
+        elif t == "user":
             for c in (m.get("message", {}).get("content") or []):
-                if isinstance(c, dict) and c.get("type") == "tool_result":
-                    body = c.get("content")
-                    body = body if isinstance(body, str) else json.dumps(body)
-                    self.emit(type="debug", line=f"[result] {body[:300]}")
+                if not (isinstance(c, dict) and c.get("type") == "tool_result"):
+                    continue
+                body = c.get("content")
+                rec = (self._tel or {}).get("tools", {}).get(c.get("tool_use_id"))
+                text = body if isinstance(body, str) else json.dumps(body)
+                if rec is not None and (c.get("is_error") or "combat error:" in text or "Traceback" in text):
+                    rec["error"] = _error_line(body)
+                if self.debug:
+                    self.emit(type="debug", line=f"[result] {text[:300]}")
         elif t == "result":
             self._text_end()
             self.emit(type="status", label=None)
@@ -360,6 +453,8 @@ class Engine:
                 save_session(sid)
             if m.get("is_error"):
                 self.emit(type="error", message=f"The DM hit an error ({m.get('subtype')}). Try again.")
+            if self.waiting and self.armed and self._tel is not None:
+                self._write_telemetry(m)
             if self.waiting and self.armed:
                 self.done.set()
                 self.emit(type="turn_end", solicited=True)

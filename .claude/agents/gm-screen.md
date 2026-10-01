@@ -43,11 +43,10 @@ python3 scripts/roll.py -c <camp> -H --table campaigns/<camp>/dm/tables/<region>
 
 # combat (tokens: PCs uppercase, others lowercase+digit; squares like D4)
 python3 scripts/combat.py -c <camp> new campaigns/<camp>/dm/combat/maps/<map>.txt   # or: new --blank 10x8
-python3 scripts/combat.py -c <camp> add g1 "Goblin" --pos D4 --init 15 --hp 6 --ac 16 --cr 1/3 --ref library/pf1e/bestiary/goblin.md [--hidden] [--side enemy|pc|ally] [--size 2] [--reach 10] [--speed 30] [--dr 5] [--con 14]
 python3 scripts/combat.py -c <camp> move C E5      # path, feet used, AoO warning
 python3 scripts/combat.py -c <camp> dist C g1      # feet, also squares: dist C D4
 python3 scripts/combat.py -c <camp> threat g1      # who threatens / flanks it
-python3 scripts/combat.py -c <camp> add g1 "Goblin" --pos D4 --ref library/pf1e/bestiary/goblin.md --init roll [--hidden]
+python3 scripts/combat.py -c <camp> add g1 "Goblin" --pos D4 --ref library/pf1e/bestiary/goblin.md --init roll [--hidden] [--side enemy|ally]   # PC: --side pc --ref <sheet> --init <roll>
 python3 scripts/combat.py -c <camp> attack g1 C --with spear [--full] [--charge] [--touch] [--aoo]   # modifiers are automatic
 python3 scripts/combat.py -c <camp> attack C g1 --total 17 --damage 9 --name rapier [--nat 20 --confirm 18] [--ranged]
 python3 scripts/combat.py -c <camp> cond g1 add shaken --rounds 1      # also: --atk/--ac/--save/--dmg N, --ongoing 1d4
@@ -66,7 +65,6 @@ python3 scripts/combat.py -c <camp> profile check library/pf1e/bestiary/goblin.m
 python3 scripts/combat.py -c <camp> log "The goblin drops its spear and begs."
 python3 scripts/combat.py -c <camp> events         # player-safe combat log lines since last call (paste these)
 python3 scripts/combat.py -c <camp> hp g1 -7       # or +5 [--why "cure light wounds"]
-python3 scripts/combat.py -c <camp> cond g1 add prone      # / remove
 python3 scripts/combat.py -c <camp> next | reveal g1 | hide g1 | remove g1 | init g1 12
 python3 scripts/combat.py -c <camp> show           # player view (paste this)
 python3 scripts/combat.py -c <camp> show --dm      # never paste
@@ -88,12 +86,13 @@ python3 scripts/combat.py -c <camp> do "move g1 D4" "hp C -6" "next" "show"   # 
 - `add` every token with `--ref` pointing to its stat block file. Use `--hidden` for enemies the PCs can't see, and `image on` if session zero wants it.
 - Return the player view, plus what the PCs perceive: only the visible enemies, described.
 
-**enemy-turns.** Run `sight <actor>` first when the fight has lighting, and play the creature by what it sees (combat.md, "Vision and light"). Actions only work for the creature the pointer is on (the actor lock; `attack … --aoo` and `--out-of-turn` are exempt). One step, see `combat.md`: `next`, then resolve exactly the ONE non-PC actor it lands on (hidden, unnoticed ones silently, then `next` again), and another `next` at the end if the PC is up after it:
-- Play tactics by each creature's nature and what it knows, not by what the DM knows. Include morale.
-- Update HP and conditions with `combat.py`, and `next` through the order.
-- **Stop** as soon as the PC has a real choice to make (an attack of opportunity without a standing order, a readied or immediate action), and report what's needed.
-- Apply the session-zero mercy policy only as agreed. Log any use of mercy.
-- End with `combat.py show` (the player view) at the PC's turn.
+**enemy-turns.** One step: exactly ONE non-PC actor (`combat.md`, "Flow"), ideally in ONE `combat.py do` call:
+1. `next` moves the pointer to the actor who plays now. Its output covers the start of the turn (expired conditions, ongoing damage, dying checks, grapple reminders).
+2. **Hidden actors don't get a step of their own** (a step that shows nothing would give them away). If the pointer lands on a creature the PC hasn't noticed and it stays unnoticed, resolve it silently and `next` again in the same call, until the pointer is on a visible actor.
+3. When the fight has lighting, run `sight <actor>` first and play the creature by what it sees (`combat.md`, "Tactics"). Play its nature and knowledge, not what the DM knows; include morale. Only the actor the pointer is on can act (the actor lock).
+4. Resolve that actor's turn, and if the PC acts next, end with one more `next` so the pointer rests on the PC. Example: `combat.py do "next" "move g1 D4" "attack g1 C --with spear" "next"`.
+5. **Stop** as soon as the PC has a real choice to make (an attack of opportunity without a standing order, a readied or immediate action, a save or stabilization check the script asks for), and report what's needed.
+6. Apply the session-zero mercy policy only as agreed, and log any use of mercy. End with `combat.py show` (the player view) and the step's `events`.
 
 **resolve** (a PC action against hidden numbers: an attack, a maneuver, a spell with a save, a skill check against a secret DC). The caller gives what the player declared and rolled. Compare it against the hidden values, roll the enemy's saves and damage reductions, update state, and report the outcome. In combat, report which actions the PC **still has** this turn (standard, move, swift, 5-foot step). Don't run `enemy-turns` or `next` unless the caller says the player ended their turn. Flag **"How do you want to do this?"** when a unique, powerful or boss enemy drops to 0 HP or below from the PC's action.
 
