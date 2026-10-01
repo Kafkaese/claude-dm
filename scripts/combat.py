@@ -1130,11 +1130,32 @@ def check_actor(args: Args, st: State) -> None:
         return
     turn = st.get("turn")
     if turn is None:
-        raise CombatError(f"no one is acting yet: {actor} can't act before the first turn starts "
-                          f"(use --out-of-turn to reposition during setup)")
+        raise CombatError(f"the fight hasn't started its first turn yet, so {actor} can't act. "
+                          + ("You ARE in the player interface: it starts the turns right after your reply. Finish your "
+                             "reply (the opening, who acts first) and stop." if play_mode() else
+                             "Run `next` to start the first turn.") + " (Repositioning during setup: --out-of-turn.)")
     if actor != turn:
-        raise CombatError(f"it's {turn}'s turn, not {actor}'s: resolve only the current actor. "
-                          f"AoOs take --aoo; readied or immediate actions and forced movement take --out-of-turn")
+        raise CombatError(turn_message(st, actor, turn))
+
+
+def play_mode() -> bool:
+    """Whether the script runs under the player interface (web.py/play.py), which runs the turn order."""
+    return os.environ.get("CLAUDE_DM_MODE") == "play"
+
+
+def turn_message(st: State, actor: str, turn: str) -> str:
+    """Why an actor can't act now, and what to do about it (for the DM)."""
+    names = {t["token"]: t["name"] for t in st["tokens"]}
+    who_ = f"{turn} ({names.get(turn, turn)})"
+    msg = f"it's {who_}'s turn, not {actor}'s."
+    a = next((t for t in st["tokens"] if t["token"] == actor), None)
+    if a and a["side"] == "pc":
+        msg += (f" The PC's turn hasn't come yet: tell the player that {names.get(turn, turn)} acts first "
+                + ("and that their turn follows when they press Next (or say 'next'); keep their declared action "
+                   "for then." if play_mode() else "and resolve the turns before theirs first."))
+    else:
+        msg += " Resolve only the current actor."
+    return msg + " (AoOs take --aoo; readied or immediate actions and forced movement take --out-of-turn.)"
 
 
 def in_fight(c: Token) -> bool:
@@ -1845,7 +1866,9 @@ def cmd_act(args: Args, st: State) -> str:
     elif off_turn and args.kind == "free":
         out.append(f"{c['token']}: free action: {what}")
     elif off_turn and not args.override:
-        raise CombatError(f"it isn't {c['token']}'s turn: only immediate and free actions (or --override)")
+        turn = st.get("turn")
+        raise CombatError((turn_message(st, c["token"], turn) if turn else "the fight hasn't started its first turn yet.")
+                          + " Off-turn, only immediate and free actions work (or --override).")
     elif not args.override:
         spend(st, c, args.kind, what)
         out.append(f"{c['token']}: {args.kind} action: {what}")
@@ -3001,7 +3024,12 @@ def cmd_setup(args: Args) -> str:
     if enc.get("surprise"):
         st["surprise"] = True
     save(args.campaign, st)
-    out = [f"Encounter '{st['encounter']['title']}' is set up ({len(st['tokens'])} combatants, {len(steps)} steps).",
+    first = next_actor(st)
+    first_s = f"{first[0]['token']} ({first[0]['name']}{', hidden' if first[0].get('hidden') else ''})" if first else "nobody"
+    out = [f"Encounter '{st['encounter']['title']}' is set up ({len(st['tokens'])} combatants, {len(steps)} steps). "
+           f"First in initiative: {first_s}. "
+           + ("Narrate the opening and the initiative order (only what the PCs know), then stop: the interface "
+              "starts the turns right after your reply." if play_mode() else "Start the first turn with `next`."),
            render(st, dm=True)]
     if rolls:
         out.append("NPC initiative: " + "; ".join(rolls))
@@ -3448,8 +3476,10 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         st = load(args.campaign)
         if args.command == "next" and os.environ.get("CLAUDE_DM_MODE") == "play":
-            raise CombatError("the interface advances turns in this mode: don't run `next`. Resolve only the "
-                              "current actor, then stop")
+            raise CombatError("you ARE in the player interface (web.py/play.py), and it advances the turns itself "
+                              "when the player presses Next (or says 'next'). Don't run `next`: resolve only the actor "
+                              "the current [Combat step] names, or, outside a step, tell the player whose turn it is "
+                              "and stop")
         check_actor(args, st)
         if args.command == "show":
             print(render(st, dm=args.dm))

@@ -358,7 +358,7 @@ def main() -> None:
     maps = MapWatcher(campaign, not args.no_images)
     maps.prime()
     term = Terminal(spinner, maps)
-    dm = Engine(term.on_event, model=args.model, effort=args.effort, debug=args.debug)
+    dm = Engine(term.on_event, model=args.model, effort=args.effort, debug=args.debug, record_session=True)
     dm.start(resume=resume)
 
     print(f"{BOLD}Claude DM{RESET}  {DIM}(type :help for commands; effort {args.effort}){RESET}")

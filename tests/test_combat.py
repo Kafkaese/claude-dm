@@ -51,16 +51,23 @@ class TurnOrder(CampaignCase):
 
     def test_actor_lock(self) -> None:
         self.run_cmd("next")
-        self.assertIn("it's g1's turn", self.fail_cmd("attack", "g2", "C", "--with", "spear"))
-        self.assertIn("it's g1's turn", self.fail_cmd("move", "C", "B3"))
+        self.assertIn("it's g1 (Gob)'s turn", self.fail_cmd("attack", "g2", "C", "--with", "spear"))
+        self.assertIn("tell the player that Gob acts first", self.fail_cmd("move", "C", "B3"))
         self.run_cmd("move", "C", "B3", "--out-of-turn")    # forced movement is fine
 
     def test_next_refused_in_play_mode(self) -> None:
         os.environ["CLAUDE_DM_MODE"] = "play"
         try:
-            self.assertIn("interface advances turns", self.fail_cmd("next"))
+            self.assertIn("you ARE in the player interface", self.fail_cmd("next"))
+            err = self.fail_cmd("attack", "g1", "C", "--with", "spear")      # before the first turn
+            self.assertIn("starts the turns right after your reply", err)
         finally:
             del os.environ["CLAUDE_DM_MODE"]
+
+    def test_pc_acting_early_gets_told_who_is_first(self) -> None:
+        self.run_cmd("next")                                                  # g1 (init 20) is up
+        err = self.fail_cmd("attack", "C", "g1", "--total", "15", "--damage", "3")
+        self.assertIn("tell the player that Gob acts first", err)
 
     def test_actor_dropping_on_its_turn_keeps_the_order(self) -> None:
         self.run_cmd("next")                     # g1

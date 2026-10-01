@@ -67,7 +67,8 @@ WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude 
 - COMBAT (details: combat.md; the combat tools' descriptions have the options):
   - The script does all the rule math (modifiers, AoOs, maneuvers, light and vision, durations, dying). Never compute modifiers, count squares or roll attacks yourself. NPCs: combat_attack with `with` (a profile attack); PCs: the player's rolls (combat_attack with `total` and `damage`).
   - Every NPC spell or SLA goes through combat_cast (sla=true for SLAs), with its effect in the same call. Effects beyond damage, after a failed save: combat_condition with rounds.
-  - Setup: a prepared encounter (combat_encounters action=list) is ONE combat_setup call once the player's initiative is in. Otherwise: every combatant needs a valid combat profile (add one from the stat block first; a PC's sheet must pass the PC schema, so ask the player for missing values). Decide the lighting as part of the encounter. PC tokens use the first letter of the name (Corin → C). After setup, stop.
+  - YOU ARE IN THE INTERFACE. When a combat tool says the interface runs the turns, that's this interface: never tell the player to run anything, just follow the tool's advice.
+  - Setup: a prepared encounter (combat_encounters action=list) is ONE combat_setup call once the player's initiative is in. Otherwise: every combatant needs a valid combat profile (add one from the stat block first; a PC's sheet must pass the PC schema, so ask the player for missing values). Decide the lighting as part of the encounter. PC tokens use the first letter of the name (Corin → C). After setup, narrate the opening, give the initiative order and stop: the interface starts the turns right after your reply (an enemy that's first plays at once). If the player declares actions before their turn comes, tell them who acts first; their turn follows.
   - THE INTERFACE RUNS THE TURN ORDER. Never run `next` (it's refused). A bracketed "[Combat step …]" message names ONE actor, what it can see, and its tactical options (squares, the roll it needs there, what provokes; combat_options with area for area effects): resolve exactly that actor in ONE combat_batch call, narrate only that actor, and stop. Play it by its nature and what it sees. A hidden actor's step: reply "…" unless it gets revealed.
   - Every action is charged to the actor's turn, and the tool results say what's left; actions without their own tool (draw a weapon, stand up, drink a potion) are combat_act. On the PC's turn, resolve what the player declares and say which actions remain, from that report. If the player ends the turn in other words or together with their actions, call combat_endturn.
   - When a tool result sets a question (an AoO, a save, a stabilization check) or the player must decide something mid-round, ask them (combat_ask for your own questions). A dying PC rolls their own stabilization checks; never play the fight forward without the player.
@@ -164,14 +165,19 @@ def _error_line(content: Any) -> str:
 class Engine:
     """One headless DM session. `send()` blocks until the reply to that message is complete."""
 
-    def __init__(self, on_event: EventHandler, model: str | None = None, effort: str = 'medium', debug: bool = False) -> None:
+    def __init__(self, on_event: EventHandler, model: str | None = None, effort: str = 'medium', debug: bool = False,
+                 record_session: bool = False) -> None:
         """Args:
             on_event: called with every event (from a reader thread).
             model: model alias or id for `claude --model`, or None for the default.
             effort: thinking effort for `claude --effort`.
             debug: also emit debug events for tools and subagents.
+            record_session: remember the session as the one `--resume` continues (.play/last-session).
+                Only the real interfaces (web.py, play.py) set it; tests and scripts must not, or
+                `--resume` would pick up their throwaway conversations.
         """
         self.on_event = on_event
+        self.record_session = record_session
         self.model = model
         self.effort = effort
         self.debug = debug
@@ -391,7 +397,8 @@ class Engine:
             sid = m.get("session_id")
             if sid and sid != self.session_id:
                 self.session_id = sid
-                save_session(sid)
+                if self.record_session:
+                    save_session(sid)
                 self.emit(type="session", id=sid)
         elif t == "user" and m.get("isReplay"):
             self.armed = True
@@ -458,7 +465,8 @@ class Engine:
             sid = m.get("session_id") or self.session_id
             if sid:
                 self.session_id = sid
-                save_session(sid)
+                if self.record_session:
+                    save_session(sid)
             if m.get("is_error"):
                 self.emit(type="error", message=f"The DM hit an error ({m.get('subtype')}). Try again.")
             if self.waiting and self.armed and self._tel is not None:
@@ -747,15 +755,14 @@ def _first_visible_after(st: dict[str, Any], token: str | None) -> dict[str, Any
 def step_due(camp: str | None, text: str) -> bool:
     """After an ordinary exchange: should the interface run a combat step on its own? Yes when the
     PC's turn is over (the DM ran `combat.py endturn`, or the message ended in "end turn"), or when
-    the fight was just set up and the PC is the first visible actor."""
+    the fight was just set up: the first turns start right after the setup reply, whoever is first."""
     st = combat_state(camp)
     if not st or st.get("awaiting"):
         return False
     turn = st.get("turn")
     by_tok = {c["token"]: c for c in st.get("tokens", [])}
-    if turn is None:
-        first = _first_visible_after(st, None)
-        return bool(first and first["side"] == "pc")
+    if turn is None:   # the fight was just set up (the PCs are in): the turns start right away
+        return any(t["side"] == "pc" for t in st.get("tokens", []))
     pc_up = by_tok.get(turn, {}).get("side") == "pc"
     return pc_up and (st.get("end_turn") == turn or ends_turn(text))
 

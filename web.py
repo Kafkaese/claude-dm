@@ -417,7 +417,7 @@ def main() -> None:
     if resume:
         hub.history = load_history(resume)
         hub.campaign_arg = args.campaign or campaign_for_session(resume, hub.history)
-    engine = Engine(hub.on_event, model=args.model, effort=args.effort, debug=args.debug)
+    engine = Engine(hub.on_event, model=args.model, effort=args.effort, debug=args.debug, record_session=True)
     hub.engine = engine
     engine.start(resume=resume)
     hub.combat = combat_snapshot(hub.campaign()) or {"active": False}

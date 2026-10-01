@@ -53,6 +53,15 @@ class Stepping(CampaignCase):
         self.shown.clear()
         return E.run_combat_step(self.engine, self.slug, self.send)
 
+    def test_fight_starts_right_after_setup_even_with_an_enemy_first(self) -> None:
+        self.run_cmd("init", "g1", "25")                 # the goblin goes before Corin
+        self.assertTrue(E.step_due(self.slug, "17"))
+        self.assertEqual(self.step(), "pc")              # g1 plays at once, then it's Corin's turn
+        self.assertEqual(self.asked, ["g1"])
+
+    def test_engine_doesnt_record_sessions_by_default(self) -> None:
+        self.assertFalse(E.Engine(lambda ev: None).record_session)
+
     def test_fight_start_with_pc_first(self) -> None:
         self.assertTrue(E.step_due(self.slug, "I rolled 18"))
         self.assertEqual(self.step(), "pc-quiet")
