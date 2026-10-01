@@ -676,12 +676,15 @@ def apply_damage(c: Token, dmg: int, nonlethal: bool = False) -> tuple[int, int]
     return dealt, absorbed
 
 
+RNG: Any = None   # tests set a seeded random.Random here; play uses secrets.SystemRandom
+
+
 def _roll(expr: str) -> tuple[int, str, list[str]]:
     """Roll a dice expression with roll.py's evaluator. Returns (total, detail, flags)."""
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import secrets
     from roll import evaluate
-    total, detail, flags = evaluate(expr, secrets.SystemRandom())
+    total, detail, flags = evaluate(expr, RNG or secrets.SystemRandom())
     return total, detail, flags
 
 

@@ -40,6 +40,7 @@ WorldState = dict[str, Any]   # the contents of dm/world-state.json
 PROJECT = Path(__file__).resolve().parents[1]
 PRESSURE = {"calm": (10, 1), "lively": (20, 2), "relentless": (35, 3)}   # base chance %, session budget
 CLASSES = ("hop", "trip", "journey", "night-safe", "night-camp", "skip")
+RNG: Any = None   # tests set a seeded random.Random here; play uses secrets.SystemRandom
 ALWAYS_ROLL = ("journey", "night-camp")   # still roll when the session budget is spent twice over
 
 
@@ -76,7 +77,7 @@ def save(camp: str, st: WorldState) -> None:
 
 def d100() -> int:
     """Roll a d%, with the same random source as roll.py."""
-    total, _, _ = evaluate("1d100", secrets.SystemRandom())
+    total, _, _ = evaluate("1d100", RNG or secrets.SystemRandom())
     return total
 
 
@@ -146,7 +147,7 @@ def cmd_turn(args: argparse.Namespace, st: WorldState) -> tuple[str, bool]:
             st["interruptions"] += 1
             if args.settlement:
                 st["day_events"] += 1
-            res = roll_table(str(table), secrets.SystemRandom()) if table else "EVENT (no table given: pick a fitting one)"
+            res = roll_table(str(table), RNG or secrets.SystemRandom()) if table else "EVENT (no table given: pick a fitting one)"
             lines.append(f"{label}d% {roll} ≤ {chance}: EVENT → {res}")
         else:
             lines.append(f"{label}d% {roll} > {chance}: no event")

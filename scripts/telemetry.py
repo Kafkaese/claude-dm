@@ -43,7 +43,7 @@ def load(path: Path) -> list[dict[str, Any]]:
 def mask(text: str) -> str:
     """An error message with the specifics masked, so similar errors group together and nothing
     secret shows: quoted names, squares (D4), tokens (g1, C), and numbers."""
-    t = re.sub(r"'[^']*'|\"[^\"]*\"", "'…'", text)
+    t = re.sub(r"(?<!\w)'[^'\n]*'(?!\w)|\"[^\"\n]*\"", "'…'", text)   # quoted names, not apostrophes
     t = re.sub(r"\b[A-Z]\d{1,2}\b", "SQ", t)
     t = re.sub(r"\b[a-z]{1,2}\d\b", "TOK", t)
     t = re.sub(r"\b[A-Z]\b", "TOK", t)

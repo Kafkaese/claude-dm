@@ -122,6 +122,10 @@ def _info(a: Args) -> list[str]:
 
 def _light(a: Args) -> list[str]:
     act = a["action"]
+    need = {"ambient": ["level"], "zone": ["from", "to", "level"], "add": ["kind"], "move": ["id"], "remove": ["id"]}
+    missing = [k for k in need.get(act, []) if not a.get(k)]
+    if missing:
+        raise ValueError(f"action {act} needs {', '.join(missing)}")
     if act == "ambient":
         return ["light", "ambient", a["level"]]
     if act == "zone":
