@@ -134,10 +134,17 @@ class Hub:
             self.shown_campaign = camp
             self.publish({"type": "campaign", "campaign": camp, "title": campaign_title(camp)})
 
+    def fight(self) -> dict[str, Any] | None:
+        """The fight to show: only once the DM has engaged combat in this session (a saved fight from
+        an earlier session stays hidden until the DM resumes it)."""
+        if not (self.engine and self.engine.combat_engaged):
+            return None
+        return combat_snapshot(self.campaign())
+
     def refresh_combat(self) -> None:
         """Send the current fight to the browsers, or a 'fight is over' card when it just ended."""
         camp = self.campaign()
-        snap = combat_snapshot(camp)
+        snap = self.fight()
         with self.lock:
             was_active = bool(self.combat and self.combat.get("active"))
             if snap:
@@ -169,7 +176,7 @@ class Hub:
             self.turn_dm = None
             self.publish({"type": "player", "text": text})
             self.publish({"type": "busy", "busy": True})
-            st = combat_state(self.campaign())
+            st = combat_state(self.campaign()) if self.eng.combat_engaged else None
             step = bool(st and not st.get("awaiting") and is_go_signal(text))
             self.worker = threading.Thread(target=self._run_step if step else self._run_turn, args=(text,), daemon=True)
             self.worker.start()
@@ -200,7 +207,7 @@ class Hub:
         just set up with the PC first), the step runs right after."""
         ok = self._exchange(text)
         self.refresh_combat()
-        if ok and step_due(self.campaign(), text):
+        if ok and self.eng.combat_engaged and step_due(self.campaign(), text):
             self._step()
         self._pin_campaign()
         self.refresh_campaign()
@@ -263,7 +270,7 @@ class Hub:
         with self.lock:
             self.campaign_arg = slug
             self.history, self.turn_dm = [], None
-            self.combat = combat_snapshot(slug) or {"active": False}
+            self.combat = {"active": False}   # a fresh conversation: nothing shown until the DM engages
             self.publish(self.hello())
             text = f"/start-session {slug}"
             self.history.append({"role": "player", "text": text})
@@ -420,7 +427,7 @@ def main() -> None:
     engine = Engine(hub.on_event, model=args.model, effort=args.effort, debug=args.debug, record_session=True)
     hub.engine = engine
     engine.start(resume=resume)
-    hub.combat = combat_snapshot(hub.campaign()) or {"active": False}
+    hub.combat = {"active": False}   # shown once the DM engages combat in this session (Hub.fight)
 
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(hub))
     server.daemon_threads = True

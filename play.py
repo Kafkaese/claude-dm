@@ -258,6 +258,7 @@ class Terminal:
     def __init__(self, spinner: Spinner, maps: MapWatcher) -> None:
         self.spinner = spinner
         self.maps = maps
+        self.engine: Engine | None = None   # set by main(); maps only show once it has engaged combat
         self.r = Renderer()
         self.at_prompt = False      # the player is typing; replies arriving now need a fresh line
         self.idle_output = False
@@ -287,7 +288,8 @@ class Terminal:
             self.r.flush()
             self.spinner.hide()
             if not ev["solicited"]:
-                self.maps.show()
+                if self.engine is None or self.engine.combat_engaged:
+                    self.maps.show()
                 if self.idle_output:
                     sys.stdout.write(f"\n{BOLD}>{RESET} ")
                     sys.stdout.flush()
@@ -359,6 +361,7 @@ def main() -> None:
     maps.prime()
     term = Terminal(spinner, maps)
     dm = Engine(term.on_event, model=args.model, effort=args.effort, debug=args.debug, record_session=True)
+    term.engine = dm
     dm.start(resume=resume)
 
     print(f"{BOLD}Claude DM{RESET}  {DIM}(type :help for commands; effort {args.effort}){RESET}")
@@ -376,7 +379,7 @@ def main() -> None:
             break
         term.idle_output = False
         if not text:
-            if not maps.in_combat():
+            if not (dm.combat_engaged and maps.in_combat()):
                 continue
             text = "next"   # during a fight, an empty Enter is the go signal for the next actor
             print(f"{DIM}(next turn){RESET}")
@@ -409,7 +412,7 @@ def main() -> None:
         elif words[0] in ("/start-session", "/new-campaign"):
             maps.campaign, detect = None, True
         camp = maps.current_campaign()
-        st = combat_state(camp)
+        st = combat_state(camp) if dm.combat_engaged else None
         try:
             if camp and st and not st.get("awaiting") and is_go_signal(text):
                 ok = run_combat_step(dm, camp, dm.send) != "error"   # the interface plays one step
@@ -417,7 +420,7 @@ def main() -> None:
                     print(f"{DIM}(your turn){RESET}")
             else:
                 ok = dm.send(text)
-                if ok and camp and step_due(camp, text):
+                if ok and camp and dm.combat_engaged and step_due(camp, text):
                     ok = run_combat_step(dm, camp, dm.send) != "error"
         except KeyboardInterrupt:
             spinner.hide()
@@ -436,7 +439,8 @@ def main() -> None:
         if detect:
             maps.campaign = active_campaign(None)
         remember_campaign(dm.session_id, maps.campaign)   # so --resume comes back to this campaign
-        maps.show()
+        if dm.combat_engaged:   # a saved fight from an earlier session stays hidden until the DM resumes it
+            maps.show()
 
     dm.stop()
     if dm.session_id:

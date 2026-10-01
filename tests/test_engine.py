@@ -177,3 +177,35 @@ class CampaignTracking(CampaignCase):
         self.run_cmd("new", "--blank", "5x5")                 # a test campaign gets touched afterwards…
         self.assertEqual(hub.campaign(), real)                # …and the page stays with the real one
         self.assertEqual(E.campaign_for_session("sid-3"), real)
+
+
+class CombatVisibility(CampaignCase):
+    """A saved fight stays hidden until the DM engages combat in this session."""
+
+    def test_which_tools_engage_combat(self) -> None:
+        self.assertTrue(E.is_combat_tool("mcp__dm__combat_info", {}))
+        self.assertTrue(E.is_combat_tool("mcp__dm__combat_setup", {}))
+        self.assertFalse(E.is_combat_tool("mcp__dm__combat_profile_check", {}))
+        self.assertFalse(E.is_combat_tool("mcp__dm__dice_roll", {}))
+        self.assertTrue(E.is_combat_tool("Bash", {"command": "python3 scripts/combat.py -c x show"}))
+        self.assertFalse(E.is_combat_tool("Bash", {"command": "python3 scripts/combat.py -c x profile check f.md"}))
+
+    def test_engine_notices_combat_tools(self) -> None:
+        eng = E.Engine(lambda ev: None)
+        self.assertFalse(eng.combat_engaged)
+        eng._handle({"type": "assistant", "parent_tool_use_id": None, "message": {"id": "m", "content": [
+            {"type": "tool_use", "id": "t", "name": "mcp__dm__dice_roll", "input": {}}]}})
+        self.assertFalse(eng.combat_engaged)
+        eng._handle({"type": "assistant", "parent_tool_use_id": None, "message": {"id": "m2", "content": [
+            {"type": "tool_use", "id": "t2", "name": "mcp__dm__combat_info", "input": {"what": "show"}}]}})
+        self.assertTrue(eng.combat_engaged)
+
+    def test_web_hides_a_saved_fight_until_engaged(self) -> None:
+        import web
+        self.new()
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=20)
+        hub = web.Hub(self.slug)
+        hub.engine = E.Engine(lambda ev: None)
+        self.assertIsNone(hub.fight())                       # saved, but this session hasn't engaged it
+        hub.engine.combat_engaged = True
+        self.assertIsNotNone(hub.fight())
