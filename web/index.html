@@ -427,6 +427,23 @@ function lightSources(m) {
   }
   return s;
 }
+// the last actor's movement: a line through the square centres, a dot at the start, an arrowhead
+// that stops at the edge of its token
+function moveLine(mv) {
+  const pts = mv.path.map(([x, y]) => [LAB + (x + mv.size / 2) * CELL, LAB + (y + mv.size / 2) * CELL]);
+  if (pts.length < 2) return "";
+  const color = TOKEN_COLOR(mv.side), [ex, ey] = pts[pts.length - 1], [px, py] = pts[pts.length - 2];
+  const len = Math.hypot(ex - px, ey - py) || 1, ux = (ex - px) / len, uy = (ey - py) / len;
+  const stop = mv.size * CELL / 2 - 4;                       // the token's edge
+  const tip = [ex - ux * stop, ey - uy * stop], back = [tip[0] - ux * 11, tip[1] - uy * 11];
+  const line = pts.slice(0, -1).concat([back]).map(p => p.join(",")).join(" ");
+  const head = [tip, [back[0] - uy * 6, back[1] + ux * 6], [back[0] + uy * 6, back[1] - ux * 6]].map(p => p.join(",")).join(" ");
+  return `<g class="moveline" pointer-events="none" opacity="0.85">` +
+    `<polyline points="${line}" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" stroke-linecap="round" opacity="0.6"/>` +
+    `<polyline points="${line}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="7 5"/>` +
+    `<circle cx="${pts[0][0]}" cy="${pts[0][1]}" r="5" fill="${color}" stroke="#FFFFFF" stroke-width="2"/>` +
+    `<polygon points="${head}" fill="${color}" stroke="#FFFFFF" stroke-width="1.5"/></g>`;
+}
 function lightText(x, y) {
   const L = mapData && mapData.light;
   if (!L) return "";
@@ -460,6 +477,7 @@ function renderMap(m) {
     }
   }
   if (m.light) s += lightOverlay(m);
+  if (m.move) s += moveLine(m.move);
   for (const t of m.tokens) {
     const span = t.size * CELL, cx = LAB + t.x * CELL + span / 2, cy = LAB + t.y * CELL + span / 2, rad = span / 2 - 6;
     if (t.current) s += `<circle cx="${cx}" cy="${cy}" r="${rad + 4}" fill="none" stroke="#E0A21C" stroke-width="4"/>`;
@@ -485,6 +503,7 @@ function renderLegend(m) {
   const used = new Set(((m && m.grid) || []).join(""));
   const keys = Object.keys(names).filter(ch => used.has(ch)).map(ch =>
     `<span class="key"><svg viewBox="0 0 ${CELL} ${CELL}" aria-hidden="true">${terrainShape(ch, 0, 0)}</svg>${esc(names[ch])}</span>`);
+  if (m && m.move) keys.push(`<span class="key"><svg viewBox="0 0 ${CELL} ${CELL}" aria-hidden="true"><rect width="${CELL}" height="${CELL}" fill="var(--map-floor)"/><line x1="6" y1="30" x2="34" y2="10" stroke="${TOKEN_COLOR(m.move.side)}" stroke-width="4" stroke-dasharray="6 4"/></svg>last move (${esc(m.move.token)})</span>`);
   if (m && m.light) {
     const flat = m.light.squares.flat();
     const sw = (fill, label, extra = "") => `<span class="key"><svg viewBox="0 0 ${CELL} ${CELL}" aria-hidden="true"><rect width="${CELL}" height="${CELL}" fill="var(--map-floor)"/><rect width="${CELL}" height="${CELL}" fill="${fill}"/>${extra}</svg>${label}</span>`;

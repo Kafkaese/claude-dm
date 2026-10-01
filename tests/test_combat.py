@@ -280,3 +280,40 @@ class Options(CampaignCase):
         self.assertIn("charge:", out)
         self.assertIn('--area "burst 10"', out)
         self.assertEqual((self.tok("g1")["x"], self.tok("g1")["y"]), (9, 4))   # options never move anything
+
+
+class MovementLine(CampaignCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.new(map_text="#########\n#.......#\n#...#...#\n#...#...#\n#.......#\n#########\n")
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=5)
+        self.add("g1", "Gob", "G3", GOBLIN, init=20)
+        self.add("h1", "Lurker", "G5", GOBLIN, "enemy", 15, "--hidden")
+        self.run_cmd("next")                                   # g1
+
+    def line(self) -> dict | None:
+        import combat
+        return combat.movement_line(self.state())
+
+    def test_route_around_the_wall_and_handoff(self) -> None:
+        self.run_cmd("move", "g1", "C3")
+        mv = self.line()
+        assert mv is not None
+        self.assertEqual(mv["token"], "g1")
+        self.assertEqual(mv["path"][0], [6, 2])
+        self.assertEqual(mv["path"][-1], [2, 2])
+        self.assertTrue(all(sq != [4, 2] and sq != [4, 3] for sq in mv["path"]))   # never through the wall
+        self.run_cmd("next")                                   # h1 (hidden) moves: never shown
+        self.run_cmd("move", "h1", "F5")
+        self.assertEqual(self.line()["token"], "g1")
+        self.run_cmd("next")                                   # Corin: g1's line stays until he moves
+        self.assertEqual(self.line()["token"], "g1")
+        self.run_cmd("move", "C", "B3", "--step")
+        self.assertEqual(self.line()["path"], [[1, 1], [1, 2]])
+
+    def test_actor_that_doesnt_move_clears_it(self) -> None:
+        self.run_cmd("move", "g1", "F3")
+        self.run_cmd("next")
+        self.run_cmd("next")                                   # Corin, then he ends without moving
+        self.run_cmd("next")                                   # g1 again (new round)
+        self.assertIsNone(self.line())                         # the last actor (Corin) didn't move

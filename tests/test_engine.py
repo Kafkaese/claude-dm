@@ -84,6 +84,13 @@ class Stepping(CampaignCase):
         self.assertIn("Its attacks (combat_attack `with`): spear", prompts[0])
         self.assertIn("Tactical options", prompts[0])
 
+    def test_step_message_names_who_is_next(self) -> None:
+        prompts: list[str] = []
+        self.step()                                       # onto Corin
+        E.run_combat_step(self.engine, self.slug, lambda p: prompts.append(p) or True)
+        self.assertIn("It is NOT the player's turn after this: next up is Gob2", prompts[0])   # g1, then (h1), g2
+        self.assertIn("Don't write 'your turn'", prompts[0])
+
     def test_endturn_flag(self) -> None:
         self.step()
         self.assertFalse(E.step_due(self.slug, "I attack"))

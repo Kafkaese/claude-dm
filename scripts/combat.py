@@ -279,6 +279,11 @@ def occupied(st: State, mover: Token, x: int, y: int) -> bool:
 
 def path_cost(st: State, mover: Token, dest: Square) -> int:
     """Cheapest legal move in feet (Dijkstra over (x, y, diagonal parity))."""
+    return path_route(st, mover, dest)[0]
+
+
+def path_route(st: State, mover: Token, dest: Square) -> tuple[int, list[Square]]:
+    """The cheapest legal move: (feet, the squares from start to dest, both included)."""
     import heapq
     start = (mover["x"], mover["y"])
 
@@ -298,11 +303,16 @@ def path_cost(st: State, mover: Token, dest: Square) -> int:
     if not footprint_ok(*dest, final=True):
         raise CombatError(f"{fmt_pos(*dest)} is blocked or occupied")
     best = {(start, 0): 0}
+    came: dict[tuple[Square, int], tuple[Square, int]] = {}
     heap = [(0, start, 0)]
     while heap:
         feet, (x, y), parity = heapq.heappop(heap)
         if (x, y) == dest:
-            return feet
+            route, key = [dest], ((x, y), parity)
+            while key in came:
+                key = came[key]
+                route.append(key[0])
+            return feet, route[::-1]
         if feet > best.get(((x, y), parity), 1e9):
             continue
         for dx in (-1, 0, 1):
@@ -324,6 +334,7 @@ def path_cost(st: State, mover: Token, dest: Square) -> int:
                 key = ((nx, ny), npar)
                 if nf < best.get(key, 1e9):
                     best[key] = nf
+                    came[key] = ((x, y), parity)
                     heapq.heappush(heap, (nf, (nx, ny), npar))
     raise CombatError(f"no legal path to {fmt_pos(*dest)}")
 
@@ -525,6 +536,25 @@ def tile(ch: str) -> Any:
 TERRAIN_NAMES = {"#": "wall", "+": "door", "^": "difficult", "~": "water", "T": "trees", "_": "pit", "=": "bridge"}
 
 
+def movement_line(st: State) -> dict[str, Any] | None:
+    """The movement to draw on the map: the current actor's path this turn if it has moved, else
+    the last actor's. Never a hidden creature's. Returns {token, side, size, path} or None."""
+    cur = next((t for t in st["tokens"] if t["token"] == st.get("turn")), None)
+    cands: list[tuple[Token, list[Any]]] = []
+    if cur is not None and len(cur.get("turn_path") or []) > 1:
+        cands.append((cur, cur["turn_path"]))
+    if st.get("last_move"):
+        t = next((x for x in st["tokens"] if x["token"] == st["last_move"]["token"]), None)
+        if t is not None:
+            cands.append((t, st["last_move"]["path"]))
+    # a hidden mover is skipped, not blanked: the line vanishing would give it away
+    pick = next(((t, p) for t, p in cands if not t.get("hidden") and not t.get("removed")), None)
+    if pick is None:
+        return None
+    t, path = pick
+    return {"token": t["token"], "side": t["side"], "size": t.get("size", 1), "path": [list(p) for p in path]}
+
+
 def render_image(st: State, path: Path, panel: bool = True) -> Path:
     """The player view as a PNG. panel=False draws only the map (transparent margins, no round
     title, no initiative panel or legend), for interfaces that show those themselves."""
@@ -583,6 +613,14 @@ def render_image(st: State, path: Path, panel: bool = True) -> Path:
                 sd.ellipse([cx - 7, cy - 7, cx + 7, cy + 7], fill=(246, 181, 50, 255), outline=(122, 58, 18, 255))
         img = Image.alpha_composite(img.convert("RGBA"), shade).convert("RGB")
         d = ImageDraw.Draw(img)
+    mv = movement_line(st)
+    if mv:   # the last actor's movement, under the tokens
+        pts = [(LABEL + (x + mv["size"] / 2) * CELL, top + (y + mv["size"] / 2) * CELL) for x, y in mv["path"]]
+        col = c.get(mv["side"], (200, 200, 200))
+        d.line(pts, fill=(255, 255, 255), width=8, joint="curve")
+        d.line(pts, fill=col, width=4, joint="curve")
+        x0, y0 = pts[0]
+        d.ellipse([x0 - 6, y0 - 6, x0 + 6, y0 + 6], fill=col, outline=(255, 255, 255), width=2)
     for t in shown:
         x0, y0 = LABEL + t["x"] * CELL, top + t["y"] * CELL
         span = t["size"] * CELL
@@ -1186,6 +1224,10 @@ def cmd_next(args: Args, st: State) -> str:
     found = next_actor(st)
     if not found:
         raise CombatError("no combatants")
+    prev = next((t for t in st["tokens"] if t["token"] == st.get("turn")), None)
+    if prev is not None and not prev.get("hidden"):   # a hidden actor's movement is never shown
+        path = prev.pop("turn_path", None)
+        st["last_move"] = {"token": prev["token"], "path": path} if path and len(path) > 1 else None
     lapsed = []
     for g in list(grapples(st)):   # a grapple must be maintained every round, on the grappler's turn
         if g["by"] == st.get("turn") and g.get("round") != st.get("round"):
@@ -1212,7 +1254,7 @@ def cmd_next(args: Args, st: State) -> str:
     c["moved"] = 0
     c.pop("stepped", None)
     c.pop("overrun_through", None)
-    for k in ("turn_actions", "move_mode", "mode_feet", "chain_feet", "chain_moves", "move_closed"):
+    for k in ("turn_actions", "move_mode", "mode_feet", "chain_feet", "chain_moves", "move_closed", "turn_path"):
         c.pop(k, None)
     if c.get("immediate_used"):   # an immediate action since its last turn took this turn's swift
         turn_actions(c)["swift"] = f"immediate action before this turn ({c.pop('immediate_used')})"
@@ -1625,7 +1667,7 @@ def cmd_move(args: Args, st: State) -> str:
     if stuck and not args.out_of_turn:
         raise CombatError(f"{c['token']} can't move ({', '.join(stuck)}); forced movement takes --out-of-turn")
     dest = parse_pos(args.pos, st)
-    feet = path_cost(st, c, dest)
+    feet, route = path_route(st, c, dest)
     frm = fmt_pos(c["x"], c["y"])
     out = []
     speed = c.get("speed") or 30
@@ -1678,6 +1720,9 @@ def cmd_move(args: Args, st: State) -> str:
             out.insert(0, f"{c['token']} is dropped by an attack of opportunity at {frm} and doesn't move")
             return "\n".join(out)
     c["x"], c["y"] = dest
+    if st.get("turn") == c["token"]:   # its own movement this turn, for the map's movement line
+        tp = c.setdefault("turn_path", [])
+        tp += [list(sq) for sq in (route if not tp or tuple(tp[-1]) != route[0] else route[1:])]
     if not args.step:
         c["moved"] = c.get("moved", 0) + feet
     warn = ""

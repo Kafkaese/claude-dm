@@ -635,7 +635,8 @@ def combat_snapshot(camp: str | None, render_png: bool = False) -> dict[str, Any
             unseen = bool(pc and c is not pc and cm.V.has_lighting(st) and cm.V.concealment(st, pc, c)[0] >= 50)
             tokens.append(dict(r, x=c["x"], y=c["y"], size=c.get("size", 1), unseen=unseen))
     grid_map = {"w": st["w"], "h": st["h"], "grid": st["grid"], "tokens": tokens,
-                "terrain_names": cm.TERRAIN_NAMES, "light": _light_view(cm, st)}
+                "terrain_names": cm.TERRAIN_NAMES, "light": _light_view(cm, st),
+                "move": cm.movement_line(st)}   # the last actor's movement (never a hidden creature's)
     turn = next((r["name"] for r in rows if r["current"]), None)
     cur = next((r for r in rows if r["current"]), None)
     # Who plays on the next go signal: the first live actor after the turn pointer (the pointer
@@ -829,10 +830,13 @@ def _step_context(st: dict[str, Any], c: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _visible_prompt(c: dict[str, Any], started: str, pc_after: bool) -> str:
-    """The instruction for one visible non-PC actor's step."""
-    end = ("The player's turn comes right after this one: end with one short line saying so."
-           if pc_after else "Don't end with a question: the player sends the next go signal.")
+def _visible_prompt(c: dict[str, Any], started: str, pc_after: bool, next_name: str | None = None) -> str:
+    """The instruction for one visible non-PC actor's step. It names who acts next, because the DM
+    otherwise tends to hand the turn to the player ("Your turn") after every enemy."""
+    end = ("The player's turn comes right after this one: end with one short line saying so." if pc_after else
+           f"It is NOT the player's turn after this: next up is {next_name or 'another creature'}. Don't write "
+           f"'your turn', don't ask what they do, and don't narrate {next_name or 'the next creature'}'s turn; "
+           f"the player presses Next to continue.")
     return (f"[Combat step, sent by the interface (not the player). The turn pointer is on {c['token']} "
             f"({c['name']}); `next` already ran:\n{started}\n{c.get('_ctx', '')}{c.get('_sight', '')}\n"
             f"Resolve ONLY {c['name']}'s turn: choose its actions from its tactics and the situation, and "
@@ -906,7 +910,8 @@ def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool]) -> s
             acted = acted or not still
         else:
             nxt = _first_visible_after(st, c["token"])
-            ok = send(_visible_prompt(c, started, pc_after=bool(nxt and nxt["side"] == "pc")))
+            ok = send(_visible_prompt(c, started, pc_after=bool(nxt and nxt["side"] == "pc"),
+                                      next_name=nxt["name"] if nxt else None))
             acted = True
         if not ok:
             return "error"
