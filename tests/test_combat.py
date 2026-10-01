@@ -97,6 +97,12 @@ class Attacks(CampaignCase):
         out = self.run_cmd("attack", "C", "g1", "--total", "30", "--damage", "1")
         self.assertIn("target grappled", out)
 
+    def test_minimum_damage_is_one_nonlethal(self) -> None:
+        self.run_cmd("next")   # g1's turn
+        self.run_cmd("attack", "g1", "C", "--roll", "1d20+30", "--dmg", "1d2-5", "--name", "claw")
+        c = self.tok("C")
+        self.assertEqual((c["hp"], c.get("nonlethal", 0)), (30, 1))   # 1d2-5 is always below 1
+
     def test_area_needs_dc(self) -> None:
         self.assertIn("--dc", self.fail_cmd("area", "burst", "10", "--at", "C2", "--save", "ref", "--dmg", "1d6"))
 

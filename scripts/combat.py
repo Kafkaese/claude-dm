@@ -915,15 +915,20 @@ def _attack_once(args: Args, st: State, a: Token, t: Token, name: str | None, bo
             dmg += d
             parts.append(ddetail)
         if dmg_mod:
-            dmg = max(1, dmg + dmg_mod * times)
+            dmg += dmg_mod * times
             parts.append(f"{dmg_mod * times:+d} conditions")
         dm.append(f"damage {dmg_expr} x{times} → {' + '.join(parts)} = {dmg}")
     elif args.damage is not None:
         dmg = args.damage
     else:
         raise CombatError("give --dmg (NPC) or --damage (PC) for the damage")
-    dealt, absorbed = apply_damage(t, dmg, args.nonlethal)
-    kind_l = " nonlethal" if args.nonlethal else ""
+    nonlethal = bool(args.nonlethal)
+    if dmg < 1:   # CRB pg. 179: "a hit still deals 1 point of nonlethal damage" (on the total, crits included)
+        immune = any("nonlethal" in str(x).lower() for x in (t.get("profile") or {}).get("immune") or [])
+        dmg, nonlethal = (0 if immune else 1), True
+        dm.append("minimum damage: 1 nonlethal" + (" (it's immune to nonlethal damage: none)" if immune else ""))
+    dealt, absorbed = apply_damage(t, dmg, nonlethal)
+    kind_l = " nonlethal" if nonlethal else ""
     res = f" — {'critical hit' if crit else 'hit'}, {dmg}{kind_l} damage"
     if absorbed:
         res += f" ({absorbed} absorbed, {dealt} gets through)" if dealt else " (all of it absorbed)"
