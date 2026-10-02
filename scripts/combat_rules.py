@@ -51,6 +51,8 @@ CONDITIONS: dict[str, dict[str, Any]] = {
     "cowering": {"ac": -2, "flatfooted": True, "no_aoo": True, "no_move": True},
     "flat-footed": {"flatfooted": True},
     "helpless": {"dex_zero": True, "helpless": True, "no_aoo": True, "no_move": True},
+    "asleep": {"dex_zero": True, "helpless": True, "no_aoo": True, "no_move": True},   # sleep: helpless
+    "dazed": {"no_aoo": True, "no_move": True},                              # can take no actions; no AC penalty
     "unconscious": {"dex_zero": True, "helpless": True, "no_aoo": True, "no_move": True},
     "paralyzed": {"dex_zero": True, "str_zero": True, "helpless": True, "no_aoo": True, "no_move": True},
     "prone": {"prone": True},

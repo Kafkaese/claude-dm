@@ -1574,10 +1574,23 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
             raise CombatError('--area must look like "cone 15", "burst 20" or "line 60"')
         ns = argparse.Namespace(shape=m.group(1), feet=int(m.group(2)), at=args.at, frm=c["token"],
                                 toward=args.toward, save=args.save, dc=dc, dmg=args.dmg, half=args.half,
-                                name=name, no_slot=True, log_name=shown)
+                                name=name, no_slot=True, log_name=shown, cond=getattr(args, "cond", None), cond_rounds=getattr(args, "cond_rounds", None))
         out.append(cmd_area(ns, st))
     elif args.target:
         t = token(st, args.target)
+        if getattr(args, "heal", None):   # cure spells and the like: roll it and heal the target
+            amount, detail, _ = _roll(args.heal)
+            before = t["hp"]
+            t["hp"] = min(t.get("max_hp", t["hp"] + amount), t["hp"] + amount)
+            if t.get("nonlethal"):
+                t["nonlethal"] = max(0, t["nonlethal"] - amount)
+            out.append(f"{name}: heals {args.heal} → {detail} = {amount}: {t['token']} HP {before} → {t['hp']}/{t.get('max_hp')}")
+            if not t.get("hidden"):
+                event(st, f"{shown}: {who(t)} is healed, +{t['hp'] - before} HP [{who(t)}: {status(t)}]")
+        elif not (args.dmg or args.save or args.light_at or args.light_on or getattr(args, "cond", None)):
+            out.append(f"  NOTE: no effect was applied to {t['token']}: the slot is spent, nothing else happened. "
+                       f"Give the effect in the same command (--heal 1d8+3, --dmg, --save), or add a condition "
+                       f"with `cond` after it")
         dmg = 0
         if args.dmg:
             dmg, detail, _ = _roll(args.dmg)
@@ -1587,7 +1600,8 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
                 raise CombatError("--save needs a DC: pass --dc")
             if t["side"] == "pc":
                 st.setdefault("pending_saves", {})[t["token"]] = {
-                    "kind": args.save, "dc": dc, "dmg": dmg, "half": args.half, "name": shown}
+                    "kind": args.save, "dc": dc, "dmg": dmg, "half": args.half, "name": shown,
+                    "cond": getattr(args, "cond", None), "cond_rounds": getattr(args, "cond_rounds", None)}
                 st["awaiting"] = f"{t['name']}: roll a {args.save.capitalize()} save against {shown}"
                 out.append(f"  {t['name']}'s save is pending: ask the player, then `save {t['token']} --total N` (question set)")
             else:
@@ -1600,10 +1614,14 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
                 if not t.get("hidden"):
                     event(st, f"{shown}: {who(t)} {args.save} save {total_s} — {'success' if ok else 'failure'}"
                               + (f", {taken} damage [{who(t)}: {status(t)}]" if args.dmg else ""))
+                if not ok:
+                    out += spell_condition(st, t, getattr(args, "cond", None), getattr(args, "cond_rounds", None), shown)
         elif dmg:
             apply_damage(t, dmg)
             if not t.get("hidden"):
                 event(st, f"{shown}: {who(t)} takes {dmg} damage [{who(t)}: {status(t)}]")
+        if not args.save:   # no save allowed: the condition just applies
+            out += spell_condition(st, t, getattr(args, "cond", None), getattr(args, "cond_rounds", None), shown)
     return out
 
 
@@ -3319,10 +3337,26 @@ def cmd_save(args: Args, st: State) -> str:
             out.append(f"  {pending['name']}: {dmg} damage")
             event(st, f"{shown} — {'success, half' if ok else 'failure'}: {dmg} damage from {pending['name']} [{who(c)}: {status(c)}]")
         else:
-            event(st, f"{shown} — success: no damage from {pending['name']}")
+            event(st, f"{shown} — {'success' if ok else 'failure'}" + ("" if not pending["dmg"] else f": no damage from {pending['name']}"))
+        if not ok:
+            out += spell_condition(st, c, pending.get("cond"), pending.get("cond_rounds"), pending["name"])
     else:
         event(st, f"{shown} — {'success' if ok else 'failure'}")
     return "\n".join(out)
+
+
+def spell_condition(st: State, t: Token, cond: str | None, rounds: int | None, source: str) -> list[str]:
+    """Put a spell's condition on a target that failed its save (or had none). Returns report lines."""
+    if not cond:
+        return []
+    R.add_condition(st, t, cond, rounds=rounds)
+    out = [f"  {t['token']}: {cond}" + (f" for {rounds} rounds" if rounds else " (until removed)")]
+    if cond.lower() not in R.CONDITIONS:
+        out.append(f"  NOTE: '{cond}' isn't a known condition, so it's tracked by name only (no automatic effects); "
+                   f"known ones: {', '.join(sorted(R.CONDITIONS))}")
+    if not t.get("hidden"):
+        event(st, f"{source}: {who(t)} is {cond}" + (f" ({rounds} rounds)" if rounds else ""))
+    return out
 
 
 def cmd_area(args: Args, st: State) -> str:
@@ -3352,7 +3386,10 @@ def cmd_area(args: Args, st: State) -> str:
     hit = [o for o in R.tokens_in(st, squares) if o["token"] != args.frm]
     out = [f"{args.shape} {args.feet} ft covers {len(squares)} squares; creatures: "
            + (", ".join(label(o) for o in hit) or "none")]
-    if not args.save:
+    if not args.save:   # no save: a condition hits everyone in the area
+        for o in hit:
+            out += spell_condition(st, o, getattr(args, "cond", None), getattr(args, "cond_rounds", None),
+                                   args.name or f"the {args.shape}")
         return "\n".join(out)
     if args.dc is None:
         raise CombatError("--save needs --dc")
@@ -3366,7 +3403,8 @@ def cmd_area(args: Args, st: State) -> str:
     for o in hit:
         if o["side"] == "pc":
             st.setdefault("pending_saves", {})[o["token"]] = {
-                "kind": args.save, "dc": args.dc, "dmg": dmg, "half": args.half, "name": shown_name}
+                "kind": args.save, "dc": args.dc, "dmg": dmg, "half": args.half, "name": shown_name,
+                "cond": getattr(args, "cond", None), "cond_rounds": getattr(args, "cond_rounds", None)}
             pcs.append(o)
             continue
         ok, total_s, how = _save(st, o, args.save, args.dc)
@@ -3377,6 +3415,8 @@ def cmd_area(args: Args, st: State) -> str:
         if not o.get("hidden"):
             shown = f"{who(o)} {args.save} save {total_s}" + (f" vs DC {args.dc}" if o["side"] in FRIENDLY else "")
             event(st, f"{shown_name}: {shown} — {'success' if ok else 'failure'}, {taken} damage [{who(o)}: {status(o)}]")
+        if not ok:
+            out += spell_condition(st, o, getattr(args, "cond", None), getattr(args, "cond_rounds", None), shown_name)
     if pcs:
         names = ", ".join(o["name"] for o in pcs)
         st["awaiting"] = f"{names}: roll a {args.save.capitalize()} save against {shown_name}"
@@ -3507,6 +3547,8 @@ def main(argv: list[str] | None = None) -> int:
     ar.add_argument("--save", choices=["fort", "ref", "will"]); ar.add_argument("--dc", type=int)
     ar.add_argument("--dmg"); ar.add_argument("--half", action="store_true"); ar.add_argument("--name")
     ar.add_argument("--no-slot", action="store_true", help="not a spell/SLA of the caster (e.g. a breath weapon)")
+    ar.add_argument("--cond", help="condition on a failed save (or on everyone without a save)")
+    ar.add_argument("--cond-rounds", type=int, help="how long the condition lasts, in rounds")
     pf = sub.add_parser("profile"); pf.add_argument("action", choices=["check"]); pf.add_argument("files", nargs="+")
     for nm in ("cast", "sla"):
         cp = sub.add_parser(nm); cp.add_argument("token"); cp.add_argument("spell" if nm == "cast" else "name")
@@ -3519,6 +3561,9 @@ def main(argv: list[str] | None = None) -> int:
         cp.add_argument("--target", help="a single target token")
         cp.add_argument("--save", choices=["fort", "ref", "will"]); cp.add_argument("--dmg")
         cp.add_argument("--half", action="store_true"); cp.add_argument("--dc", type=int, help="override the DC")
+        cp.add_argument("--heal", help="healing dice for the --target, e.g. 1d8+3 (cure spells)")
+        cp.add_argument("--cond", help="condition on a failed save (or without a save), e.g. asleep, stunned, shaken")
+        cp.add_argument("--cond-rounds", type=int, help="how long the condition lasts, in rounds")
         cp.add_argument("--light-at", help="light/darkness spells: the square it's cast on")
         cp.add_argument("--light-on", help="light/darkness spells: the creature/object carrier token")
         cp.add_argument("--rounds", type=int, help="light/darkness spells: duration in rounds (default: the fight)")

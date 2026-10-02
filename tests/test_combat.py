@@ -387,3 +387,64 @@ class Undo(CampaignCase):
         self.assertIn("nothing to undo", self.fail_cmd("undo"))
         self.run_cmd("attack", "g1", "C", "--with", "spear")
         self.assertIn("NPC rolls stand", self.fail_cmd("undo"))
+
+
+class Healing(CampaignCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.new()
+        self.add("s1", "Healer", "B2", CASTER, side="ally", init=20)
+        self.add("C", "Corin", "C2", PC_PROFILE, side="pc", init=5)
+        self.run_cmd("hp", "C", "-10")
+        self.run_cmd("next")
+
+    def test_cast_heals_the_target(self) -> None:
+        out = self.run_cmd("cast", "s1", "magic missile", "--target", "C", "--heal", "1d8+3", "--no-provoke")
+        self.assertIn("heals", out)
+        self.assertGreater(self.tok("C")["hp"], 20)
+        self.assertLessEqual(self.tok("C")["hp"], 30)                       # never above max
+
+    def test_a_targeted_spell_without_effect_says_so(self) -> None:
+        out = self.run_cmd("cast", "s1", "magic missile", "--target", "C", "--no-provoke")
+        self.assertIn("no effect was applied", out)
+
+
+class SpellConditions(CampaignCase):
+    """A spell's condition lands on failed saves (or without a save); a PC's waits for their roll."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.new()
+        caster = dict(CASTER, spellcasting=[dict(CASTER["spellcasting"][0], dc_base=30)])   # everyone fails
+        self.add("s1", "Witch", "F5", caster, init=20)
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=5)
+        self.add("g1", "Gob", "C4", GOBLIN, side="ally", init=3)
+        self.add("g2", "Gob2", "D4", GOBLIN, side="ally", init=2)
+        self.run_cmd("next")
+
+    def conds(self, tok: str) -> list[str]:
+        return [x["name"] for x in self.tok(tok)["conditions"]]
+
+    def test_npc_target_fails_and_gets_the_condition(self) -> None:
+        out = self.run_cmd("cast", "s1", "magic missile", "--target", "g1", "--save", "will", "--cond", "asleep",
+                           "--cond-rounds", "3", "--no-provoke")
+        self.assertIn("asleep", self.conds("g1"))
+        self.assertNotIn("isn't a known condition", out)
+
+    def test_pc_condition_waits_for_the_save(self) -> None:
+        self.run_cmd("cast", "s1", "magic missile", "--target", "C", "--save", "will", "--cond", "shaken",
+                     "--cond-rounds", "2", "--no-provoke")
+        self.assertEqual(self.conds("C"), [])                                # pending
+        self.run_cmd("save", "C", "--total", "5")                            # fails
+        self.assertIn("shaken", self.conds("C"))
+
+    def test_area_and_no_save_and_unknown_name(self) -> None:
+        self.run_cmd("cast", "s1", "magic missile", "--area", "burst 10", "--at", "D4", "--save", "will",
+                     "--cond", "stunned", "--cond-rounds", "1", "--no-provoke")
+        self.assertIn("stunned", self.conds("g1"))
+        self.assertIn("stunned", self.conds("g2"))
+        for _ in range(4):
+            self.run_cmd("next")                                             # round 2: the witch again
+        out = self.run_cmd("cast", "s1", "darkness", "--target", "g1", "--cond", "befuddled", "--no-provoke")
+        self.assertIn("befuddled", self.conds("g1"))                         # no save: it just applies
+        self.assertIn("isn't a known condition", out)

@@ -66,7 +66,7 @@ WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude 
     - No loaded framing that confirms a hidden truth ("whether it was anything but an accident", "the real culprit"). A failed investigation reports what was checked and what it showed, not that something was missed.
 - COMBAT (details: combat.md; the combat tools' descriptions have the options):
   - The script does all the rule math (modifiers, AoOs, maneuvers, light and vision, durations, dying). Never compute modifiers, count squares or roll attacks yourself. NPCs: combat_attack with `with` (a profile attack); PCs: the player's rolls (combat_attack with `total` and `damage`).
-  - Every NPC spell or SLA goes through combat_cast (sla=true for SLAs), with its effect in the same call. Effects beyond damage, after a failed save: combat_condition with rounds.
+  - Every NPC spell or SLA goes through combat_cast (sla=true for SLAs), with its effect in the same call. Conditions go in the same call (cond, cond_rounds): they land on failed saves, and a PC's after their roll.
   - The player's battle map, initiative and log only appear once you engage combat in this conversation. When you resume a saved fight (after /start-session), call combat_info what=show first: that brings the fight back on screen.
   - YOU ARE IN THE INTERFACE. When a combat tool says the interface runs the turns, that's this interface: never tell the player to run anything, just follow the tool's advice.
   - Setup: a prepared encounter (combat_encounters action=list) is ONE combat_setup call once the player's initiative is in. Otherwise: every combatant needs a valid combat profile (add one from the stat block first; a PC's sheet must pass the PC schema, so ask the player for missing values). Decide the lighting as part of the encounter. PC tokens use the first letter of the name (Corin → C). After setup, narrate the opening, give the initiative order and stop: the interface starts the turns right after your reply (an enemy that's first plays at once). If the player declares actions before their turn comes, tell them who acts first; their turn follows.
@@ -1015,7 +1015,7 @@ RUNNER_PROMPT = """You are the combat runner of a tabletop DM interface (Pathfin
 
 Every message is a combat step for ONE creature, with a DM-only briefing: its attacks, positions, tactical options (squares, the d20 roll it needs, what provokes) and what it can see.
 1. Decide what this creature does, by its nature, its knowledge and the encounter's tactics and morale (not by what you know as the DM). A cowardly creature may retreat; morale breaks per the notes.
-2. Resolve it in ONE combat_batch call with the dm tools (move, attack, cast/sla through combat_cast, maneuvers, conditions). The tools do all the rule math. Never run combat_next or combat_end; act only for this creature.
+2. Resolve it in ONE combat_batch call with the dm tools (move, attack, cast/sla through combat_cast with the effect in the same call: dmg/save, heal dice for cure spells, cond + cond_rounds for a condition on a failed save; maneuvers, conditions). The tools do all the rule math. Never run combat_next or combat_end; act only for this creature.
 3. Then narrate only this creature's turn, in 1-3 lines, and stop.
 
 Narration rules (strict):
