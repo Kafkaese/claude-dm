@@ -250,3 +250,50 @@ class NoBriefingLeaks(CampaignCase):
         self.assertEqual(out, "The goblin shoots.")
         # a hidden actor that stays hidden: nothing at all
         self.assertEqual(self.held_text(txt("…"), publish=False), "")
+
+
+class Runner(CampaignCase):
+    """NPC steps go to the combat runner (with its own framing); main-DM creatures don't."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.new(blank="12x6")
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=5)
+        self.add("g1", "Gob", "D2", GOBLIN, init=20)
+        self.add("b1", "Boss", "H4", GOBLIN, "enemy", 15, "--main-dm")
+        self.to_runner: list[str] = []
+        self.to_main: list[str] = []
+        self.runner = E.CombatRunner(lambda ev: None, self.slug)
+        self.runner.send = lambda p: self.to_runner.append(p) or True        # type: ignore[method-assign]
+
+    def main_send(self, p: str) -> bool:
+        self.to_main.append(p)
+        return True
+
+    def test_routing_and_framing(self) -> None:
+        eng = E.Engine(lambda ev: None)
+        E.run_combat_step(eng, self.slug, self.main_send, runner=self.runner)     # g1: the runner
+        self.assertEqual(len(self.to_runner), 1)
+        self.assertIn(f"Campaign: {self.slug}", self.to_runner[0])
+        self.assertIn("pointer is on g1", self.to_runner[0])
+        E.run_combat_step(eng, self.slug, self.main_send, runner=self.runner)     # b1: the main DM
+        self.assertEqual(len(self.to_main), 1)
+        self.assertIn("pointer is on b1", self.to_main[0])
+
+    def test_recap_and_history(self) -> None:
+        self.runner.note("Gob", "The goblin lunges: 17 vs your AC 16, hit, 5 damage.", by_runner=True)
+        self.runner.note("Boss", "The boss roars.", by_runner=False)          # main DM played it: no recap
+        msg = E.with_recap("I attack the goblin", self.runner.take_recap(), ["R1 Gob → Corin: 17 — hit, 5 damage"])
+        self.assertIn("The goblin lunges", msg)
+        self.assertNotIn("The boss roars", msg)
+        self.assertEqual(E.player_part(msg), "I attack the goblin")          # the chat shows only this
+        self.assertIsNone(E.player_part("[Combat step, sent by the interface …]"))
+        self.assertEqual(self.runner.take_recap(), "")                       # taken once
+        self.assertEqual(E.with_recap("hi", "", []), "hi")
+
+    def test_system_prompt_has_the_table(self) -> None:
+        self.write("players/session-zero.md", "# Session Zero\n## Tone & Style\nGrim and gritty.\n## Safety Tools\n- **Lines (never):** spiders\n## Rules\nnot this\n")
+        sp = E.runner_system_prompt(self.slug)
+        self.assertIn("Grim and gritty", sp)
+        self.assertIn("spiders", sp)
+        self.assertNotIn("not this", sp)

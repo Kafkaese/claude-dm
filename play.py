@@ -33,7 +33,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from dm_engine import (EFFORTS, REPO, Engine, active_campaign, campaign_for_session, combat_state, is_campaign,
+from dm_engine import (EFFORTS, REPO, CombatRunner, Engine, with_recap, active_campaign, campaign_for_session, combat_state, is_campaign,
                        is_go_signal, last_session, load_history, remember_campaign, run_combat_step, step_due)
 
 # ---------- terminal formatting ----------
@@ -339,6 +339,8 @@ def main() -> None:
     ap.add_argument("--model", help="model alias or ID (default: your Claude Code default)")
     ap.add_argument("--effort", default="medium", choices=EFFORTS,
                     help="thinking effort (default: medium; higher is slower but more careful)")
+    ap.add_argument("--runner-model", help="model for the combat runner (NPC turns); default: the DM's model")
+    ap.add_argument("--runner-effort", default="low", choices=EFFORTS, help="thinking effort for NPC turns (default low)")
     ap.add_argument("--campaign", help="campaign slug for the map (default: the one with an active fight)")
     ap.add_argument("--no-images", action="store_true", help="don't show the PNG map inline")
     ap.add_argument("--debug", action="store_true", help="show tools and subagents")
@@ -363,6 +365,28 @@ def main() -> None:
     dm = Engine(term.on_event, model=args.model, effort=args.effort, debug=args.debug, record_session=True)
     term.engine = dm
     dm.start(resume=resume)
+
+    runner: CombatRunner | None = None   # plays the NPC steps in its own small context
+    log_mark = 0                         # combat-log lines the main DM has already been told about
+
+    def get_runner(camp: str) -> CombatRunner:
+        nonlocal runner
+        if runner is None or runner.campaign != camp:
+            if runner:
+                runner.stop()
+            runner = CombatRunner(term.on_event, camp, model=args.runner_model or args.model, effort=args.runner_effort)
+        runner.engine.telemetry_session = dm.session_id
+        return runner
+
+    def recap_text(text: str, camp: str | None) -> str:
+        nonlocal log_mark
+        events = (combat_state(camp) or {}).get("events", [])
+        if log_mark > len(events):
+            log_mark = 0
+        lines = [f"R{e.get('round', '?')} {e.get('text', '')}" for e in events[log_mark:]]
+        log_mark = len(events)
+        recap = runner.take_recap() if runner else ""
+        return with_recap(text, recap, lines if recap else [])
 
     print(f"{BOLD}Claude DM{RESET}  {DIM}(type :help for commands; effort {args.effort}){RESET}")
     if resume:
@@ -415,13 +439,13 @@ def main() -> None:
         st = combat_state(camp) if dm.combat_engaged else None
         try:
             if camp and st and not st.get("awaiting") and is_go_signal(text):
-                ok = run_combat_step(dm, camp, dm.send) != "error"   # the interface plays one step
+                ok = run_combat_step(dm, camp, dm.send, runner=get_runner(camp)) != "error"   # the interface plays one step
                 if _pc_up(camp):
                     print(f"{DIM}(your turn){RESET}")
             else:
-                ok = dm.send(text)
+                ok = dm.send(recap_text(text, camp))
                 if ok and camp and dm.combat_engaged and step_due(camp, text):
-                    ok = run_combat_step(dm, camp, dm.send) != "error"
+                    ok = run_combat_step(dm, camp, dm.send, runner=get_runner(camp)) != "error"
         except KeyboardInterrupt:
             spinner.hide()
             print(f"\n{DIM}(interrupted; restarting the DM session){RESET}")
@@ -443,6 +467,8 @@ def main() -> None:
             maps.show()
 
     dm.stop()
+    if runner:
+        runner.stop()
     if dm.session_id:
         print(f"{DIM}Session saved. Continue with: python3 play.py --resume{RESET}")
 

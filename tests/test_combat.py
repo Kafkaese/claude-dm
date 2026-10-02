@@ -104,6 +104,13 @@ class Attacks(CampaignCase):
         out = self.run_cmd("attack", "C", "g1", "--total", "30", "--damage", "1")
         self.assertIn("target grappled", out)
 
+    def test_melee_needs_reach_and_charge_needs_its_move(self) -> None:
+        self.run_cmd("next")                                   # g1 (C2, next to Corin at B2)
+        self.run_cmd("next")                                   # g2 (D2): 10 ft away
+        self.assertIn("out of g2's melee reach", self.fail_cmd("attack", "g2", "C", "--with", "spear"))
+        self.assertIn("--as charge", self.fail_cmd("attack", "g2", "C", "--with", "spear", "--charge"))
+        self.run_cmd("attack", "g2", "C", "--with", "shortbow")          # ranged is fine
+
     def test_minimum_damage_is_one_nonlethal(self) -> None:
         self.run_cmd("next")   # g1's turn
         self.run_cmd("attack", "g1", "C", "--roll", "1d20+30", "--dmg", "1d2-5", "--name", "claw")

@@ -70,6 +70,7 @@ WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude 
   - The player's battle map, initiative and log only appear once you engage combat in this conversation. When you resume a saved fight (after /start-session), call combat_info what=show first: that brings the fight back on screen.
   - YOU ARE IN THE INTERFACE. When a combat tool says the interface runs the turns, that's this interface: never tell the player to run anything, just follow the tool's advice.
   - Setup: a prepared encounter (combat_encounters action=list) is ONE combat_setup call once the player's initiative is in. Otherwise: every combatant needs a valid combat profile (add one from the stat block first; a PC's sheet must pass the PC schema, so ask the player for missing values). Decide the lighting as part of the encounter. PC tokens use the first letter of the name (Corin → C). After setup, narrate the opening, give the initiative order and stop: the interface starts the turns right after your reply (an enemy that's first plays at once). If the player declares actions before their turn comes, tell them who acts first; their turn follows.
+  - THE COMBAT RUNNER plays most NPC turns: a separate, lean process the interface hands each enemy's step to (it saves most of the tokens). You then get "[Interface recap: …]" in front of the player's next message: what it narrated and the combat log. Treat that as what happened; the player saw it. Creatures you play yourself (a boss, a story NPC: `dm_plays` in the encounter, or combat_add main_dm) still come to you as combat steps.
   - THE INTERFACE RUNS THE TURN ORDER. Never run `next` (it's refused). A bracketed "[Combat step …]" message names ONE actor, what it can see, and its tactical options (squares, the roll it needs there, what provokes; combat_options with area for area effects): resolve exactly that actor in ONE combat_batch call, narrate only that actor, and stop. Play it by its nature and what it sees. A hidden actor's step: reply "…" unless it gets revealed.
   - Every action is charged to the actor's turn, and the tool results say what's left; actions without their own tool (draw a weapon, stand up, drink a potion) are combat_act. On the PC's turn, resolve what the player declares and say which actions remain, from that report. If the player ends the turn in other words or together with their actions, call combat_endturn.
   - When a tool result sets a question (an AoO, a save, a stabilization check) or the player must decide something mid-round, ask them (combat_ask for your own questions). A dying PC rolls their own stabilization checks; never play the fight forward without the player.
@@ -130,6 +131,17 @@ def is_combat_tool(name: str, inp: dict[str, Any]) -> bool:
 
 
 INTERFACE_PREFIXES = ("[Combat step", "[The player is switching to another campaign", "[Test setup")
+RECAP_PREFIX = "[Interface recap"
+
+
+def player_part(text: str) -> str | None:
+    """What the player wrote in a message the DM received: None for the interface's own messages,
+    the player's text without the recap the interface puts in front of it."""
+    t = text.lstrip()
+    if t.startswith(RECAP_PREFIX):
+        end = t.find("]\n\n")
+        return t[end + 3:].lstrip() if end >= 0 else None
+    return None if t.startswith(INTERFACE_PREFIXES) else text
 
 
 def is_interface_message(text: str) -> bool:
@@ -183,7 +195,7 @@ class Engine:
     """One headless DM session. `send()` blocks until the reply to that message is complete."""
 
     def __init__(self, on_event: EventHandler, model: str | None = None, effort: str = 'medium', debug: bool = False,
-                 record_session: bool = False) -> None:
+                 record_session: bool = False, role: str = "dm", system_prompt: str | None = None) -> None:
         """Args:
             on_event: called with every event (from a reader thread).
             model: model alias or id for `claude --model`, or None for the default.
@@ -192,9 +204,15 @@ class Engine:
             record_session: remember the session as the one `--resume` continues (.play/last-session).
                 Only the real interfaces (web.py, play.py) set it; tests and scripts must not, or
                 `--resume` would pick up their throwaway conversations.
+            role: "dm" (the full DM: Claude Code's prompt, tools, skills and the project) or "runner"
+                (the combat runner: a lean process with only `system_prompt` and the dm tools).
+            system_prompt: the runner's whole system prompt.
         """
         self.on_event = on_event
         self.record_session = record_session
+        self.role = role
+        self.system_prompt = system_prompt
+        self.telemetry_session: str | None = None   # a runner logs under the main DM's session
         # The DM has engaged combat in this session (used a combat tool, or the interface ran a step).
         # Until then the interfaces don't show a fight, even if one is saved from an earlier session.
         self.combat_engaged = False
@@ -209,6 +227,7 @@ class Engine:
         self.waiting = False   # a player turn is in progress
         self._held: list[dict[str, Any]] | None = None   # DM text held back (a hidden actor's step)
         self._tel: dict[str, Any] | None = None           # telemetry of the exchange in progress
+        self._cost_seen = 0.0                             # the process's running cost at the last reply
         self.telemetry = True
         self.armed = False     # the echo of the player's message has been seen
         self._reset()
@@ -233,7 +252,7 @@ class Engine:
         with self.lock:
             self._held = []
 
-    def release(self, publish: bool, after_tools: bool = False) -> None:
+    def release(self, publish: bool, after_tools: bool = False) -> str:
         """Stop holding text; show what was held back if `publish`, else drop it. With after_tools,
         only the text written after the reply's last tool call is shown: whatever the DM wrote before
         it is its own reasoning (e.g. weighing the tactical options), not narration."""
@@ -253,6 +272,7 @@ class Engine:
             for ev in held:
                 if ev["type"] != "_tool":
                     self._send_event(ev)
+        return "".join(ev.get("delta", "") for ev in held if ev["type"] == "text") if publish else ""
 
     def _send_event(self, ev: dict[str, Any]) -> None:
         """Pass one event to the frontend's handler."""
@@ -271,9 +291,14 @@ class Engine:
         """Start `claude -p` with stream-json in/out, optionally resuming a session, plus the reader threads."""
         cmd = ["claude", "-p", "--input-format", "stream-json", "--output-format", "stream-json",
                "--verbose", "--include-partial-messages", "--replay-user-messages",
-               "--permission-mode", "dontAsk",
-               "--allowedTools", *ALLOWED_TOOLS, "--disallowedTools", "AskUserQuestion",
-               "--append-system-prompt", WRAPPER_PROMPT]
+               "--permission-mode", "dontAsk"]
+        if self.role == "runner":   # ~9k tokens of context instead of the full DM's ~60k + the conversation
+            cmd += ["--allowedTools", "mcp__dm", "--tools", "", "--disable-slash-commands", "--setting-sources", "",
+                    "--system-prompt", self.system_prompt or RUNNER_PROMPT, "--no-session-persistence"]
+            resume = None
+        else:
+            cmd += ["--allowedTools", *ALLOWED_TOOLS, "--disallowedTools", "AskUserQuestion",
+                    "--append-system-prompt", WRAPPER_PROMPT]
         if self.model:
             cmd += ["--model", self.model]
         if self.effort:
@@ -319,6 +344,7 @@ class Engine:
         self.emit(type="status", label=None)
         self._reset()
         self.done.set()
+        self._cost_seen = 0.0   # a new process starts its running total from zero
         self.start(resume=self.session_id)
 
     def new_session(self) -> None:
@@ -331,6 +357,7 @@ class Engine:
         self._reset()
         self.done.set()
         self.session_id = None
+        self._cost_seen = 0.0
         self.start()
 
     def set_effort(self, level: str) -> None:
@@ -372,14 +399,20 @@ class Engine:
             return
         tools = list(tel["tools"].values())
         rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(tel["start"])),
-               "session": self.session_id, "campaign": active_campaign(), "kind": tel["kind"],
+               "session": self.telemetry_session or self.session_id, "campaign": active_campaign(),
+               "kind": ("runner:" if self.role == "runner" else "") + tel["kind"],
                "seconds": round(time.time() - tel["start"], 1), "effort": self.effort,
                "chars_in": tel["chars_in"], "chars_out": tel["chars_out"],
                "tools": tools, "tool_calls": len(tools), "tool_errors": sum(1 for x in tools if x.get("error")),
                "subagent_tool_calls": tel["sub_tools"]}
-        for k in ("num_turns", "duration_ms", "total_cost_usd", "died", "is_error"):
+        for k in ("num_turns", "duration_ms", "died", "is_error"):
             if k in result:
                 rec[k] = result[k]
+        if "total_cost_usd" in result:   # Claude Code reports a running total for the process
+            total = result["total_cost_usd"] or 0
+            rec["cost_usd"] = round(max(0.0, total - self._cost_seen) if total >= self._cost_seen else total, 4)
+            rec["process_cost_usd"] = total
+            self._cost_seen = total
         usage = result.get("usage") or {}
         if usage:
             rec["tokens"] = {k: usage.get(k, 0) for k in ("input_tokens", "output_tokens",
@@ -733,8 +766,9 @@ def load_history(session_id: str | None) -> list[dict[str, str]]:
         msg = r.get("message") or {}
         if r.get("type") == "user" and isinstance(msg.get("content"), str):
             text = msg["content"]
-            if text.startswith("<task-notification") or text.startswith("<local-command") or is_interface_message(text):
+            if text.startswith("<task-notification") or text.startswith("<local-command"):
                 continue
+            text = player_part(text) or ""   # the interface's messages and recaps aren't the player's
             if "<command-name>" in text:
                 name = re.search(r"<command-name>(.*?)</command-name>", text, re.S)
                 args = re.search(r"<command-args>(.*?)</command-args>", text, re.S)
@@ -894,7 +928,7 @@ def _hidden_prompt(c: dict[str, Any], started: str) -> str:
             f"reveal it (combat_flag action=reveal) in the same call and narrate its turn.]")
 
 
-def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool]) -> str:
+def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool], runner: "CombatRunner | None" = None) -> str:
     """Play one step of the fight on the player's go signal: advance the pointer, resolve hidden
     actors silently, resolve the one visible non-PC actor, and move the pointer onto the PC if the
     PC is next. The pacing is decided here, in code; the DM only plays the actor it's given.
@@ -903,6 +937,8 @@ def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool]) -> s
         engine: the engine (its text is held back while a hidden actor acts).
         camp: the campaign with the fight.
         send: sends one instruction to the DM and waits for the reply; False if the process died.
+        runner: the combat runner that plays the NPC steps in its own small context. Creatures marked
+            main_dm (a boss, a story NPC) still go to the main DM; without a runner, all of them do.
 
     Returns:
         Why the step stopped: "pc" (the player's turn), "pc-quiet" (the player's turn, and no actor
@@ -941,25 +977,152 @@ def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool]) -> s
         now = combat_state(camp) or st
         live = next((o for o in now.get("tokens", []) if o["token"] == c["token"]), c)
         c = dict(c, _sight=_sight(camp, now, c["token"]), _ctx=_step_context(now, live))
+        use_runner = runner is not None and not live.get("main_dm")
+        eng = runner.engine if use_runner and runner else engine
+        say: Callable[[str], bool] = (lambda p: runner.send(runner.frame(p, camp, now))) if use_runner and runner else send
         if c.get("hidden"):
-            engine.hold()
+            eng.hold()
             try:
-                ok = send(_hidden_prompt(c, started))
+                ok = say(_hidden_prompt(c, started))
             finally:
                 after = combat_state(camp) or {}
                 still = next((t.get("hidden") for t in after.get("tokens", []) if t["token"] == c["token"]), True)
-                engine.release(publish=not still, after_tools=True)
+                text = eng.release(publish=not still, after_tools=True)
             acted = acted or not still
         else:
             nxt = _first_visible_after(st, c["token"])
-            engine.hold()   # the briefing invites thinking out loud: only the final narration is shown
+            eng.hold()   # the briefing invites thinking out loud: only the final narration is shown
             try:
-                ok = send(_visible_prompt(c, started, pc_after=bool(nxt and nxt["side"] == "pc"),
-                                          next_name=nxt["name"] if nxt else None))
+                ok = say(_visible_prompt(c, started, pc_after=bool(nxt and nxt["side"] == "pc"),
+                                         next_name=nxt["name"] if nxt else None))
             finally:
-                engine.release(publish=True, after_tools=True)
+                text = eng.release(publish=True, after_tools=True)
             acted = True
+        if runner is not None and text.strip():
+            runner.note(c["name"], text.strip(), by_runner=use_runner)
         if not ok:
             return "error"
     return "error"
+
+
+# ---------- the combat runner ----------
+# NPC combat steps run in a separate, lean Claude Code process: its own short system prompt, only
+# the dm tools, and per step only what that step needs. ~15-20k tokens per model turn instead of
+# the main DM's whole conversation (~200k+ in a long session). The main DM gets a recap with the
+# player's next message.
+
+RUNNER_PROMPT = """You are the combat runner of a tabletop DM interface (Pathfinder 1e). You play the turns of the non-player creatures in a fight, one creature per message. The player sees ONLY the narration you write after your last tool call; everything else stays hidden.
+
+Every message is a combat step for ONE creature, with a DM-only briefing: its attacks, positions, tactical options (squares, the d20 roll it needs, what provokes) and what it can see.
+1. Decide what this creature does, by its nature, its knowledge and the encounter's tactics and morale (not by what you know as the DM). A cowardly creature may retreat; morale breaks per the notes.
+2. Resolve it in ONE combat_batch call with the dm tools (move, attack, cast/sla through combat_cast, maneuvers, conditions). The tools do all the rule math. Never run combat_next or combat_end; act only for this creature.
+3. Then narrate only this creature's turn, in 1-3 lines, and stop.
+
+Narration rules (strict):
+- Write NOTHING before your tool call. Never repeat the briefing: no "hits on N+", no squares weighed, no enemy AC, HP or bonuses.
+- Address the player's character as "you". Never write what the PC says, does, thinks or feels.
+- Each attack on the PC: its total against the PC's AC and the damage as a number ("17 vs your AC 16, hit, 6 damage"). Never state an enemy's AC, HP or bonuses; say "hit", "miss", "bloodied".
+- Match the combat log the tools return; never contradict a number.
+- Highlight names the characters know: people in **bold**, places in ***bold italic***, spells and items in *italic*.
+- A first use of a special ability, a reveal, or a turning point gets 2-4 vivid sentences; otherwise one line per action.
+- A hidden creature that stays unnoticed: reply only "…".
+- Follow the message's last line about whose turn comes next exactly; never write "your turn" unless it says so.
+- Respect the table's lines and veils below."""
+
+
+def runner_system_prompt(campaign: str) -> str:
+    """RUNNER_PROMPT plus the campaign's table: tone, DM voice, conventions and safety lines from
+    players/session-zero.md (player-facing, so nothing secret)."""
+    path = REPO / "campaigns" / campaign / "players" / "session-zero.md"
+    keep = []
+    if path.exists():
+        text = path.read_text(encoding="utf-8")
+        for m in re.finditer(r"^## (.+?)\n(.*?)(?=^## |\Z)", text, re.S | re.M):
+            title = m.group(1).strip()
+            if any(k in title.lower() for k in ("tone", "style", "safety", "convention", "dm voice")):
+                keep.append(f"## {title}\n{m.group(2).strip()}")
+    table = "\n\n".join(keep)[:6000]
+    return RUNNER_PROMPT + (f"\n\nThis campaign's table (session zero):\n{table}" if table else "")
+
+
+class CombatRunner:
+    """Plays NPC combat steps in a lean, separate Claude Code process (see RUNNER_PROMPT). Its
+    conversation is reset every few steps (each step message is self-contained), so its context
+    stays small however long the fight runs."""
+
+    RESET_EVERY = 6
+
+    def __init__(self, on_event: EventHandler, campaign: str, model: str | None = None, effort: str = "low",
+                 after_send: Callable[[], None] | None = None) -> None:
+        """Args:
+            on_event: the frontend's event handler (the runner's narration appears as DM text).
+            campaign: the campaign of the fight.
+            model, effort: for the runner's process (effort low: one creature's turn needs little thought).
+            after_send: called after every step reply (e.g. to refresh the combat panel).
+        """
+        self.campaign = campaign
+        self.engine = Engine(on_event, model=model, effort=effort, role="runner",
+                             system_prompt=runner_system_prompt(campaign))
+        self.after_send = after_send
+        self.steps = 0
+        self.recent: list[str] = []   # the last narrations, for continuity
+        self.recap: list[str] = []    # what the main DM hasn't heard about yet
+
+    def send(self, prompt: str) -> bool:
+        """Send one step to the runner (starting or refreshing its process as needed)."""
+        if not self.engine.alive():
+            self.engine.start()
+        elif self.steps and self.steps % self.RESET_EVERY == 0:
+            self.engine.new_session()
+        self.steps += 1
+        ok = self.engine.send(prompt)
+        if not ok:
+            self.engine.new_session()   # start clean; the step itself counts as failed
+        if self.after_send:
+            self.after_send()
+        return ok
+
+    def frame(self, prompt: str, camp: str, st: dict[str, Any]) -> str:
+        """The step message for the runner: the campaign, the encounter's notes and the recent
+        narration in front of the usual step briefing."""
+        parts = [f"[Combat step context] Campaign: {camp} (pass campaign={camp} on your first tool call)."]
+        enc = (st.get("encounter") or {}).get("file")
+        if enc:
+            try:
+                block = _combat_module().load_encounter(REPO / enc)
+                notes = "; ".join(f"{k.replace('_', ' ')}: {block[k]}" for k in ("tactics", "morale", "exit_ramp") if block.get(k))
+                if notes:
+                    parts.append(f"Encounter notes (DM only): {notes}")
+            except Exception:
+                pass
+        if self.recent:
+            parts.append("Recent narration (for continuity; don't repeat it):\n" + "\n".join(self.recent[-4:]))
+        return "\n".join(parts) + "\n\n" + prompt
+
+    def note(self, name: str, text: str, by_runner: bool) -> None:
+        """Remember a step's narration: for continuity, and (if the runner played it) for the recap."""
+        self.recent = (self.recent + [f"{name}: {text}"])[-6:]
+        if by_runner:
+            self.recap.append(f"{name}: {text}")
+
+    def take_recap(self) -> str:
+        """The recap for the main DM (and forget it): what the runner narrated since the last time."""
+        out, self.recap = "\n".join(self.recap), []
+        return out
+
+    def stop(self) -> None:
+        """Stop the runner's process."""
+        self.engine.stop()
+
+
+def with_recap(text: str, recap: str, log_lines: list[str]) -> str:
+    """The player's message for the main DM, with what happened in combat since its last reply in
+    front (the chat shows only the player's text, live and in reloaded history)."""
+    if not recap and not log_lines:
+        return text
+    body = (f"While you were waiting, the combat runner played these turns (the player saw this narration):\n{recap}\n"
+            if recap else "")
+    if log_lines:
+        body += "Combat log since your last reply:\n" + "\n".join(log_lines[-20:])
+    return f"{RECAP_PREFIX}: {body.strip()}]\n\n{text}"
 

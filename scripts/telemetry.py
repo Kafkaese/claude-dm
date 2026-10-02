@@ -85,6 +85,22 @@ def pct(values: list[float], q: float) -> float:
     return v[min(len(v) - 1, int(q * len(v)))] if v else 0.0
 
 
+def exchange_costs(recs: list[dict[str, Any]]) -> list[float]:
+    """Each exchange's own cost. New records carry it (cost_usd); older ones only have Claude Code's
+    running total for the process, so the difference to the previous record is taken (a drop means
+    a new process started)."""
+    out, prev = [], 0.0
+    for r in recs:
+        if "cost_usd" in r:
+            out.append(r["cost_usd"])
+            prev = r.get("process_cost_usd", prev)
+            continue
+        total = r.get("total_cost_usd") or 0.0
+        out.append(total - prev if total >= prev else total)
+        prev = total
+    return out
+
+
 def summarize(recs: list[dict[str, Any]], details: bool) -> str:
     """The report text."""
     if not recs:
@@ -92,11 +108,13 @@ def summarize(recs: list[dict[str, Any]], details: bool) -> str:
     out = []
     sessions = {r.get("session") for r in recs}
     out.append(f"{len(recs)} exchanges, {len(sessions)} session(s), {recs[0]['ts']} → {recs[-1]['ts']}")
-    cost = sum(r.get("total_cost_usd") or 0 for r in recs)
-    if cost:
-        out.append(f"API-equivalent cost: ${cost:.2f} (on a subscription this is usage, not a bill)")
+    costs = exchange_costs(recs)
+    for r, c in zip(recs, costs):
+        r["_cost"] = c
+    if sum(costs):
+        out.append(f"API-equivalent cost: ${sum(costs):.2f} (on a subscription this is usage, not a bill)")
 
-    out.append(f"\n{'By kind':<22} count  median s  p90 s  model turns  tool calls  tool errors  output chars")
+    out.append(f"\n{'By kind':<22} count  median s  p90 s  model turns  tool calls  tool errors  output chars  context/turn  cost")
     by_kind: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for r in recs:
         by_kind[r.get("kind", "?")].append(r)
@@ -106,9 +124,13 @@ def summarize(recs: list[dict[str, Any]], details: bool) -> str:
         calls = [r.get("tool_calls", 0) for r in rs]
         errs = sum(r.get("tool_errors", 0) for r in rs)
         chars = [r.get("chars_out", 0) for r in rs]
+        ctx = [sum((r.get("tokens") or {}).get(k, 0) for k in ("input_tokens", "cache_read_input_tokens",
+                                                                  "cache_creation_input_tokens")) / max(1, r.get("num_turns", 1))
+               for r in rs if r.get("tokens")]
         out.append(f"  {kind:<20} {len(rs):>5}  {statistics.median(secs):>7.0f}  {pct(secs, .9):>5.0f}"
                    f"  {statistics.mean(turns) if turns else 0:>11.1f}  {statistics.mean(calls):>10.1f}"
-                   f"  {errs:>11}  {statistics.mean(chars):>12.0f}")
+                   f"  {errs:>11}  {statistics.mean(chars):>12.0f}  {(statistics.mean(ctx) / 1000 if ctx else 0):>10.0f}k"
+                   f"  ${sum(r['_cost'] for r in rs):>6.2f}")
 
     tools: Counter[str] = Counter()
     combat: Counter[str] = Counter()

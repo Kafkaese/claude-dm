@@ -875,6 +875,19 @@ def _attack(args: Args, st: State) -> str:
             for b in bonuses:
                 entries.append((key, b, w["damage"], w.get("crit", 20), w.get("mult", 2),
                                 w.get("type", "melee"), w))
+    # melee needs the target within reach (the weapon's, else the creature's); a charge needs its move
+    dist = feet_between(a, t)
+    for e in entries:
+        if e[5] == "melee":
+            reach = (e[6] or {}).get("reach") or a.get("reach", 5)
+            if dist > reach and not getattr(args, "override", False):
+                raise CombatError(f"{t['token']} is {dist} ft away, out of {a['token']}'s melee reach ({reach} ft): move first"
+                                  + (" (a charge: `move … --as charge`, then the attack)" if args.charge else "")
+                                  + ", or attack with a ranged weapon")
+    if args.charge and not args.out_of_turn and not getattr(args, "override", False) and st.get("turn") == a["token"]:
+        if a.get("move_mode") != "charge" or (a.get("mode_feet") or 0) < 10:
+            raise CombatError(f"a charge moves at least 10 ft first, in a straight line: `move {a['token']} <square> --as charge`, "
+                              f"then `attack … --charge`")
     out = []
     if args.aoo:
         a["aoo_used"] = a.get("aoo_used", 0) + 1
@@ -1128,6 +1141,7 @@ def cmd_add(args: Args, st: State) -> str:
          "touch": pick(args.touch, "touch"), "ff": pick(args.ff, "ff"), "cr": args.cr,
          "hidden": args.hidden, "conditions": [], "ref": args.ref, "dr": pick(args.dr, "dr", 0),
          "con": pick(args.con, "con"), "profile": prof or None, "acted": False,
+         "main_dm": bool(getattr(args, "main_dm", False)),   # played by the main DM, not the combat runner
          "init_tb": prof.get("init", 0)}   # ties: the higher initiative modifier goes first
     for cx, cy in cells(c):
         if cost(st, cx, cy) is None or occupied(st, c, cx, cy):
@@ -2928,6 +2942,7 @@ def plan_encounter(campaign: str, enc: dict[str, Any], inits: dict[str, int] | N
         extra += ["--hidden"] if c.get("hidden") else []
         extra += ["--hp", str(c["hp"])] if c.get("hp") else []
         extra += ["--cr", c["cr"]] if c.get("cr") else []
+        extra += ["--main-dm"] if c.get("dm_plays") else []
         for k in range(n):
             tok = f"{c['token']}{k + 1}" if n > 1 or not c["token"][-1:].isdigit() else c["token"]
             if n > 1 and len(c["token"]) != 1:
@@ -3375,6 +3390,7 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--profile", help="profile JSON (merged over --ref's)")
     a.add_argument("--dr", type=int, help="hardness or damage reduction")
     a.add_argument("--con", type=int, help="Constitution score (PCs/allies): dead at -Con HP")
+    a.add_argument("--main-dm", action="store_true", help="the main DM plays its turns (a boss, a story NPC), not the combat runner")
     at = sub.add_parser("attack"); at.add_argument("attacker"); at.add_argument("target")
     at.add_argument("--roll"); at.add_argument("--dmg"); at.add_argument("--crit", type=int, default=20)
     at.add_argument("--mult", type=int, default=2); at.add_argument("--total", type=int)

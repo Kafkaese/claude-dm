@@ -25,7 +25,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from typing import Any
 
-from dm_engine import (EFFORTS, REPO, Engine, active_campaign, campaign_for_session, campaign_title, is_campaign, remember_campaign, combat_snapshot, combat_state,
+from dm_engine import (EFFORTS, REPO, CombatRunner, Engine, with_recap, active_campaign, campaign_for_session, campaign_title, is_campaign, remember_campaign, combat_snapshot, combat_state,
                        is_go_signal, list_campaigns, run_combat_step, step_due,
                        last_combat_events, last_session, load_history, map_png_path)
 
@@ -41,6 +41,10 @@ class Hub:
         """
         self.campaign_arg = campaign_arg
         self.detect_campaign = False   # a /start-session without a slug or /new-campaign: pin what it touched
+        self.runner: CombatRunner | None = None   # plays the NPC steps in its own small context
+        self.runner_model: str | None = None
+        self.runner_effort = "low"
+        self.log_mark = 0   # combat-log lines the main DM has already been told about
         self.lock = threading.RLock()
         self.subs: list[queue.Queue[dict[str, Any]]] = []
         self.history: list[dict[str, Any]] = []   # {"role": "player"|"dm"|"system"|"log", ...}
@@ -205,7 +209,7 @@ class Hub:
         """Worker thread: send the message to the engine and wait for the reply. If that reply
         leaves a combat step due (the player ended their turn in the same message, or a fight was
         just set up with the PC first), the step runs right after."""
-        ok = self._exchange(text)
+        ok = self._exchange(self._with_recap(text))
         self.refresh_combat()
         if ok and self.eng.combat_engaged and step_due(self.campaign(), text):
             self._step()
@@ -218,8 +222,36 @@ class Hub:
         self._step()
         self.publish({"type": "busy", "busy": False})
 
+    def _with_recap(self, text: str) -> str:
+        """The player's message for the main DM, with what the combat runner played since its last
+        reply in front (only the main DM sees the recap; the chat shows the player's text)."""
+        st = combat_state(self.campaign()) or {}
+        events = st.get("events", [])
+        if self.log_mark > len(events):   # a new fight
+            self.log_mark = 0
+        lines = [f"R{e.get('round', '?')} {e.get('text', '')}" for e in events[self.log_mark:]]
+        self.log_mark = len(events)
+        recap = self.runner.take_recap() if self.runner else ""
+        return with_recap(text, recap, lines if recap else [])
+
+    def _get_runner(self, camp: str) -> CombatRunner:
+        """The combat runner for this campaign (a new one when the campaign changes)."""
+        if self.runner is None or self.runner.campaign != camp:
+            if self.runner:
+                self.runner.stop()
+
+            def after() -> None:
+                with self.lock:
+                    self.turn_dm = None
+                self.refresh_combat()
+
+            self.runner = CombatRunner(self.on_event, camp, model=self.runner_model, effort=self.runner_effort, after_send=after)
+        self.runner.engine.telemetry_session = self.eng.session_id
+        return self.runner
+
     def _step(self) -> None:
-        """Run one combat step, refreshing the combat panel after each DM reply."""
+        """Run one combat step, refreshing the combat panel after each DM reply. NPC steps go to the
+        combat runner; creatures the main DM plays (main_dm) go to the main DM."""
         camp = self.campaign()
         if not camp:
             return
@@ -229,7 +261,7 @@ class Hub:
             self.refresh_combat()
             return ok
 
-        result = run_combat_step(self.eng, camp, send)
+        result = run_combat_step(self.eng, camp, send, runner=self._get_runner(camp))
         self.refresh_combat()
         if result == "pc-quiet":
             self.system("Your turn.")
@@ -267,6 +299,9 @@ class Hub:
                            f"in this conversation, run /end-session for it now. If not, reply only: "
                            f"\"No session in progress.\"]")
         self.eng.new_session()
+        if self.runner:
+            self.runner.stop()
+            self.runner = None
         with self.lock:
             self.campaign_arg = slug
             self.history, self.turn_dm = [], None
@@ -413,6 +448,8 @@ def main() -> None:
     ap.add_argument("--resume", nargs="?", const="last", help="continue the last session, or a given session ID")
     ap.add_argument("--model", help="model alias or ID (default: your Claude Code default)")
     ap.add_argument("--effort", default="medium", choices=EFFORTS)
+    ap.add_argument("--runner-model", help="model for the combat runner (NPC turns); default: the DM's model")
+    ap.add_argument("--runner-effort", default="low", choices=EFFORTS, help="thinking effort for NPC turns (default low)")
     ap.add_argument("--campaign", help="campaign slug (default: the most recently played)")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true")
@@ -426,6 +463,7 @@ def main() -> None:
         hub.campaign_arg = args.campaign or campaign_for_session(resume, hub.history)
     engine = Engine(hub.on_event, model=args.model, effort=args.effort, debug=args.debug, record_session=True)
     hub.engine = engine
+    hub.runner_model, hub.runner_effort = args.runner_model or args.model, args.runner_effort
     engine.start(resume=resume)
     hub.combat = {"active": False}   # shown once the DM engages combat in this session (Hub.fight)
 
@@ -443,6 +481,8 @@ def main() -> None:
         pass
     finally:
         engine.stop()
+        if hub.runner:
+            hub.runner.stop()
         server.shutdown()
         if engine.session_id:
             print(f"Session saved. Continue with: python3 web.py --resume")

@@ -56,3 +56,11 @@ class TelemetryReport(unittest.TestCase):
         out = telemetry.summarize(recs, False)
         self.assertIn("combat_batch: move+attack", telemetry.game_command("mcp__dm__combat_batch", recs[0]["tools"][0]["call"]))
         self.assertIn("combat-step", out)
+
+
+class TelemetryCosts(unittest.TestCase):
+    def test_running_totals_become_per_exchange_costs(self) -> None:
+        recs = [{"total_cost_usd": 0.3}, {"total_cost_usd": 1.2}, {"total_cost_usd": 1.5},
+                {"total_cost_usd": 0.2},                                   # a new process started
+                {"cost_usd": 0.1, "process_cost_usd": 0.3}]               # a new-style record
+        self.assertEqual([round(c, 2) for c in telemetry.exchange_costs(recs)], [0.3, 0.9, 0.3, 0.2, 0.1])

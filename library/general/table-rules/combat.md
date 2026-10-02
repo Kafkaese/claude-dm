@@ -55,6 +55,8 @@ Combat runs **one actor at a time**. Each non-PC actor's turn is its own reply, 
 
 **In `web.py` / `play.py`, the interface runs the turn order.** You never run `next`. On a go signal, it sends you a bracketed **combat step** message naming the one actor to play, with what happened at the start of its turn and what it can see. Resolve exactly that actor in one `combat.py do` call, narrate only that actor, and stop. If the message says the PC's turn comes right after, say so in one short line. A **hidden** actor's step works the same, but your reply is only shown if it gets revealed; if it stays unnoticed, reply "…".
 
+**The combat runner** (web/terminal play) plays most of those steps: a separate, lean process that gets only what one creature's turn needs (the briefing, the encounter's tactics and morale, the table's tone and lines, the last few narrations). It cuts the cost of a fight by an order of magnitude. You get a recap of what it narrated with the player's next message. Bosses and story NPCs with plans or dialogue stay with you: mark them `"dm_plays": true` in the encounter (or `add … --main-dm`).
+
 **In the Claude Code UI,** send gm-screen one `enemy-turns` call per step; it runs the step (see its instructions).
 
 **The PC's turn** stays open until the player says "end turn" (or the phrase session zero set).
