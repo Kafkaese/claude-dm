@@ -37,6 +37,15 @@
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/agent_foreground.py\""
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/play_guard.py\""
+          }
+        ]
       }
     ]
   }

@@ -29,5 +29,6 @@ Example (`dm/combat/encounters/ford-ambush.md`):
 - **PCs:** `pc_start` places the sheets in `players/characters/` in order (tokens: first letter of the name). `setup --place C=E5` overrides a square at the table, e.g. when the PC arrives from another side. A `pcs` list sets PCs explicitly instead.
 - **Groups:** `count` with a one-letter `token` makes k1, k2, … and numbers the names.
 - **Lighting:** the ambient `light` (or the map file's `ambient:` line), `zones`, and `lights` (at a square or carried by a combatant).
+- **Tactics:** `"tactics": {"weights": {…}, "morale": {…}}` on a combatant gives it this fight's personality and morale as weights on its turn plans (format: the system's combat-profile guide, "Tactics"). Use it for every combatant whose prose tactics or morale differ from plain "fight to the best effect".
 - **Who plays whom:** in web/terminal play, the combat runner (a lean process) plays the NPCs' turns. Give a boss or a story NPC with plans and dialogue `"dm_plays": true`, so the main DM, who knows the campaign, plays it.
 - **Initiative:** NPCs roll from their profiles (or `"init": 15`); the PCs' rolls come from the player at setup.

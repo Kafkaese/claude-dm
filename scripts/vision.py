@@ -1,7 +1,7 @@
 """vision: light levels and what creatures can see (PF1e), for combat.py.
 
-Rules: library/pf1e/rules/vision-and-light.md (Core Rulebook "Vision and Light", the light and
-darkness spells, the senses in the universal monster rules). Table rulings (session of 2026-09-29):
+THE TABLE'S HOUSE RULE: library/pf1e/house-rules/vision-and-light.md (homebrew on purpose; it
+overrides the CRB text in library/pf1e/rules/vision-and-light.md). Table rulings (session of 2026-09-29):
   - low-light vision doubles the radii of light SOURCES only; ambient dim light (moonlight) stays dim
   - visibility is judged from the target's square(s); a lit target is seen from the dark
   - a darkness spell switches off nonmagical light in its area (the Paizo blog/FAQ procedure),
@@ -66,6 +66,32 @@ def has_lighting(st: State) -> bool:
 def senses(c: Token) -> dict[str, Any]:
     """The creature's senses from its profile (darkvision, low_light, see_in_darkness, blindsight, …)."""
     return (c.get("profile") or {}).get("senses") or {}
+
+
+def presumed(o: Token, viewer: Token) -> Token:
+    """`o` as `viewer` judges it: its own side's senses are known; an opponent's special senses
+    (darkvision, low-light vision, blindsense, …) aren't, until it gives them away (`senses_known`,
+    set when it attacks or targets something it could only perceive with them). Until then the
+    viewer assumes normal vision. For decisions only: the rules always use the real senses."""
+    same = (o["side"] in R.FRIENDLY) == (viewer["side"] in R.FRIENDLY)
+    if same or o.get("senses_known") or not senses(o):
+        return o
+    prof = dict(o.get("profile") or {})
+    keep = {k: v for k, v in senses(o).items() if k in ("light_sensitivity", "light_blindness")}
+    prof["senses"] = keep
+    return dict(o, profile=prof)
+
+
+def reveals_senses(st: State, a: Token, t: Token) -> bool:
+    """Whether `a` acting against `t` gives its special senses away: with normal vision it couldn't
+    have seen `t` as well. Marks `a` (senses_known) and returns True the first time."""
+    if a.get("senses_known") or not senses(a):
+        return False
+    plain = dict(a, profile=dict(a.get("profile") or {}, senses={}))
+    if concealment(st, plain, t)[0] > concealment(st, a, t)[0]:
+        a["senses_known"] = True
+        return True
+    return False
 
 
 def describe_senses(c: Token) -> str:
@@ -294,16 +320,19 @@ def sight_report(st: State, c: Token, fmt_pos: Any, speed_squares: int) -> str:
     lvl, how = seen_level(st, c, here)
     out = [f"{c['token']} ({c['name']}) at {fmt_pos(*here)}, {describe_senses(c)}; light here: {natural(st, here)}"]
     foes = enemies(st, c)
-    for o in foes:
-        miss, why = concealment(st, c, o)
+    for real in foes:
+        o = presumed(real, c)
+        miss, why = concealment(st, c, real)
         seen = "can't see" if miss >= 50 else f"sees with {miss}% concealment ({why})" if miss else "sees clearly"
         back, bwhy = concealment(st, o, c)
         them = ("can't see it" if back >= 50 else f"sees it with {back}% concealment ({bwhy})" if back
                 else "sees it clearly")
         if R.cover(st, o, c) and back < 50:
             them += " (it has cover)"
-        out.append(f"  vs {o['token']} ({o['name']}, {describe_senses(o)}): {seen}; {o['token']} {them}")
+        known = describe_senses(o) if o is real else "its senses unknown: normal vision assumed"
+        out.append(f"  vs {o['token']} ({o['name']}, {known}): {seen}; {o['token']} {them}")
     if foes:
+        foes = [presumed(o, c) for o in foes]
         hide = all(hidden_from(st, c, o) for o in foes)
         out.append(f"  can hide where it stands: {'yes' if hide else 'no (observed in the open)'}")
         spots = []

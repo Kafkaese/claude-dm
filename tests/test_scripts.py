@@ -7,7 +7,9 @@ import unittest
 import roll
 import telemetry
 import world
-from tests.support import CampaignCase
+import sys
+
+from tests.support import REPO, CampaignCase
 
 
 class Dice(unittest.TestCase):
@@ -64,3 +66,22 @@ class TelemetryCosts(unittest.TestCase):
                 {"total_cost_usd": 0.2},                                   # a new process started
                 {"cost_usd": 0.1, "process_cost_usd": 0.3}]               # a new-style record
         self.assertEqual([round(c, 2) for c in telemetry.exchange_costs(recs)], [0.3, 0.9, 0.3, 0.2, 0.1])
+
+
+class PlayGuard(unittest.TestCase):
+    """During play the DM can't hand-edit combat state or the code; outside play nothing is blocked."""
+
+    def run_hook(self, path: str, play: bool) -> int:
+        import json as _json
+        import os as _os
+        import subprocess
+        env = dict(_os.environ, CLAUDE_DM_MODE="play") if play else {k: v for k, v in _os.environ.items() if k != "CLAUDE_DM_MODE"}
+        r = subprocess.run([sys.executable, str(REPO / ".claude/hooks/play_guard.py")], env=env, capture_output=True, text=True,
+                           input=_json.dumps({"tool_name": "Edit", "tool_input": {"file_path": path}}))
+        return r.returncode
+
+    def test_guard(self) -> None:
+        self.assertEqual(self.run_hook("/r/campaigns/x/dm/combat/current.json", True), 2)
+        self.assertEqual(self.run_hook("/r/scripts/combat.py", True), 2)
+        self.assertEqual(self.run_hook("/r/campaigns/x/dm/session-log/session-01.md", True), 0)
+        self.assertEqual(self.run_hook("/r/scripts/combat.py", False), 0)

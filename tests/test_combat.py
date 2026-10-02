@@ -593,3 +593,151 @@ class TouchEffects(CampaignCase):
 
     def test_plans_show_the_touch_roll(self) -> None:
         self.assertTrue(any("ray of frost on C (touch, hits on" in ln for ln in self.run_cmd("options", "s1").splitlines()))
+
+
+class Movement(CampaignCase):
+    def test_diagonal_step_past_a_creature(self) -> None:
+        self.new(map_text="######\n#....#\n#....#\n#....#\n######\n")
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=20)
+        self.add("g1", "Gob", "C2", GOBLIN, init=10)      # beside Corin: its corner is on the diagonal
+        self.run_cmd("next")
+        self.assertIn("5-foot step", self.run_cmd("move", "C", "C3", "--step"))   # past g1's corner (CRB p. 192)
+
+    def test_no_diagonal_past_a_wall_corner(self) -> None:
+        self.new(map_text="######\n#.#..#\n#....#\n#....#\n######\n")   # C2 is wall
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=20)
+        self.run_cmd("next")
+        self.assertIn("exactly one square", self.fail_cmd("move", "C", "C3", "--step"))   # past C2's corner
+
+
+
+class PlayerDamage(CampaignCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.new(blank="8x6")
+        self.add("C", "Corin", "B2", dict(PC_PROFILE, ammo={"shortbow": 2}), side="pc", init=20)
+        self.add("g1", "Gob", "C2", GOBLIN, init=10)
+        self.run_cmd("next")
+
+    def test_hit_waits_for_the_players_damage(self) -> None:
+        out = self.run_cmd("attack", "C", "g1", "--total", "25", "--name", "rapier")
+        self.assertIn("Ask the player for the damage", out)
+        self.assertEqual(self.tok("g1")["hp"], 12)
+        self.assertIn("roll damage", self.state()["awaiting"])
+        self.run_cmd("damage", "C", "5")
+        self.assertEqual(self.tok("g1")["hp"], 7)
+        self.assertNotIn("awaiting", self.state())
+        self.fail_cmd("damage", "C", "5")                     # nothing pending any more
+
+    def test_pc_ammo_is_counted(self) -> None:
+        out = self.run_cmd("attack", "C", "g1", "--total", "1", "--name", "shortbow", "--ranged", "--override")
+        self.assertIn("shortbow: 1/2 left", out)
+        self.run_cmd("attack", "C", "g1", "--total", "1", "--name", "shortbow", "--ranged", "--override")
+        self.assertIn("no shortbow ammunition", self.fail_cmd("attack", "C", "g1", "--total", "1", "--name", "shortbow",
+                                                              "--ranged", "--out-of-turn"))
+
+    def test_npc_thrown_weapon_runs_out(self) -> None:
+        thrower = dict(GOBLIN, attacks={"javelin": {"bonus": 3, "damage": "1d6", "type": "ranged", "thrown": True,
+                                                    "range": 30, "ammo": 1}})
+        self.add("j1", "Thrower", "G5", thrower, init=5)
+        self.run_cmd("attack", "j1", "C", "--with", "javelin", "--out-of-turn")
+        self.assertIn("picked up", self.fail_cmd("attack", "j1", "C", "--with", "javelin", "--out-of-turn"))
+
+    def test_total_defense_is_a_standard_action(self) -> None:
+        out = self.run_cmd("act", "C", "full", "total defense")
+        self.assertIn("charged as standard", out)
+        self.assertIn("move", out.splitlines()[-1])            # the move action is still there
+        import combat_rules as R
+        self.assertTrue(R.has(self.tok("C"), "total defense"))
+        self.assertIn("player rolls any dice", out)
+
+
+class SensesAndUncanny(CampaignCase):
+    def test_unseen_attacker_and_uncanny_dodge(self) -> None:
+        self.new(blank="10x6", light="dark")
+        seer = dict(GOBLIN, senses={"darkvision": 60})
+        self.add("g1", "Gob", "B2", seer, init=20)
+        self.add("C", "Corin", "C2", dict(PC_PROFILE, uncanny_dodge=True), side="pc", init=10)
+        self.add("D", "Dara", "C3", PC_PROFILE, side="pc", init=5)
+        self.run_cmd("next")
+        import combat
+        st = self.state()
+        g, c, d = (combat.token(st, t) for t in ("g1", "C", "D"))
+        c["acted"] = d["acted"] = True
+        _, ac_c, notes_c, _, _ = combat.attack_mods(st, g, c, "melee")
+        _, ac_d, notes_d, _, _ = combat.attack_mods(st, g, d, "melee")
+        self.assertEqual(ac_c, 16 - 2)                         # uncanny dodge: keeps Dex, −2 for the dark
+        self.assertEqual(ac_d, 12 - 2)                         # flat-footed against the unseen goblin
+        self.assertNotIn("flat-footed", notes_c)
+
+    def test_opponents_presumed_to_have_normal_vision(self) -> None:
+        self.new(blank="10x6", light="dark")
+        self.add("C", "Corin", "B2", dict(PC_PROFILE, senses={"darkvision": 60}), side="pc", init=20)
+        self.add("g1", "Gob", "F2", GOBLIN, init=10)
+        self.run_cmd("next")
+        out = self.run_cmd("sight", "g1")
+        self.assertIn("senses unknown", out)
+        self.assertIn("C can't see it", out)                   # it thinks it's hidden in the dark
+        self.run_cmd("attack", "C", "g1", "--total", "30", "--damage", "1", "--ranged")
+        self.assertTrue(self.tok("C").get("senses_known"))
+        self.assertIn("darkvision", self.run_cmd("sight", "g1"))
+
+
+class TacticsWeights(CampaignCase):
+    def plans(self, tok: str) -> str:
+        return self.run_cmd("options", tok).split("Details:", 1)[0]
+
+    def test_weights_and_broken_morale(self) -> None:
+        self.new(blank="12x8")
+        coward = dict(GOBLIN, tactics={"weights": {"melee": -3},
+                                       "morale": {"hp": 0.5, "weights": {"retreat": 20}, "note": "flees"}})
+        self.add("g1", "Coward", "C4", coward, init=20)
+        self.add("C", "Corin", "D4", PC_PROFILE, side="pc", init=10)
+        self.run_cmd("next")
+        out = self.plans("g1")
+        self.assertIn("melee -3", out)
+        self.assertNotIn("MORALE BREAKS", out)
+        self.run_cmd("hp", "g1", "-8")
+        out = self.plans("g1")
+        self.assertIn("MORALE BREAKS", out)
+        first = out.split("  1. ", 1)[1].splitlines()[0]
+        self.assertIn("withdraw", first)
+
+    def test_encounter_tactics_override(self) -> None:
+        self.new(blank="8x6")
+        self.run_cmd("add", "g1", "Gob", "--pos", "B2", "--init", "5", "--profile", json.dumps(GOBLIN),
+                     "--tactics", '{"weights": {"ranged": 2}}')
+        self.assertEqual(self.tok("g1")["profile"]["tactics"], {"weights": {"ranged": 2}})
+
+    def test_casting_in_melee_and_healing_the_dying(self) -> None:
+        self.new(blank="12x8")
+        healer = dict(GOBLIN, spellcasting=[{"class": "cleric", "cl": 1, "type": "spontaneous", "dc_base": 12,
+                                             "concentration": 4, "slots": {"1": 2}, "spells": {"1": ["cure light wounds"]},
+                                             "effects": {"cure light wounds": {"target": "one", "range": 0, "heal": "1d8+1"}}}])
+        self.add("h1", "Healer", "C4", healer, init=20)
+        self.add("a1", "Hurt", "C5", dict(GOBLIN, con=12), init=15)
+        self.add("C", "Corin", "D4", PC_PROFILE, side="pc", init=25)
+        self.run_cmd("hp", "a1", "-14")                      # dying
+        self.run_cmd("next")                                  # Corin acts first: he can make AoOs now
+        self.run_cmd("endturn", "C")
+        self.run_cmd("next")
+        out = self.plans("h1")
+        heal = next(ln for ln in out.splitlines() if "cure light wounds on a1" in ln)
+        self.assertIn("dying", heal)
+        self.assertTrue("cast defensively" in heal or "provokes" in heal)   # Corin threatens the healer
+
+
+class DiagonalCount(CampaignCase):
+    def test_count_carries_over_within_the_turn_and_resets(self) -> None:
+        self.new(blank="12x8")
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=20)
+        self.add("g1", "Gob", "L8", GOBLIN, init=10)
+        self.run_cmd("next")
+        self.assertIn("B2 → C3: 5 ft", self.run_cmd("move", "C", "C3"))    # first diagonal
+        self.assertIn("C3 → D4: 10 ft", self.run_cmd("move", "C", "D4"))   # second diagonal, same turn
+        self.run_cmd("endturn", "C")
+        self.run_cmd("next")
+        st = self.state()
+        self.assertEqual(st["turn"], "g1")
+        self.run_cmd("next")                                       # Corin again: the count starts over
+        self.assertIn("D4 → E5: 5 ft", self.run_cmd("move", "C", "E5"))

@@ -61,7 +61,7 @@ CONDITIONS: dict[str, dict[str, Any]] = {
     "charged": {"ac": -2},
     "running": {"flatfooted": True},           # a run without the Run feat: no Dex bonus to AC                    # until the start of its next turn
     "fighting defensively": {"atk": -4, "ac": 2},
-    "total defense": {"ac": 4},
+    "total defense": {"ac": 4, "no_aoo": True},   # +4 dodge (+6 with 3 ranks of Acrobatics: cond --ac 6); no AoOs
     "fatigued": {"str": -2, "dex": -2},
     "exhausted": {"str": -6, "dex": -6},
     "staggered": {}, "nauseated": {"no_aoo": True}, "stable": {}, "dying": {},

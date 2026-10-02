@@ -51,6 +51,7 @@ Each distinct attack gets an entry in `attacks`. The **name** is the weapon or n
 | **Melee** sap +3 (1d6+1 nonlethal) | `"nonlethal": true` |
 | **Ranged** shortbow +4 (1d6/×3) | `"shortbow": {"bonus": 4, "damage": "1d6", "type": "ranged", "mult": 3, "range": 60}` |
 | **Ranged** javelin +4 (1d6+3) | `"type": "ranged", "thrown": true, "range": 30` |
+| **Gear** 20 arrows; 4 javelins | `"ammo": 20` on the bow, `"ammo": 4` on the javelin. The script counts shots and throws and refuses an empty one (a thrown weapon has to be picked up: a move action that provokes). Leave it out to not track it |
 | longspear (reach) | `"reach": 10` on that attack |
 
 - **Crit:** `crit` is the **lowest** number of the threat range (`/18–20` → 18), and `mult` the multiplier (`/×3` → 3). Leave them out for 20/×2.
@@ -111,6 +112,17 @@ Where the stat block lists the spell's level, put it in `level`, because the con
 
 `combat.py ability TOKEN "NAME"` uses one (`--target`, `--at` or `--toward` as the effect needs).
 
+## Tactics (personality and morale)
+The tactical options rank whole-turn plans by expected value. `tactics` adds this creature's preferences as points on top (about one point per point of expected damage: +3 is a clear preference, −3 a clear aversion). Plan kinds: `melee`, `ranged`, `spell` (offensive spells, SLAs and abilities), `buff`, `heal`, `defense` (total defense), `retreat` (withdraw).
+
+| Creature | Tactics |
+|---|---|
+| a cowardly kobold sniper | `"tactics": {"weights": {"ranged": 2, "melee": -3}, "morale": {"hp": 0.5, "allies_down": 0.5, "weights": {"retreat": 6}, "note": "flees toward its warren"}}` |
+| a berserker | `"tactics": {"weights": {"melee": 4, "defense": -4, "retreat": -6}}` |
+| a devoted healer | `"tactics": {"weights": {"heal": 3, "buff": 2}, "morale": {"allies_down": 1, "weights": {"retreat": 4, "defense": 2}, "note": "surrenders when cornered"}}` |
+
+Morale breaks at or below `hp` of its maximum HP, or when `allies_down` of its side is down (1 = all of them). Then its `weights` are added. An encounter can give a combatant its own `tactics` for that fight (it replaces the stat block's).
+
 ## Player characters
 **Player characters** use their own schema, `combat-profile-pc.schema.json`, in the character sheet's block (template: `library/pf1e/character-sheet.md`). It requires only what the script uses for a PC:
 - `init` (the modifier: the player rolls initiative, the script breaks ties with it)
@@ -121,7 +133,7 @@ Where the stat block lists the spell's level, put it in `level`, because the con
 - `senses` (`{}` = normal vision) and `perception`
 - `feats` (Combat Reflexes, Blind-Fight, Precise Shot, Improved maneuvers; `[]` if none)
 
-Optional: `max_dex`, `reach`, `uncanny_dodge`, `sneak_attack` (the script reminds when it applies), `cmd_vs`, DR, resistances and immunities. Attacks, spells, saves and CMB aren't needed, because the player rolls them. `combat.py add` refuses a PC without a passing block. The DM fills it from the sheet and asks the player for anything missing.
+Optional: `max_dex`, `reach`, `uncanny_dodge`, `sneak_attack` (the script reminds when it applies), `ammo` (by attack name, e.g. `{"shortbow": 20, "javelin": 3}`: counted on attacks with that name; update the sheet after the fight), `cmd_vs`, DR, resistances and immunities. Attacks, spells, saves and CMB aren't needed, because the player rolls them. `combat.py add` refuses a PC without a passing block. The DM fills it from the sheet and asks the player for anything missing.
 
 ## A complete example
 ```combat-profile

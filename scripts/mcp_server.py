@@ -168,17 +168,23 @@ TOOLS: list[Tool] = [
           "init": S('initiative value, or "roll"'), "side": S("default enemy", ["enemy", "pc", "ally"]),
           "hidden": B("the PC hasn't noticed it"), "hp": I("override HP"), "cr": S("CR for XP, e.g. 1/3"),
           "size": I("squares per side"), "reach": I("reach in ft"), "speed": I("speed in ft"),
-          "main_dm": B("you (the main DM) play its turns, not the combat runner: a boss or story NPC")},
+          "main_dm": B("you (the main DM) play its turns, not the combat runner: a boss or story NPC"),
+          "tactics": S('JSON: preference weights and morale for its turn plans, e.g. {"weights": {"ranged": 2}, "morale": {"hp": 0.5, "weights": {"retreat": 5}}}')},
          ["token", "name", "pos"],
          lambda a: ["add", a["token"], a["name"], "--pos", a["pos"]] + flags(a, {
              "ref": "--ref", "init": "--init", "side": "--side", "hidden": "--hidden", "hp": "--hp", "cr": "--cr",
-             "size": "--size", "reach": "--reach", "speed": "--speed", "main_dm": "--main-dm"})),
+             "size": "--size", "reach": "--reach", "speed": "--speed", "main_dm": "--main-dm", "tactics": "--tactics"})),
     Tool("combat_move", "Move a token along the cheapest legal path. NPC attacks of opportunity are rolled; a PC's chance opens a question.",
          {"token": S(TOK), "to": S(SQ), "step": B("a 5-foot step (no AoO)"), "no_aoo": B("don't roll NPC AoOs (deliberate exception)"),
           "as": S("movement as part of this full-round action", ["charge", "withdraw", "run"]), "out_of_turn": OOT, "override": B("don't charge move actions")},
          ["token", "to"], lambda a: ["move", a["token"], a["to"]] + flags(a, {"step": "--step", "no_aoo": "--no-aoo", "as": "--as",
                                                                                "out_of_turn": "--out-of-turn", "override": "--override"})),
-    Tool("combat_attack", "An attack. NPC: `with` names a profile attack (the script rolls). PC: `total` and `damage` are the player's rolls. "
+    Tool("combat_damage", "The player's damage roll for the hit their last attack scored (combat_attack with `total` and no `damage`). "
+         "Applies DR, minimum damage and the log line.",
+         {"token": S("the PC's token"), "amount": I("the player's damage total"), "nonlethal": B("nonlethal damage")},
+         ["token", "amount"], lambda a: ["damage", a["token"], str(a["amount"])] + flags(a, {"nonlethal": "--nonlethal"})),
+    Tool("combat_attack", "An attack. NPC: `with` names a profile attack (the script rolls). PC: `total` (and `damage`, if the player already gave it) are the player's rolls; "
+         "without `damage` a hit waits for the player's damage roll (then combat_damage). Never invent a PC's damage. Tracked ammunition is counted. "
          "Situational modifiers (flanking, conditions, cover, light, range) are applied automatically.",
          {"attacker": S(TOK), "target": S(TOK), "with": S("attack name from the attacker's profile"),
           "full": B("full attack"), "charge": B("charge (+2)"), "touch": B("touch attack"), "aoo": B("an attack of opportunity"),

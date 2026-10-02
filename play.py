@@ -386,7 +386,7 @@ def main() -> None:
         lines = [f"R{e.get('round', '?')} {e.get('text', '')}" for e in events[log_mark:]]
         log_mark = len(events)
         recap = runner.take_recap() if runner else ""
-        return with_recap(text, recap, lines if recap else [])
+        return with_recap(text, recap, lines if recap else [], combat_state(camp))
 
     print(f"{BOLD}Claude DM{RESET}  {DIM}(type :help for commands; effort {args.effort}){RESET}")
     if resume:

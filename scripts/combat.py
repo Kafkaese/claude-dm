@@ -70,9 +70,13 @@ Play
                                   only on a hit, confirms crits, applies DR, updates HP, logs it.
   attack ATT TGT --roll "1d20+9" --dmg "1d8+5" [--crit 19] [--mult 3] [--name slam]
                                   NPC attack without a profile (the same modifiers are added)
-  attack ATT TGT --total 17 --damage 9 [--nat 20|1] [--confirm 18] [--name rapier] [--touch]
+  attack ATT TGT --total 17 [--damage 9] [--nat 20|1] [--confirm 18] [--name rapier] [--touch]
                                   PC attack with the player's numbers against the hidden AC (target-side
-                                  modifiers applied; attacker-side ones are listed as reminders)
+                                  modifiers applied; attacker-side ones are listed as reminders). Without
+                                  --damage a hit waits for the player's damage roll:
+  damage ATT N [--nonlethal]      the player's damage for that hit (DR, minimum damage, the log line)
+       ammunition: an attack with "ammo": N (creatures) or the PC profile's "ammo" map counts shots and
+       throws, reports what's left and refuses an empty one (--override if it found more)
        all: [--no-crit] (mercy: treat a crit as a normal hit)  [--ac N] (override)
   area burst|cone|line FEET (--at D4 | --from TOKEN --toward E5) [--save ref --dc 13 --dmg 2d6
        [--half] [--name "burning hands"]]
@@ -291,10 +295,24 @@ def path_cost(st: State, mover: Token, dest: Square) -> int:
     return path_route(st, mover, dest)[0]
 
 
+def diag_parity(st: State, c: Token) -> int:
+    """Where the creature is in the 5-10-5 diagonal count: 1 if its next diagonal costs 10 ft.
+    The count runs through all of its movement in one turn (a double move included) and starts
+    over on its next turn (table ruling, library/pf1e/rules/movement.md: PF1e doesn't say)."""
+    return c.get("diag_parity", 0) if st.get("turn") == c["token"] else 0
+
+
 def path_route(st: State, mover: Token, dest: Square) -> tuple[int, list[Square]]:
     """The cheapest legal move: (feet, the squares from start to dest, both included)."""
+    feet, route, _parity = path_route_parity(st, mover, dest)
+    return feet, route
+
+
+def path_route_parity(st: State, mover: Token, dest: Square) -> tuple[int, list[Square], int]:
+    """path_route, plus the diagonal count's parity at the end (for the rest of the turn)."""
     import heapq
     start = (mover["x"], mover["y"])
+    p0 = diag_parity(st, mover)
 
     def footprint_ok(x: int, y: int, final: bool) -> bool:
         """Whether the mover's whole footprint fits at (x, y); the final square must also be unoccupied."""
@@ -305,15 +323,19 @@ def path_route(st: State, mover: Token, dest: Square) -> tuple[int, list[Square]
                 return False
         return True
 
+    def terrain_ok(x: int, y: int) -> bool:
+        """Whether the footprint at (x, y) is clear of walls (creatures don't block a diagonal's corner)."""
+        return all(cost(st, cx, cy) is not None for cx, cy in cells(mover, (x, y)))
+
     def step_cost(x: int, y: int) -> int:
         """The highest movement cost under the mover's footprint at (x, y)."""
         return max(cost(st, cx, cy) or 1 for cx, cy in cells(mover, (x, y)))   # footprint_ok ruled out None
 
     if not footprint_ok(*dest, final=True):
         raise CombatError(f"{fmt_pos(*dest)} is blocked or occupied")
-    best = {(start, 0): 0}
+    best = {(start, p0): 0}
     came: dict[tuple[Square, int], tuple[Square, int]] = {}
-    heap = [(0, start, 0)]
+    heap = [(0, start, p0)]
     while heap:
         feet, (x, y), parity = heapq.heappop(heap)
         if (x, y) == dest:
@@ -321,7 +343,7 @@ def path_route(st: State, mover: Token, dest: Square) -> tuple[int, list[Square]
             while key in came:
                 key = came[key]
                 route.append(key[0])
-            return feet, route[::-1]
+            return feet, route[::-1], parity
         if feet > best.get(((x, y), parity), 1e9):
             continue
         for dx in (-1, 0, 1):
@@ -332,8 +354,8 @@ def path_route(st: State, mover: Token, dest: Square) -> tuple[int, list[Square]
                 if not footprint_ok(nx, ny, final=False):
                     continue
                 diag = dx != 0 and dy != 0
-                if diag and (not footprint_ok(x + dx, y, False) or not footprint_ok(x, y + dy, False)):
-                    continue  # can't cut a corner past walls or enemies
+                if diag and (not terrain_ok(x + dx, y) or not terrain_ok(x, y + dy)):
+                    continue  # can't cut a wall's corner; past a creature's corner is fine (CRB p. 192)
                 mult = step_cost(nx, ny)
                 if diag:
                     squares, npar = (3 if mult > 1 else (1 if parity == 0 else 2)), 1 - parity
@@ -841,7 +863,7 @@ def attack_mods(st: State, a: Token, t: Token, kind: str, touch: bool = False, c
     flat = R.flag(t, "flatfooted") or (not t.get("acted") and not uncanny)
     blind, blind_why = V.concealment(st, t, a)   # can the defender see its attacker?
     unseen = blind >= 50 or R.has(a, "invisible")
-    if unseen and not flat:
+    if unseen and not flat and not uncanny:
         flat = True
         dmnotes.append(f"{t['token']} can't see {a['token']} ({blind_why if blind >= 50 else 'invisible'}): loses its Dex bonus")
     ac, label = base, ""
@@ -934,6 +956,18 @@ def _attack(args: Args, st: State) -> str:
         if a.get("move_mode") != "charge" or (a.get("mode_feet") or 0) < 10:
             raise CombatError(f"a charge moves at least 10 ft first, in a straight line: `move {a['token']} <square> --as charge`, "
                               f"then `attack … --charge`")
+    shots: dict[str, int] = {}   # ammunition this command uses, checked before anything is rolled
+    for e in entries:
+        found = ammo_key(a, e[0])
+        if found:
+            shots[found[0]] = shots.get(found[0], 0) + 1
+    used = _spent(a).setdefault("ammo", {})
+    for key, count in shots.items():
+        left = ammo_key(a, key)[1] - used.get(key, 0)   # type: ignore[index]
+        if count > left and not getattr(args, "override", False):
+            raise CombatError(f"{a['token']} has {'no' if left <= 0 else f'only {left}'} {key} ammunition left "
+                              f"({'a thrown weapon has to be picked up first: a move action that provokes' if left <= 0 else 'fewer attacks'}); "
+                              f"--override if it found more")
     out = []
     if args.aoo:
         a["aoo_used"] = a.get("aoo_used", 0) + 1
@@ -943,7 +977,13 @@ def _attack(args: Args, st: State) -> str:
         if i and t["hp"] <= 0:
             out.append(f"(remaining attacks skipped: {who(t)} is down)")
             break
+        found = ammo_key(a, e[0])
+        if found:
+            used[found[0]] = used.get(found[0], 0) + 1
         out.append(_attack_once(args, st, a, t, *e))
+    for key in shots:
+        total_n = ammo_key(a, key)[1]   # type: ignore[index]
+        out.append(f"  {key}: {total_n - used[key]}/{total_n} left")
     return "\n".join(out)
 
 
@@ -952,6 +992,8 @@ def _attack_once(args: Args, st: State, a: Token, t: Token, name: str | None, bo
     crit confirmation, concealment, damage and DR. Writes the combat log line; returns the DM report.
     """
     atk_delta, ac, notes, dmnotes, miss = attack_mods(st, a, t, kind, args.touch, args.charge, weapon)
+    if V.reveals_senses(st, a, t):
+        dmnotes.append(f"{a['token']} has given its special senses away (its foes now plan with them)")
     if args.ac is not None:
         ac = args.ac
     weapon_label = f" ({name})" if name else ""
@@ -1017,8 +1059,17 @@ def _attack_once(args: Args, st: State, a: Token, t: Token, name: str | None, bo
         dm.append(f"damage {dmg_expr} x{times} → {' + '.join(parts)} = {dmg}")
     elif args.damage is not None:
         dmg = args.damage
+    elif bonus is None:   # the player rolls their own damage: the hit stands, the damage waits for them
+        sneak, _ = sneak_attack(st, a, t, kind, miss)
+        st["pending_damage"] = {"attacker": a["token"], "target": t["token"], "crit": crit, "mult": mult,
+                                "nonlethal": bool(args.nonlethal), "line": line, "sneak": sneak}
+        st["awaiting"] = f"{a['name']}: roll damage" + (f" (critical hit: ×{mult})" if crit else "")
+        tip = f"; sneak attack applies (+{sneak})" if sneak else ""
+        return "\n".join(dm + [f"{'CRITICAL ' if crit else ''}HIT. Ask the player for the damage"
+                                + (f" (critical: ×{mult}, extra dice not multiplied)" if crit else "") + tip
+                                + f", then `damage {a['token']} N` (question set). Don't roll it yourself."])
     else:
-        raise CombatError("give --dmg (NPC) or --damage (PC) for the damage")
+        raise CombatError("give --dmg for the NPC's damage")
     sneak, why_not = sneak_attack(st, a, t, kind, miss)
     if sneak and dmg_expr:   # precision damage: rolled once, never multiplied on a crit
         sd, sdetail, _ = _roll(sneak)
@@ -1041,6 +1092,32 @@ def _attack_once(args: Args, st: State, a: Token, t: Token, name: str | None, bo
     res += f" [{who(t)}: {status(t)}]"
     event(st, line + res)
     return "\n".join(dm + [f"HIT. HP {t['hp']}/{t['max_hp']}. Log: {line}{res}"])
+
+
+def cmd_damage(args: Args, st: State) -> str:
+    """Apply the player's damage roll to the hit their last attack scored (`attack … --total` without
+    --damage): DR, minimum damage and the log line, as if it had come with the attack."""
+    pend = st.get("pending_damage")
+    if not pend or pend["attacker"] != args.token:
+        raise CombatError(f"{args.token} has no hit waiting for damage (`attack {args.token} TARGET --total N` first)")
+    a, t = token(st, pend["attacker"]), token(st, pend["target"])
+    dmg, nonlethal, dm = args.amount, pend["nonlethal"] or bool(args.nonlethal), []
+    if pend.get("sneak"):
+        dm.append(f"reminder: sneak attack applies (+{pend['sneak']}); check the player's damage includes it")
+    if dmg < 1:
+        immune = any("nonlethal" in str(x).lower() for x in (t.get("profile") or {}).get("immune") or [])
+        dmg, nonlethal = (0 if immune else 1), True
+        dm.append("minimum damage: 1 nonlethal" + (" (it's immune to nonlethal damage: none)" if immune else ""))
+    dealt, absorbed = apply_damage(t, dmg, nonlethal)
+    res = f" — {'critical hit' if pend['crit'] else 'hit'}, {dmg}{' nonlethal' if nonlethal else ''} damage"
+    if absorbed:
+        res += f" ({absorbed} absorbed, {dealt} gets through)" if dealt else " (all of it absorbed)"
+    res += f" [{who(t)}: {status(t)}]"
+    event(st, pend["line"] + res)
+    st.pop("pending_damage", None)
+    if str(st.get("awaiting", "")).startswith(f"{a['name']}: roll damage"):
+        st.pop("awaiting", None)
+    return "\n".join(dm + [f"HP {t['hp']}/{t['max_hp']}. Log: {pend['line']}{res}"])
 
 
 def cmd_ask(args: Args, st: State) -> str:
@@ -1170,6 +1247,11 @@ def cmd_add(args: Args, st: State) -> str:
         """The command-line value if given, else the profile's, else the default."""
         return arg if arg is not None else prof.get(key, default)
 
+    if getattr(args, "tactics", None):   # this fight's personality and morale (encounter files), over the stat block's
+        try:
+            prof = dict(prof, tactics=json.loads(args.tactics))
+        except json.JSONDecodeError as e:
+            raise CombatError(f"--tactics must be JSON: {e}")
     notes = []
     if args.init is None or str(args.init).lower() == "roll":
         if "init" not in prof:
@@ -1223,7 +1305,7 @@ def cmd_endturn(args: Args, st: State) -> str:
 ACTOR_ARG = {"ability": "token", "maneuver": "attacker", "attack": "attacker", "move": "token", "cast": "token", "sla": "token", "provoke": "token", "area": "frm"}
 
 
-UNDOABLE = ("attack", "maneuver", "move", "save", "stabilize", "act", "provoke", "endturn", "ability")
+UNDOABLE = ("attack", "damage", "maneuver", "move", "save", "stabilize", "act", "provoke", "endturn", "ability")
 READ_ONLY = ("show", "dist", "threat", "events", "image", "sight", "actions", "options", "spells", "ask")
 
 
@@ -1303,9 +1385,24 @@ def turn_message(st: State, actor: str, turn: str) -> str:
     return msg + " (AoOs take --aoo; readied or immediate actions and forced movement take --out-of-turn.)"
 
 
+def is_dead(c: Token) -> bool:
+    """Whether the creature is dead (HP at or below −Con, or marked dead)."""
+    return bool(R.has(c, "dead") or (c.get("con") and c["hp"] <= -c["con"]))
+
+
 def in_fight(c: Token) -> bool:
-    """Whether the token still gets turns: not removed, and above 0 HP unless a PC or ally (dying ones roll)."""
-    return not c.get("removed") and (c["hp"] > 0 or c["side"] in FRIENDLY)
+    """Whether the token still gets turns: not removed, and above 0 HP unless a PC or ally (dying ones
+    roll to stabilize); the dead never do."""
+    return not c.get("removed") and not is_dead(c) and (c["hp"] > 0 or c["side"] in FRIENDLY)
+
+
+NO_ACTIONS = ("stunned", "dazed", "cowering")   # conditions that allow no actions at all (helpless is a flag)
+
+
+def can_act(c: Token) -> bool:
+    """Whether the creature can do anything on its turn: conscious (HP 0 or more) and not helpless,
+    stunned, dazed or cowering. A turn without actions needs no decision: the engine skips it."""
+    return c["hp"] >= 0 and not R.flag(c, "helpless") and not any(R.has(c, n) for n in NO_ACTIONS)
 
 
 def next_actor(st: State) -> tuple[Token, bool] | None:
@@ -1364,7 +1461,7 @@ def cmd_next(args: Args, st: State) -> str:
     if c.get("performing") and c.get("performed_round", 0) < st["round"] - 1:   # not kept up: it ended
         c.pop("performing", None)
         out.append(f"  {c['token']}'s performance has ended (not maintained)")
-    for k in ("turn_actions", "move_mode", "mode_feet", "chain_feet", "chain_moves", "move_closed", "turn_path"):
+    for k in ("turn_actions", "move_mode", "mode_feet", "chain_feet", "chain_moves", "move_closed", "turn_path", "diag_parity"):
         c.pop(k, None)
     if c.get("immediate_used"):   # an immediate action since its last turn took this turn's swift
         turn_actions(c)["swift"] = f"immediate action before this turn ({c.pop('immediate_used')})"
@@ -1533,6 +1630,31 @@ def cmd_provoke(args: Args, st: State) -> str:
 
 
 # ---------- spellcasting ----------
+
+def ammo_key(c: Token, name: str | None) -> tuple[str, int] | None:
+    """The tracked ammunition behind an attack: (key, how many it carries), or None if untracked.
+    Creatures: `"ammo": N` on the attack (arrows, bolts, or the number of javelins for a thrown weapon).
+    PCs: the profile's `"ammo": {"shortbow": 20}`, matched by the attack's name."""
+    if not name:
+        return None
+    prof = c.get("profile") or {}
+    key, w = R.find_attack(prof, name) if prof.get("attacks") else (None, None)
+    if w and w.get("ammo") is not None:
+        return str(key), int(w["ammo"])
+    for k, n in (prof.get("ammo") or {}).items():
+        if k.lower() == name.lower() or name.lower().startswith(k.lower()):
+            return k, int(n)
+    return None
+
+
+def ammo_left(c: Token, name: str | None) -> int | None:
+    """Shots or throws left with that attack, or None if it isn't tracked."""
+    found = ammo_key(c, name)
+    if not found:
+        return None
+    key, n = found
+    return n - _spent(c).get("ammo", {}).get(key, 0)
+
 
 def _spent(c: Token) -> dict[str, Any]:
     """The token's record of used spell slots, cast prepared spells and SLA uses (created if missing)."""
@@ -1784,6 +1906,7 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
         out.append(cmd_area(ns, st))
     elif args.target:
         t = token(st, args.target)
+        V.reveals_senses(st, c, t)
         mult = 1
         if getattr(args, "touch_attack", None):   # rays and touch spells: roll to hit first
             hit, mult, lines = touch_attack(args, st, c, t, shown)
@@ -1955,7 +2078,7 @@ def cmd_move(args: Args, st: State) -> str:
     if stuck and not args.out_of_turn:
         raise CombatError(f"{c['token']} can't move ({', '.join(stuck)}); forced movement takes --out-of-turn")
     dest = parse_pos(args.pos, st)
-    feet, route = path_route(st, c, dest)
+    feet, route, end_parity = path_route_parity(st, c, dest)
     frm = fmt_pos(c["x"], c["y"])
     out = []
     speed = c.get("speed") or 30
@@ -2027,6 +2150,8 @@ def cmd_move(args: Args, st: State) -> str:
                 return "\n".join(out)
         c["aoo_opportunities"] = {"round": rnd, "by": sorted(given)}
     c["x"], c["y"] = dest
+    if st.get("turn") == c["token"] and not args.out_of_turn:   # the diagonal count goes on next time it moves
+        c["diag_parity"] = end_parity
     if st.get("turn") == c["token"]:   # its own movement this turn, for the map's movement line
         tp = c.setdefault("turn_path", [])
         tp += [list(sq) for sq in (route if not tp or tuple(tp[-1]) != route[0] else route[1:])]
@@ -2214,6 +2339,10 @@ def cmd_act(args: Args, st: State) -> str:
     what = args.what or args.kind
     out = []
     off_turn = st.get("turn") != c["token"]
+    total_def = "total defense" in what.lower()
+    if total_def and args.kind != "standard":   # CRB Table 8-2: a standard action that doesn't provoke
+        out.append(f"(total defense is a standard action, not {args.kind}: charged as standard)")
+        args.kind = "standard"
     if args.kind == "immediate" and off_turn:
         if c.get("immediate_used") or turn_actions(c)["swift"]:
             raise CombatError(f"{c['token']} already used its immediate/swift action until after its next turn")
@@ -2241,8 +2370,15 @@ def cmd_act(args: Args, st: State) -> str:
             out.append("  (it wasn't prone)")
         else:
             event(st, f"{who(c)} gets up")
+    if total_def:   # +4 dodge AC until its next turn, and no attacks of opportunity
+        R.add_condition(st, c, "total defense", rounds=1)
+        out.append(f"  {c['token']}: total defense, +4 dodge AC and no AoOs until its next turn "
+                   f"(3+ ranks of Acrobatics: +6, `cond {c['token']} \"total defense\" --ac 6 --rounds 1`)")
     if args.log:
         event(st, f"{who(c)}: {args.log}")
+    if c["side"] == "pc":
+        out.append("  (the player rolls any dice this involves, healing, damage or checks: ask for the result, "
+                   "never roll it for them)")
     if not off_turn:
         out.append(action_status(st, c))
     return "\n".join(out)
@@ -2319,11 +2455,12 @@ def reach_map(st: State, c: Token, max_feet: int, routes: dict[Square, list[Squa
                 return False
         return True
 
-    best = {(start, 0): 0}
+    p0 = diag_parity(st, c)
+    best = {(start, p0): 0}
     out = {start: 0}
     came: dict[tuple[Square, int], tuple[Square, int]] = {}
-    end_key: dict[Square, tuple[Square, int]] = {start: (start, 0)}
-    heap = [(0, start, 0)]
+    end_key: dict[Square, tuple[Square, int]] = {start: (start, p0)}
+    heap = [(0, start, p0)]
     while heap:
         feet, (x, y), parity = heapq.heappop(heap)
         if feet > best.get(((x, y), parity), 10 ** 9):
@@ -2336,8 +2473,8 @@ def reach_map(st: State, c: Token, max_feet: int, routes: dict[Square, list[Squa
                 if not fits(nx, ny, False):
                     continue
                 diag = dx != 0 and dy != 0
-                if diag and (not fits(x + dx, y, False) or not fits(x, y + dy, False)):
-                    continue
+                if diag and any(cost(st, cx, cy) is None for q in ((x + dx, y), (x, y + dy)) for cx, cy in cells(c, q)):
+                    continue   # a wall's corner blocks a diagonal; a creature's doesn't (CRB p. 192)
                 mult = max(cost(st, cx, cy) or 1 for cx, cy in cells(c, (nx, ny)))
                 squares, npar = ((3 if mult > 1 else (1 if parity == 0 else 2)), 1 - parity) if diag else (mult, parity)
                 nf = feet + 5 * squares
@@ -2501,7 +2638,7 @@ def _incoming(st: State, c: Token, sq: Square, memo: dict[Square, float]) -> flo
             best = 0.0
             if not prof.get("attacks"):   # a PC sheet: guess, nearer is worse
                 near = feet_between(f, c) - 5 <= (f.get("speed") or 30)
-                total += PC_GUESS if near else (PC_GUESS / 2 if V.concealment(st, f, c)[0] < 50 else 0.0)
+                total += PC_GUESS if near else (PC_GUESS / 2 if V.concealment(st, V.presumed(f, c), c)[0] < 50 else 0.0)
                 continue
             mel = _weapons(prof, "melee", False)
             if mel and feet_between(f, c) - (f.get("reach") or 5) <= (f.get("speed") or 30):
@@ -2509,7 +2646,7 @@ def _incoming(st: State, c: Token, sq: Square, memo: dict[Square, float]) -> flo
                 ac = (R.defenses(c)["ac"] or 10) + R.total(c, "ac")
                 best = p_hit(max(2, min(20, ac - b))) * dice_avg(w.get("damage"))
             rng = _weapons(prof, "ranged", False)
-            if rng and V.concealment(st, f, c)[0] < 50:
+            if rng and V.concealment(st, V.presumed(f, c), c)[0] < 50:
                 ev, _ = _attack_ev(st, f, c, rng, "ranged")
                 best = max(best, ev)
             total += best
@@ -2531,15 +2668,69 @@ def _aoo_risk(st: State, c: Token, provokers: list[str]) -> float:
     return risk
 
 
-def _ally_attack_avg(o: Token) -> float:
-    """An ally's average damage per round (its best melee or ranged attack), for valuing support."""
+def _ally_attacks(o: Token) -> tuple[int, float]:
+    """An ally's attacks per round and average damage per hit (its best melee or ranged routine), for
+    valuing support. A PC sheet lists no attacks: one attack for ~6 is assumed."""
     prof = o.get("profile") or {}
     ws = _weapons(prof, "melee", True) or _weapons(prof, "ranged", True)
-    return sum(dice_avg(w.get("damage")) for _n, w, _b in ws) or (4.0 if o["side"] == "pc" else 0.0)
+    if ws:
+        return len(ws), sum(dice_avg(w.get("damage")) for _n, w, _b in ws) / len(ws)
+    return (1, 6.0) if o["side"] == "pc" else (0, 0.0)
+
+
+def _ally_attack_avg(o: Token) -> float:
+    """An ally's average damage per round if every attack hit, for valuing support."""
+    n, avg = _ally_attacks(o)
+    return n * avg
+
+
+def _threat_of(st: State, f: Token, c: Token) -> tuple[float, float]:
+    """(chance to hit, average damage) of `f`'s attack of opportunity on `c`."""
+    if not (f.get("profile") or {}).get("attacks"):
+        return 0.5, 6.0
+    mel = _weapons(f.get("profile") or {}, "melee", False)
+    if not mel:
+        return 0.0, 0.0
+    _n, w, b = mel[0]
+    delta, ac, _no, _d, miss = attack_mods(st, f, c, "melee", False, False, w)
+    return p_hit(max(2, min(20, ac - (b + delta))), miss), dice_avg(w.get("damage"))
+
+
+def p_check(bonus: int, dc: int) -> float:
+    """The chance a d20 check with that bonus meets the DC."""
+    return max(0.0, min(1.0, (21 - (dc - bonus)) / 20))
+
+
+PLAN_KINDS = ("melee", "ranged", "spell", "buff", "heal", "defense", "retreat")
+
+
+def tactics_weights(st: State, c: Token) -> tuple[dict[str, float], str]:
+    """The creature's preference weights from its profile's `tactics` (personality), plus the morale
+    weights once morale breaks (HP at or below `hp` of its maximum, or `allies_down` of its side down).
+    Returns (weights by plan kind, a note for the report)."""
+    tac = (c.get("profile") or {}).get("tactics") or {}
+    weights = {k: float(v) for k, v in (tac.get("weights") or {}).items()}
+    notes = [", ".join(f"{k} {v:+g}" for k, v in weights.items())] if weights else []
+    mor = tac.get("morale") or {}
+    why = []
+    if mor.get("hp") is not None and c["hp"] <= mor["hp"] * (c.get("max_hp") or c["hp"]):
+        why.append(f"HP {c['hp']}/{c.get('max_hp')}")
+    side = [o for o in st["tokens"] if o is not c and not o.get("removed") and o["side"] == c["side"]]
+    if mor.get("allies_down") is not None and side:
+        down = sum(1 for o in side if o["hp"] <= 0 or is_dead(o))
+        if down / len(side) >= mor["allies_down"]:
+            why.append(f"{down}/{len(side)} of its side down")
+    if why and mor.get("weights"):
+        for k, v in mor["weights"].items():
+            weights[k] = weights.get(k, 0.0) + float(v)
+        notes.append(f"MORALE BREAKS ({'; '.join(why)}): " + ", ".join(f"{k} {v:+g}" for k, v in mor["weights"].items())
+                     + (f" — {mor['note']}" if mor.get("note") else ""))
+    return weights, "; ".join(notes)
 
 
 def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square, list[Square]],
-               provokers: Any, limit: int = 8) -> list[str]:
+               provokers: Any, two: dict[Square, int] | None = None, routes2: dict[Square, list[Square]] | None = None,
+               limit: int = 9) -> list[str]:
     """Ranked whole-turn plans for `c` (see the section comment)."""
     prof = c.get("profile") or {}
     start = (c["x"], c["y"])
@@ -2549,39 +2740,49 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
               and (o["side"] in FRIENDLY) == friendly]
     memo: dict[Square, float] = {}
     plans: list[tuple[float, str]] = []
+    weights, wnote = tactics_weights(st, c)
+    head: list[str] = []
+    if wnote:
+        head.append(f"  (its tactics: {wnote})")
 
-    def add(deal: float, support: float, sq: Square, provoked: list[str], text: str, extra: str = "") -> None:
+    def add(kind: str, deal: float, support: float, sq: Square, provoked: list[str], text: str,
+            extra: str = "", exposure: float = 1.0) -> None:
         risk_aoo = _aoo_risk(st, c, provoked)
-        risk_next = _incoming(st, c, sq, memo)
-        score = deal + support - risk_aoo - 0.5 * risk_next
+        risk_next = _incoming(st, c, sq, memo) * exposure
+        w = weights.get(kind, 0.0)
+        score = deal + support - risk_aoo - 0.5 * risk_next + w
         parts = [f"deals ~{deal:.1f}" if deal else "", f"support ~{support:.1f}" if support else "",
                  f"AoO risk ~{risk_aoo:.1f} ({', '.join(provoked)})" if provoked else "",
-                 f"takes ~{risk_next:.1f} next round there"]
+                 f"takes ~{risk_next:.1f} next round there", f"{kind} {w:+g}" if w else ""]
         plans.append((score, f"[{score:+.1f}] {text}" + (f" {extra}" if extra else "") + " — " + ", ".join(p for p in parts if p)))
 
     def where(sq: Square, feet: int) -> str:
-        return "stay, " if sq == start else ("5-ft step to " if feet == 5 and R.sq_dist(start, sq) == 1 else f"move {feet} ft to ") + ("" if sq == start else fmt_pos(*sq))
+        if sq == start:
+            return "stay, "
+        how = "5-ft step to " if feet == 5 and R.sq_dist(start, sq) == 1 else f"move {feet} ft to "
+        return how + fmt_pos(*sq) + ", "
 
+    # --- attacks ---
     for t in foes:
+        unseen = V.concealment(st, c, t)[0] >= 50
         for kind in ("melee", "ranged"):
             best: tuple[float, Any] | None = None
             for sq, feet in one.items():
                 step = sq == start or (feet == 5 and R.sq_dist(start, sq) == 1)
-                ws = _weapons(prof, kind, step) or []
+                ws = [x for x in _weapons(prof, kind, step) if ammo_left(c, x[0]) != 0]
                 if not ws:
                     break
                 with _placed(c, sq):
                     if kind == "melee" and not threatens(c, t):
-                        continue
-                    if kind == "ranged" and V.concealment(st, c, t)[0] >= 50 and not ws:
                         continue
                     ev, notes = _attack_ev(st, c, t, ws, kind)
                     flank_gift = 0.0
                     gifted = []
                     if kind == "melee":
                         for o in allies:
-                            if threatens(o, t) and flanks(c, o, t):
-                                gain = 0.1 * _ally_attack_avg(o)
+                            if can_act(o) and threatens(o, t) and flanks(c, o, t):
+                                n_att, avg = _ally_attacks(o)
+                                gain = n_att * 0.1 * avg
                                 osneak = (o.get("profile") or {}).get("sneak_attack")
                                 gain += 0.5 * dice_avg(osneak) if osneak else 0
                                 flank_gift += gain
@@ -2589,24 +2790,28 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                     shoot_threat = _threatened_by(st, c) if kind == "ranged" else []
                 provoked = sorted(set(([] if step else provokers(sq)) + shoot_threat))
                 full = step and len(ws) > 1
-                label_ = (f"{where(sq, feet)}{'' if sq == start else ', '}{'full attack' if full else 'attack'} {t['token']} "
-                          f"({'/'.join(n for n, _w, _b in ws[:3])}{'…' if len(ws) > 3 else ''}: hits on {', '.join(notes[:3])})")
+                label_ = (f"{where(sq, feet)}{'full attack' if full else 'attack'} {t['token']} "
+                          f"({'/'.join(n for n, _w, _b in ws[:3])}{'…' if len(ws) > 3 else ''}: hits on {', '.join(notes[:3])})"
+                          + (" [can't see it: guess its square]" if unseen else ""))
                 extra = f"gives {', '.join(gifted)} flanking" if gifted else ""
                 score = ev + flank_gift - _aoo_risk(st, c, provoked)
                 if best is None or score > best[0]:
                     best = (score, (ev, flank_gift, sq, provoked, label_, extra))
             if best:
                 ev, gift, sq, provoked, label_, extra = best[1]
-                add(ev, gift, sq, provoked, label_, extra)
+                add(kind, ev, gift, sq, provoked, label_, extra)
 
-    # spells and spell-like abilities with effect data
+    # --- spells, spell-like abilities and special abilities with effect data ---
     sp = _spent(c)
-    candidates = [start] + sorted((sq for sq in one if sq != start), key=lambda q: min((R.sq_dist(q, (f["x"], f["y"])) for f in foes), default=0))[:6]
-    castables: list[tuple[str, dict[str, Any], int | None]] = []
+    near_foes = sorted((sq for sq in one if sq != start),
+                       key=lambda q: min((R.sq_dist(q, (f["x"], f["y"])) for f in foes), default=0))[:6]
+    candidates = [start] + near_foes
+    # (label, effect, DC, spell level, concentration bonus, provokes)
+    castables: list[tuple[str, dict[str, Any], int | None, int, int, bool]] = []
     for sc in prof.get("spellcasting") or []:
         effects = {k.lower(): v for k, v in (sc.get("effects") or {}).items()}
         for lvl, names in (sc.get("spells") or {}).items():
-            for nm in names:
+            for nm in dict.fromkeys(names):
                 data = effects.get(nm.lower())
                 if not data:
                     continue
@@ -2616,40 +2821,84 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                 elif int(lvl) > 0:
                     left = sp["prepared"].get(sc["class"].lower(), []).count(nm.lower()) < [x.lower() for x in names].count(nm.lower())
                 if left:
-                    castables.append((f"cast {nm}", data, data.get("dc") or sc["dc_base"] + int(lvl)))
+                    castables.append((f"cast {nm}", data, data.get("dc") or sc["dc_base"] + int(lvl), int(lvl),
+                                      sc.get("concentration", sc.get("cl", 1)), True))
     for s_ in prof.get("sla") or []:
         if s_.get("effect") and (s_["per_day"] == "at will" or sp["sla"].get(s_["name"].lower(), 0) < s_["per_day"]):
-            castables.append((f"use {s_['name']}", s_["effect"], s_["effect"].get("dc") or s_.get("dc")))
+            castables.append((f"use {s_['name']}", s_["effect"], s_["effect"].get("dc") or s_.get("dc"), s_.get("level", 1),
+                              s_.get("concentration", s_.get("cl", 1) + 3), True))
     for nm, spec in (prof.get("abilities") or {}).items():
         used = sp.get("abilities", {}).get(nm, 0)
         if spec.get("uses") is None or used < spec["uses"]:
-            castables.append((f"ability {nm}", spec, spec.get("dc")))
-    for label_, data, dc in castables:
-        if data.get("allies"):   # a buff
+            castables.append((f"ability {nm}", spec, spec.get("dc"), 0, 0, False))   # Su/Ex: no AoO
+
+    def casting(q: Square, lvl: int, conc: int, provokes: bool) -> tuple[float, list[str], str]:
+        """Casting at q: (chance the effect happens, who it provokes, a note). Threatened, a spell
+        provokes and a hit can break it; casting defensively avoids the AoO but needs a check."""
+        if not provokes:
+            return 1.0, [], ""
+        with _placed(c, q):
+            threats = _threatened_by(st, c)
+            if not threats:
+                return 1.0, [], ""
+            keep_open = 1.0
+            for tok in threats:
+                f = token(st, tok)
+                ph, avg = _threat_of(st, f, c)
+                keep_open *= 1 - ph * (1 - p_check(conc, 10 + round(avg) + lvl))
+        keep_def = p_check(conc, 15 + 2 * lvl)
+        risk = _aoo_risk(st, c, threats)
+        if keep_def * 10 >= keep_open * 10 - risk:   # rough: is the AoO worth dodging?
+            return keep_def, [], f" (cast defensively: kept {keep_def:.0%})"
+        return keep_open, threats, f" (provokes; kept {keep_open:.0%})"
+
+    for label_, data, dc, lvl, conc, provokes in castables:
+        name = label_.split(" ", 1)[1]
+        if data.get("allies"):   # a buff: per round, for every ally it reaches
+            if data.get("maintain") and c.get("performing") == name:
+                head.append(f"  (keeps up {name} with a {data['maintain']} action alongside any plan below)")
+                continue
             reach = data.get("range")
-            hit = [o for o in allies if reach is None or feet_between(c, o) <= reach] + [c]
+            hit = [o for o in allies + [c] if can_act(o) and (reach is None or feet_between(c, o) <= reach)]
+            if data.get("target") == "one":
+                hit = sorted((o for o in hit if o is not c), key=lambda o: -_ally_attack_avg(o))[:1]
             bonus = data["allies"]
-            value = sum(0.05 * bonus.get("atk", 0) * 10 * (_ally_attack_avg(o) / 10) * 2 + 0.6 * bonus.get("dmg", 0)
-                        for o in hit if _ally_attack_avg(o))
-            keep = data.get("maintain") and c.get("performing") == label_.replace("ability ", "")
-            add(0, value, start, [], f"{label_} on {len(hit)} allies" + (" (keep it up: a free action)" if keep else ""))
+            per_round = 0.0
+            for o in hit:
+                n_att, avg = _ally_attacks(o)
+                per_round += n_att * (0.05 * bonus.get("atk", 0) * avg + 0.6 * bonus.get("dmg", 0))
+                per_round += 0.15 * bonus.get("ac", 0) * PC_GUESS + 0.1 * bonus.get("save", 0)
+            rounds = 2 if data.get("maintain") else min(3, data.get("buff_rounds", 1))
+            keep, prov, note = casting(start, lvl, conc, provokes)
+            if per_round > 0:
+                add("buff", 0, per_round * rounds * keep, start, prov,
+                    f"stay, {label_} on {len(hit)} {'ally' if len(hit) == 1 else 'allies'}{note}",
+                    f"(~{per_round:.1f}/round{', kept up for free after' if data.get('maintain') == 'free' else ''})")
             continue
         if data.get("heal"):
             amount = dice_avg(data["heal"])
+            wounded = [o for o in st["tokens"] if not o.get("removed") and not is_dead(o)   # the dying too
+                       and (o["side"] in FRIENDLY) == friendly and o["hp"] < o.get("max_hp", o["hp"])]
+
+            def heal_value(o: Token) -> float:
+                return min(amount, o.get("max_hp", 0) - o["hp"]) + (8.0 if o["hp"] < 0 else 0.0)   # dying: back on its feet
             if data.get("target") == "area":
-                hit = [o for o in allies + [c] if feet_between(c, o) <= int((data.get("area") or "burst 30").split()[1])]
-                value = sum(min(amount, o.get("max_hp", o["hp"]) - o["hp"]) for o in hit)
+                radius = int((data.get("area") or "burst 30").split()[1])
+                value = sum(heal_value(o) for o in wounded if feet_between(c, o) <= radius)
+                keep, prov, note = casting(start, lvl, conc, provokes)
                 if value > 0:
-                    add(0, value, start, [], f"{label_} (heals ~{amount:.0f} each, {len(hit)} in reach)")
-            else:
-                wounded = sorted((o for o in allies + [c] if o["hp"] < o.get("max_hp", o["hp"])), key=lambda o: o["hp"] - o.get("max_hp", 0))
-                for o in wounded[:2]:
-                    rng = data.get("range")
-                    reachable = [q for q in candidates if rng is None or 5 * min(R.sq_dist(q, cc) for cc in cells(o)) <= max(rng, 5)]
-                    if reachable:
-                        q = reachable[0]
-                        add(0, min(amount, o.get("max_hp", 0) - o["hp"]), q, [] if q == start else provokers(q),
-                            f"{where(q, one.get(q, 0))}{'' if q == start else ', '}{label_} on {o['token']} ({o['hp']}/{o.get('max_hp')} HP)")
+                    add("heal", 0, value * keep, start, prov, f"stay, {label_} (heals ~{amount:.0f} each){note}")
+                continue
+            for o in sorted(wounded, key=lambda o: -heal_value(o))[:2]:
+                rng = max(data.get("range") or 0, 5)
+                spots = [q for q in one if 5 * min(R.sq_dist(q, cc) for cc in cells(o)) <= rng]
+                if not spots:
+                    continue
+                q = min(spots, key=lambda q: (len([] if q == start else provokers(q)), _incoming(st, c, q, memo), one[q]))
+                keep, prov, note = casting(q, lvl, conc, provokes)
+                state_ = "dying" if o["hp"] < 0 else f"{o['hp']}/{o.get('max_hp')} HP"
+                add("heal", 0, heal_value(o) * keep, q, sorted(set(([] if q == start else provokers(q)) + prov)),
+                    f"{where(q, one.get(q, 0))}{label_} on {o['token']} ({state_}){note}")
             continue
         per_dmg = dice_avg(data.get("dmg")) if data.get("dmg") else 0.0
         cond_v = COND_VALUE.get(str(data.get("cond", "")).lower(), 2 if data.get("cond") else 0) * min(3, data.get("cond_rounds", 1))
@@ -2701,14 +2950,30 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                             best_s = (v, f"{label_} {aim} (hits {names})", q)
         if best_s and best_s[0] > 0:
             v, text, q = best_s
-            add(v, 0, q, [] if q == start else provokers(q), f"{where(q, one.get(q, 0))}{'' if q == start else ', '}{text}")
+            keep, prov, note = casting(q, lvl, conc, provokes)
+            add("spell", v * keep, 0, q, sorted(set(([] if q == start else provokers(q)) + prov)),
+                f"{where(q, one.get(q, 0))}{text}{note}")
 
-    # defense: total defense where it stands, and the safest square within one move
+    # --- defense: total defense here or on the safest square in one move (+4 AC: ~20% fewer hits) ---
+    add("defense", 0, 0, start, [], "stay, total defense", exposure=0.8)
     safest = min(one, key=lambda q: (_incoming(st, c, q, memo), one[q]))
     if safest != start:
-        add(0, 0, safest, provokers(safest), f"{where(safest, one[safest])}, total defense or ready (safest square in reach)")
+        add("defense", 0, 0, safest, provokers(safest), f"{where(safest, one[safest])}total defense (safest square in one move)",
+            exposure=0.8)
+    # --- retreat: withdraw (full-round double move; leaving the first square doesn't provoke) ---
+    if two and routes2 and foes:
+        def far(q: Square) -> tuple[float, int]:
+            return (_incoming(st, c, q, memo), -min(R.sq_dist(q, (f["x"], f["y"])) for f in foes))
+        dest = min(two, key=far)
+        if dest != start:
+            route = routes2.get(dest, [start, dest])
+            prov = path_provokers(st, c, route[1:], {}) if len(route) > 2 else []
+            with _placed(c, dest):
+                out_of_sight = all(V.concealment(st, V.presumed(f, c), c)[0] >= 50 for f in foes)
+            add("retreat", 0, 0, dest, prov, f"withdraw {two[dest]} ft to {fmt_pos(*dest)}"
+                + (" (out of their sight)" if out_of_sight else "") + " (full-round)")
     plans.sort(key=lambda p: -p[0])
-    return [f"  {i + 1}. {text}" for i, (_s, text) in enumerate(plans[:limit])]
+    return head + [f"  {i + 1}. {text}" for i, (_s, text) in enumerate(plans[:limit])]
 
 
 def tactical_options(st: State, c: Token, area: str | None = None, area_range: int | None = None,
@@ -2719,7 +2984,8 @@ def tactical_options(st: State, c: Token, area: str | None = None, area_range: i
     start = (c["x"], c["y"])
     routes: dict[Square, list[Square]] = {}
     one = reach_map(st, c, speed, routes)
-    two = reach_map(st, c, 2 * speed)
+    routes2: dict[Square, list[Square]] = {}
+    two = reach_map(st, c, 2 * speed, routes2)
     threat_memo: dict[Square, list[str]] = {}
 
     def provokers(sq: Square) -> list[str]:
@@ -2729,9 +2995,10 @@ def tactical_options(st: State, c: Token, area: str | None = None, area_range: i
            f"({len(one)} squares in one move, {len(two)} in a double move), reach {c.get('reach', 5)} ft. "
            + (f"Threatened here by {', '.join(here_threat)}: moving away provokes (a 5-foot step doesn't)."
               if here_threat else "Not threatened here.")]
-    out.append("Turn plans, ranked by rough expected value [deals + support − AoO risk − ½ of what it takes next round]; "
-               "PCs without listed attacks count as ~3 a round; pick by its nature and morale, not just the top line:")
-    out += turn_plans(st, c, one, routes, provokers) or ["  (no attack, spell or ability reaches an enemy this turn)"]
+    out.append("Turn plans, ranked by rough expected value [deals + support − AoO risk − ½ of what it takes next round "
+               "+ its tactics weights]; PCs without listed attacks count as ~3 a round; pick by its nature and morale, "
+               "not just the top line:")
+    out += turn_plans(st, c, one, routes, provokers, two, routes2) or ["  (no attack, spell or ability reaches an enemy this turn)"]
     out.append("Details:")
     attacks = prof.get("attacks") or {}
     melee = [(n, w) for n, w in attacks.items() if w.get("type", "melee") == "melee"]
@@ -2807,8 +3074,8 @@ def tactical_options(st: State, c: Token, area: str | None = None, area_range: i
         with _placed(c, sq):
             if any(threatens(o, c) for o in _foes(st, c)):
                 continue
-            hidden = all(V.hidden_from(st, c, o) for o in _foes(st, c))
-            unseen = all(V.concealment(st, o, c)[0] >= 50 for o in _foes(st, c))
+            hidden = all(V.hidden_from(st, c, V.presumed(o, c)) for o in _foes(st, c))
+            unseen = all(V.concealment(st, V.presumed(o, c), c)[0] >= 50 for o in _foes(st, c))
             covered = all(R.cover(st, o, c) for o in _foes(st, c))
         if hidden or covered:
             safe.append((0 if unseen else 1 if covered else 2, feet, fmt_pos(*sq),
@@ -3579,6 +3846,7 @@ def plan_encounter(campaign: str, enc: dict[str, Any], inits: dict[str, int] | N
         extra += ["--hp", str(c["hp"])] if c.get("hp") else []
         extra += ["--cr", c["cr"]] if c.get("cr") else []
         extra += ["--main-dm"] if c.get("dm_plays") else []
+        extra += ["--tactics", json.dumps(c["tactics"])] if c.get("tactics") else []
         for k in range(n):
             tok = f"{c['token']}{k + 1}" if n > 1 or not c["token"][-1:].isdigit() else c["token"]
             if n > 1 and len(c["token"]) != 1:
@@ -4049,6 +4317,7 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--dr", type=int, help="hardness or damage reduction")
     a.add_argument("--con", type=int, help="Constitution score (PCs/allies): dead at -Con HP")
     a.add_argument("--main-dm", action="store_true", help="the main DM plays its turns (a boss, a story NPC), not the combat runner")
+    a.add_argument("--tactics", help='JSON: preference weights and morale for the turn plans, e.g. \'{"weights": {"ranged": 2}}\'')
     at = sub.add_parser("attack"); at.add_argument("attacker"); at.add_argument("target")
     at.add_argument("--roll"); at.add_argument("--dmg"); at.add_argument("--crit", type=int, default=20)
     at.add_argument("--mult", type=int, default=2); at.add_argument("--total", type=int)
@@ -4063,6 +4332,8 @@ def main(argv: list[str] | None = None) -> int:
     at.add_argument("--range-inc", type=int, help="with --roll: range increment in feet")
     lg = sub.add_parser("log"); lg.add_argument("text")
     ak = sub.add_parser("ask"); ak.add_argument("question", nargs="?"); ak.add_argument("--clear", action="store_true")
+    dg = sub.add_parser("damage"); dg.add_argument("token"); dg.add_argument("amount", type=int)
+    dg.add_argument("--nonlethal", action="store_true")
     ev = sub.add_parser("events"); ev.add_argument("--all", action="store_true")
     s = sub.add_parser("show"); s.add_argument("--dm", action="store_true")
     sub.add_parser("next")
@@ -4176,7 +4447,7 @@ def main(argv: list[str] | None = None) -> int:
                 "threat": cmd_threat, "hp": cmd_hp, "cond": cmd_cond, "init": cmd_init,
                 "reveal": cmd_flag, "hide": cmd_flag, "remove": cmd_flag, "end": cmd_end,
                 "image": cmd_image, "attack": cmd_attack, "log": cmd_log, "events": cmd_events,
-                "ask": cmd_ask, "stabilize": cmd_stabilize, "save": cmd_save, "area": cmd_area,
+                "ask": cmd_ask, "damage": cmd_damage, "stabilize": cmd_stabilize, "save": cmd_save, "area": cmd_area,
                 "order": cmd_order, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
                 "provoke": cmd_provoke, "endturn": cmd_endturn, "maneuver": cmd_maneuver,
                 "light": cmd_light, "sight": cmd_sight, "act": cmd_act, "surprise": cmd_surprise, "ability": cmd_ability,

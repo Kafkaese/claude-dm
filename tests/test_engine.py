@@ -297,3 +297,42 @@ class Runner(CampaignCase):
         self.assertIn("Grim and gritty", sp)
         self.assertIn("spiders", sp)
         self.assertNotIn("not this", sp)
+
+
+class Skipping(CampaignCase):
+    """Turns without decisions never reach the DM; the PC's turn line comes from the script."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.new(blank="12x6")
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=20)
+        self.add("a1", "Ally", "C2", dict(GOBLIN, con=12), side="ally", init=15)
+        self.add("g1", "Gob", "J2", GOBLIN, init=10)
+        self.asked: list[str] = []
+        self.engine = E.Engine(lambda ev: None)
+
+    def send(self, prompt: str) -> bool:
+        self.asked.append(prompt.split("pointer is on ")[1].split()[0])
+        return True
+
+    def test_dying_and_dead_allies_get_no_step(self) -> None:
+        self.run_cmd("hp", "a1", "-14")                       # dying (-2), above -Con
+        E.run_combat_step(self.engine, self.slug, self.send)   # onto Corin
+        E.run_combat_step(self.engine, self.slug, self.send)   # a1 (skipped, rolls to stabilize), g1
+        self.assertEqual(self.asked, ["g1"])
+        self.assertTrue(any("a1" in e["text"] or "Ally" in e["text"] for e in self.state()["events"]))
+        self.run_cmd("hp", "a1", "-20")                       # dead
+        import combat
+        self.assertFalse(combat.in_fight(self.tok("a1")))
+
+    def test_turn_line_and_snapshot(self) -> None:
+        E.run_combat_step(self.engine, self.slug, self.send)   # Corin's turn
+        line = E.turn_line(self.state())
+        self.assertIn("Corin's turn (a NEW turn", line)
+        self.assertIn("standard", line)
+        self.assertIn("Now: round 1", E.with_recap("I attack", "", [], self.state()))
+        snap = E.combat_snapshot(self.slug)
+        self.assertEqual(snap["pc_actions_left"]["main"], ["standard", "move"])
+        self.run_cmd("act", "C", "standard", "total defense")
+        snap = E.combat_snapshot(self.slug)
+        self.assertEqual(snap["pc_actions_left"]["main"], ["move"])

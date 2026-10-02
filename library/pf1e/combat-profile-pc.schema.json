@@ -194,6 +194,11 @@
       },
       "description": "Feats, at least the ones the script uses: Combat Reflexes, Blind-Fight, Precise Shot, Improved <maneuver>. Listing all is fine; [] if none."
     },
+    "ammo": {
+      "type": "object",
+      "additionalProperties": {"type": "integer", "minimum": 0},
+      "description": "Tracked ammunition by attack name, e.g. {\"shortbow\": 20, \"javelin\": 3}. The script counts it on attacks with that name. Update after the fight (recovered arrows, picked-up javelins)."
+    },
     "sneak_attack": {
       "type": "string",
       "pattern": "^\\d+d6$",

@@ -65,13 +65,17 @@ WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude 
     - Never name a lead, flaw, culprit or connection the character hasn't found, not even as an open question: "you couldn't tell whether the circle was drawn correctly", never "the ritual circle's flaw".
     - No loaded framing that confirms a hidden truth ("whether it was anything but an accident", "the real culprit"). A failed investigation reports what was checked and what it showed, not that something was missed.
 - COMBAT (details: combat.md; the combat tools' descriptions have the options):
-  - The script does all the rule math (modifiers, AoOs, maneuvers, light and vision, durations, dying). Never compute modifiers, count squares or roll attacks yourself. NPCs: combat_attack with `with` (a profile attack); PCs: the player's rolls (combat_attack with `total` and `damage`).
+  - The script does all the rule math (modifiers, AoOs, maneuvers, light and vision, durations, dying). Never compute modifiers, count squares or roll attacks yourself. NPCs: combat_attack with `with` (a profile attack); PCs: the player's rolls (combat_attack with `total`, plus `damage` if they gave it; a hit without it waits for their damage: ask, then combat_damage).
+  - THE PLAYER ROLLS ALL OF THE PC'S DICE: attacks, damage, healing (a cure spell's 1d8+N), saves, checks. Never call dice_roll for the PC and never make up a PC's number, also not after a tool error: ask for it.
+  - Light and vision follow the table's own house rule (library/pf1e/house-rules/vision-and-light.md: e.g. not seeing an attacker in darkness denies the Dex bonus). The script implements it on purpose: don't "correct" it against the Core Rulebook.
   - Every NPC spell or SLA goes through combat_cast (sla=true for SLAs), with its effect in the same call (a profile with effect data for that spell fills it in). Special abilities (bardic performance, channel energy, breath weapons) go through combat_ability. Sneak attack is added automatically. Conditions go in the same call (cond, cond_rounds): they land on failed saves, and a PC's after their roll.
   - The player's battle map, initiative and log only appear once you engage combat in this conversation. When you resume a saved fight (after /start-session), call combat_info what=show first: that brings the fight back on screen.
   - YOU ARE IN THE INTERFACE. When a combat tool says the interface runs the turns, that's this interface: never tell the player to run anything, just follow the tool's advice.
   - Setup: a prepared encounter (combat_encounters action=list) is ONE combat_setup call once the player's initiative is in. Otherwise: every combatant needs a valid combat profile (add one from the stat block first; a PC's sheet must pass the PC schema, so ask the player for missing values). Decide the lighting as part of the encounter. PC tokens use the first letter of the name (Corin → C). After setup, narrate the opening, give the initiative order and stop: the interface starts the turns right after your reply (an enemy that's first plays at once). If the player declares actions before their turn comes, tell them who acts first; their turn follows.
   - THE COMBAT RUNNER plays most NPC turns: a separate, lean process the interface hands each enemy's step to (it saves most of the tokens). You then get "[Interface recap: …]" in front of the player's next message: what it narrated and the combat log. Treat that as what happened; the player saw it. Creatures you play yourself (a boss, a story NPC: `dm_plays` in the encounter, or combat_add main_dm) still come to you as combat steps.
   - THE INTERFACE RUNS THE TURN ORDER. Never run `next` (it's refused). A bracketed "[Combat step …]" message names ONE actor, what it can see, and its tactical options (squares, the roll it needs there, what provokes; combat_options with area for area effects): resolve exactly that actor in ONE combat_batch call, narrate only that actor, and stop. Play it by its nature and what it sees. A hidden actor's step: reply "…" unless it gets revealed.
+  - SUBMIT WHAT THE PLAYER DECLARED, EXACTLY: never judge yourself whether an action is legal or already used up, the script does. The "Now: round N, …'s turn. Actions left …" line in the bracket is the truth about whose turn it is and what's left; earlier turns don't count. If a tool REFUSES the declared action (e.g. a 5-foot step that costs 10 ft), tell the player plainly why and ask what they do instead. Never substitute another action for them (no full move instead of a refused step).
+  - Corrections go through combat_undo (the player's last command) or the specific command (combat_hp, combat_condition). NEVER edit the combat state files or the scripts yourself: if you think the script is wrong, say so out of character and go on with its result, or ask the player how to rule.
   - Every action is charged to the actor's turn, and the tool results say what's left; actions without their own tool (draw a weapon, stand up, drink a potion) are combat_act. On the PC's turn, resolve what the player declares and say which actions remain, from that report. If the player corrects a roll they already gave (a forgotten modifier), call combat_undo and enter the corrected one: never `override` for that. `override` is only for a feat or ability that changes the rules (Spring Attack, Quick Draw). If the player ends the turn in other words or together with their actions, call combat_endturn.
   - When a tool result sets a question (an AoO, a save, a stabilization check) or the player must decide something mid-round, ask them (combat_ask for your own questions). A dying PC rolls their own stabilization checks; never play the fight forward without the player.
   - The interface shows the map, initiative and combat log with all the numbers. Narrate EVERY creature's turn in its own line or lines, matching the log. Never merge turns, skip a creature, or contradict a number.
@@ -716,11 +720,19 @@ def combat_snapshot(camp: str | None, render_png: bool = False) -> dict[str, Any
     # silently within the step, and naming them would give them away.
     nxt = _first_visible_after(st, st.get("turn"))
     upcoming = {"name": nxt["name"], "token": nxt["token"], "side": nxt["side"]} if nxt else None
+    pc_left = None   # the PC's unused actions, so End turn can ask first
+    live = next((c for c in st["tokens"] if c["token"] == st.get("turn")), None)
+    if live and live["side"] == "pc" and cm.can_act(live):
+        try:
+            unused = [k for k in ("standard", "move") if not cm.can_take(st, live, k)]
+            pc_left = {"text": cm.actions_left(st, live), "main": unused}
+        except Exception:
+            pc_left = None
     return {
         "active": True, "round": st.get("round", 1), "turn": turn, "initiative": rows,
         # whose turn it is, for the End turn / Next button ("pc" = the player acts now)
         "turn_side": cur["side"] if cur else None, "turn_token": cur["token"] if cur else None,
-        "upcoming": upcoming,
+        "upcoming": upcoming, "pc_actions_left": pc_left,
         "awaiting": st.get("awaiting"),
         "events": [{"round": e.get("round"), "text": e.get("text", "")} for e in st.get("events", [])],
         "terrain": terrain,
@@ -839,6 +851,22 @@ def step_due(camp: str | None, text: str) -> bool:
         return any(t["side"] == "pc" for t in st.get("tokens", []))
     pc_up = by_tok.get(turn, {}).get("side") == "pc"
     return pc_up and (st.get("end_turn") == turn or ends_turn(text))
+
+
+def log_briefing(camp: str, st: dict[str, Any], c: dict[str, Any]) -> None:
+    """Keep each step's DM briefing (tactical options, turn plans, sight) in the campaign's DM-only
+    combat folder, so a decision can be checked afterwards (dm/combat/briefings.jsonl; a new fight
+    starts the file over)."""
+    path = REPO / "campaigns" / camp / "dm" / "combat" / "briefings.jsonl"
+    try:
+        lines = path.read_text().splitlines() if path.exists() else []
+        if lines and json.loads(lines[0]).get("started") != st.get("started"):
+            lines = []
+        lines.append(json.dumps({"started": st.get("started"), "round": st.get("round"), "token": c["token"],
+                                 "name": c["name"], "briefing": c.get("_ctx", ""), "sight": c.get("_sight", "")}))
+        path.write_text("\n".join(lines) + "\n")
+    except (OSError, ValueError):   # never block a step on the log
+        pass
 
 
 def _run_next(camp: str) -> str:
@@ -981,7 +1009,12 @@ def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool], runn
             return "pc" if acted else "pc-quiet"
         now = combat_state(camp) or st
         live = next((o for o in now.get("tokens", []) if o["token"] == c["token"]), c)
+        if not cm.can_act(live):   # dying, helpless, stunned…: the script already rolled what there is to roll
+            if runner is not None:
+                runner.note(c["name"], "(can't act this turn)", by_runner=False)
+            continue
         c = dict(c, _sight=_sight(camp, now, c["token"]), _ctx=_step_context(now, live))
+        log_briefing(camp, now, c)
         use_runner = runner is not None and not live.get("main_dm")
         eng = runner.engine if use_runner and runner else engine
         say: Callable[[str], bool] = (lambda p: runner.send(runner.frame(p, camp, now))) if use_runner and runner else send
@@ -1020,7 +1053,7 @@ RUNNER_PROMPT = """You are the combat runner of a tabletop DM interface (Pathfin
 
 Every message is a combat step for ONE creature, with a DM-only briefing: its attacks, positions, tactical options (squares, the d20 roll it needs, what provokes) and what it can see.
 1. Decide what this creature does, by its nature, its knowledge and the encounter's tactics and morale (not by what you know as the DM). A cowardly creature may retreat; morale breaks per the notes.
-2. Resolve it in ONE combat_batch call with the dm tools (move, attack, cast/sla through combat_cast with the effect in the same call: dmg/save, heal dice for cure spells, cond + cond_rounds for a condition on a failed save, unless the profile's effect data fills it in; special abilities like bardic performance or channel energy through combat_ability; maneuvers, conditions). The turn plans in the briefing weigh damage, support and risk: use the spells, buffs and heals they list, but play the creature's nature over the top number. The tools do all the rule math. Never run combat_next or combat_end; act only for this creature.
+2. Resolve it in ONE combat_batch call with the dm tools (move, attack, cast/sla through combat_cast with the effect in the same call: dmg/save, heal dice for cure spells, cond + cond_rounds for a condition on a failed save, unless the profile's effect data fills it in; special abilities like bardic performance or channel energy through combat_ability; maneuvers, conditions). The turn plans in the briefing weigh damage, support and risk, including its tactics weights and broken morale: use the spells, buffs, heals, defense and retreats they list, but play the creature's nature over the top number. The tools roll and apply every effect themselves: never fix HP afterwards with dice_roll and combat_hp. If a call fails, fix that call; if the effect really wasn't applied, say so in one line instead of patching it. The tools do all the rule math. Never run combat_next or combat_end; act only for this creature.
 3. Then narrate only this creature's turn, in 1-3 lines, and stop.
 
 Narration rules (strict):
@@ -1120,14 +1153,33 @@ class CombatRunner:
         self.engine.stop()
 
 
-def with_recap(text: str, recap: str, log_lines: list[str]) -> str:
+def turn_line(st: dict[str, Any] | None) -> str:
+    """Whose turn it is and what that PC has left, from the script: the DM's action bookkeeping
+    comes from here, never from its memory of earlier turns."""
+    if not st or st.get("turn") is None:
+        return ""
+    c = next((t for t in st.get("tokens", []) if t["token"] == st["turn"]), None)
+    if not c or c["side"] != "pc":
+        return ""
+    try:
+        left = _combat_module().actions_left(st, c)
+    except Exception:   # never block a message on the helper
+        return ""
+    untouched = not any((c.get("turn_actions") or {}).values()) and not c.get("moved") and not c.get("stepped")
+    fresh = " (a NEW turn: what it did on earlier turns doesn't count)" if untouched else ""
+    return f"Now: round {st.get('round')}, {c['name']}'s turn{fresh}. Actions left (from the script): {left}."
+
+
+def with_recap(text: str, recap: str, log_lines: list[str], st: dict[str, Any] | None = None) -> str:
     """The player's message for the main DM, with what happened in combat since its last reply in
-    front (the chat shows only the player's text, live and in reloaded history)."""
-    if not recap and not log_lines:
+    front (the chat shows only the player's text, live and in reloaded history), and whose turn it is."""
+    now = turn_line(st)
+    if not recap and not log_lines and not now:
         return text
     body = (f"While you were waiting, the combat runner played these turns (the player saw this narration):\n{recap}\n"
             if recap else "")
     if log_lines:
-        body += "Combat log since your last reply:\n" + "\n".join(log_lines[-20:])
+        body += "Combat log since your last reply:\n" + "\n".join(log_lines[-20:]) + "\n"
+    body += now
     return f"{RECAP_PREFIX}: {body.strip()}]\n\n{text}"
 

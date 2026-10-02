@@ -355,6 +355,9 @@ function updateTurnButton() {
 turnBtn.addEventListener("click", () => {
   const sig = turnSignal();
   if (!sig || busy) return;
+  const left = combatState.pc_actions_left;   // ask before ending a turn with a standard or move action unused
+  if (sig === "end turn" && left && left.main && left.main.length
+      && !confirm(`You still have actions left: ${left.text}.\n\nEnd your turn anyway?`)) return;
   clearTimeout(autoTimer);
   send(sig);
 });
