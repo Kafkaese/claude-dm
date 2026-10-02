@@ -25,6 +25,7 @@
 | **SR** 15 | `"sr": 15` |
 | **fast healing** 2 / **regeneration** 5 (fire, acid) | `"fast_healing": 2` / `"regeneration": {"amount": 5, "stopped_by": "fire, acid"}` |
 | **Defensive Abilities** uncanny dodge | `"uncanny_dodge": true` |
+| **Defensive Abilities** improved uncanny dodge | `"improved_uncanny_dodge": true` (can't be flanked) |
 | Other defensive abilities (ferocity, evasion, …) | `"special": ["ferocity", "evasion"]` |
 | **Speed** 30 ft., fly 60 ft. (good) | `"speed": 30, "speeds": {"fly": 60, "fly_maneuverability": "good"}` |
 | **Space** 10 ft.; **Reach** 10 ft. | `"size": 2, "reach": 10` (5 ft. → 1, 10 ft. → 2, 15 ft. → 3, 20 ft. → 4; Small and Tiny creatures → 1) |
@@ -87,6 +88,29 @@ Each spellcasting class or source becomes one entry in `spellcasting`:
 
 Where the stat block lists the spell's level, put it in `level`, because the concentration DC depends on it.
 
+**Effect data** lets the script resolve a spell in one call and lets the tactical options weigh it. Add it for every spell or SLA that deals damage, heals, buffs or imposes a condition in a fight. Work out the numbers at this creature's caster level, from the spell's text in the library:
+
+| Spell | Effect |
+|---|---|
+| *burning hands* (CL 1) | `"effects": {"burning hands": {"target": "area", "area": "cone 15", "save": "ref", "half": true, "dmg": "1d4"}}` in the spellcasting entry |
+| *magic missile* (CL 3) | `"magic missile": {"target": "one", "range": 130, "dmg": "2d4+2"}` |
+| *ray of frost* (a Small caster, BAB +0, Dex 16) | `"ray of frost": {"target": "one", "range": 25, "touch": true, "attack": 4, "dmg": "1d3"}`. `attack` is the touch attack bonus (ranged: BAB + Dex + size; melee: BAB + Str + size); the script rolls it against touch AC before the effect lands |
+| *sleep* | `"sleep": {"target": "area", "area": "burst 10", "center": "point", "range": 110, "save": "will", "cond": "asleep", "cond_rounds": 10}` |
+| *cure light wounds* (CL 3) | `"cure light wounds": {"target": "one", "range": 0, "heal": "1d8+3"}` |
+| an SLA | the same object as `"effect"` on the `sla` entry |
+
+`dc` is optional (the script uses `dc_base` + level, or the SLA's `dc`).
+
+## Sneak attack and special abilities
+| Stat block | Profile |
+|---|---|
+| **Special Attacks** sneak attack +2d6 | `"sneak_attack": "2d6"`. The script adds it when the target is flanked or denied its Dex (not against concealment; ranged only within 30 ft) |
+| bardic performance 8 rounds/day (inspire courage +1) | `"abilities": {"inspire courage": {"action": "standard", "maintain": "free", "uses": 8, "kind": "buff", "allies": {"atk": 1, "dmg": 1}, "buff": "inspired (courage)", "buff_rounds": 1}}`. Inspire courage's +1 is a competence bonus on attack and weapon damage rolls, plus +1 on saves against charm and fear: note that part in `notes` |
+| channel positive energy 4/day (1d6, DC 12) | `"channel": {"action": "standard", "uses": 4, "kind": "heal", "target": "area", "area": "burst 30", "center": "self", "heal": "1d6", "who": "allies"}` |
+| breath weapon (15-ft. cone, 2d6 fire, Ref DC 13 half, usable every 1d4 rounds) | `"breath": {"action": "standard", "kind": "damage", "target": "area", "area": "cone 15", "save": "ref", "dc": 13, "half": true, "dmg": "2d6", "notes": "again after 1d4 rounds"}` |
+
+`combat.py ability TOKEN "NAME"` uses one (`--target`, `--at` or `--toward` as the effect needs).
+
 ## Player characters
 **Player characters** use their own schema, `combat-profile-pc.schema.json`, in the character sheet's block (template: `library/pf1e/character-sheet.md`). It requires only what the script uses for a PC:
 - `init` (the modifier: the player rolls initiative, the script breaks ties with it)
@@ -97,7 +121,7 @@ Where the stat block lists the spell's level, put it in `level`, because the con
 - `senses` (`{}` = normal vision) and `perception`
 - `feats` (Combat Reflexes, Blind-Fight, Precise Shot, Improved maneuvers; `[]` if none)
 
-Optional: `max_dex`, `reach`, `uncanny_dodge`, `cmd_vs`, DR, resistances and immunities. Attacks, spells, saves and CMB aren't needed, because the player rolls them. `combat.py add` refuses a PC without a passing block. The DM fills it from the sheet and asks the player for anything missing.
+Optional: `max_dex`, `reach`, `uncanny_dodge`, `sneak_attack` (the script reminds when it applies), `cmd_vs`, DR, resistances and immunities. Attacks, spells, saves and CMB aren't needed, because the player rolls them. `combat.py add` refuses a PC without a passing block. The DM fills it from the sheet and asks the player for anything missing.
 
 ## A complete example
 ```combat-profile

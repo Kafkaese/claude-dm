@@ -28,9 +28,10 @@ Every action reports what's left. --override: a feat or ability changes it (Spri
   undo                            take back the last command if it was the player's input (e.g. a roll
                                   they correct: forgot flanking), then enter it again. NPC rolls stand
   options TOKEN [--target T] [--area "burst 20" --range 100]
-                                  tactical options (DM only): squares that threaten each target and the d20
-                                  roll needed there, what provokes, charge lanes, ranged spots, retreat
-                                  squares, the best area placements
+                                  tactical options (DM only): ranked turn plans with rough expected values
+                                  (damage incl. sneak attack, spells and abilities with effect data,
+                                  support, AoO risk, exposure), then per target the squares that threaten
+                                  it and the d20 roll needed there, charge lanes, ranged spots, retreats
   surprise on|off                 the surprise round: one standard or move action each
 Prepared encounters (dm/combat/encounters/<name>.md, a ```encounter block; library/general/encounter.schema.json)
   encounter list | check [NAME …] list them, or validate (map, profiles, squares, lights) without creating anything
@@ -90,7 +91,13 @@ Play
                                   level), concentration after damage, reports the save DC. The log only
                                   says "casts a spell" (identifying it is a Spellcraft matter)
   sla TOKEN "NAME" [--defensive] [--no-provoke]
-                                  the same for a spell-like ability (uses per day)
+                                  the same for a spell-like ability (uses per day). Both take the
+                                  effect (area, save, damage, healing, condition) from the profile's
+                                  spellcasting "effects" / the SLA's "effect" when it's there
+  ability TOKEN "NAME" [--target T] [--at SQ] [--toward SQ]
+                                  a special ability from the profile's "abilities" (bardic performance,
+                                  channel energy, breath weapon): spends a use, applies the buff, healing,
+                                  damage or condition; a performance is kept up with the same command
   spells TOKEN                    remaining slots, prepared spells and SLA uses (DM view)
   provoke TOKEN [--reason "drinking a potion"]
                                   resolve the AoOs a creature provokes right now (e.g. a PC casting)
@@ -753,6 +760,43 @@ def flanking(st: State, a: Token, t: Token) -> bool:
                for o in st["tokens"] if (o["side"] in FRIENDLY) == (a["side"] in FRIENDLY))
 
 
+def denied_dex(st: State, a: Token, t: Token) -> str | None:
+    """Why `t` is denied its Dex bonus against `a` (flat-footed, a condition, can't see the attacker), or None."""
+    prof = t.get("profile") or {}
+    if R.flag(t, "flatfooted"):
+        return ", ".join(R.condition_names(t, ("flatfooted",))) or "flat-footed"
+    if not t.get("acted") and not prof.get("uncanny_dodge"):
+        return "flat-footed (hasn't acted yet)"
+    if R.flag(t, "dex_zero"):
+        return "helpless"
+    if (V.concealment(st, t, a)[0] >= 50 or R.has(a, "invisible")) and not prof.get("uncanny_dodge"):
+        return "can't see the attacker"
+    return None
+
+
+def sneak_attack(st: State, a: Token, t: Token, kind: str, miss: int) -> tuple[str | None, str | None]:
+    """The sneak attack dice that apply to this hit, or (None, why not). Rules: the target is denied its
+    Dex bonus or flanked by the attacker (melee); no concealment at all; ranged only within 30 ft;
+    creatures immune to precision damage take none (library/pf1e/rules/combat-abilities.md)."""
+    dice = (a.get("profile") or {}).get("sneak_attack")
+    if not dice:
+        return None, None
+    tp = t.get("profile") or {}
+    immune = " ".join(str(x).lower() for x in (tp.get("immune") or []))
+    if "precision" in immune or "sneak" in immune:
+        return None, "the target is immune to precision damage"
+    if miss:
+        return None, f"the target has concealment ({miss}%)"
+    if kind == "ranged" and feet_between(a, t) > 30:
+        return None, "ranged, and more than 30 ft away"
+    if denied_dex(st, a, t):
+        return dice, None
+    can_flank = not tp.get("improved_uncanny_dodge") and "flanking" not in immune
+    if kind == "melee" and can_flank and flanking(st, a, t):
+        return dice, None
+    return None, "the target is neither flanked nor denied its Dex"
+
+
 def attack_mods(st: State, a: Token, t: Token, kind: str, touch: bool = False, charge: bool = False, weapon: dict[str, Any] | None = None) -> tuple[int, int, list[str], list[str], int]:
     """Situational modifiers for one attack. Returns (attacker delta, target AC, log notes,
     DM notes, miss chance %). kind is 'melee' or 'ranged'."""
@@ -975,6 +1019,15 @@ def _attack_once(args: Args, st: State, a: Token, t: Token, name: str | None, bo
         dmg = args.damage
     else:
         raise CombatError("give --dmg (NPC) or --damage (PC) for the damage")
+    sneak, why_not = sneak_attack(st, a, t, kind, miss)
+    if sneak and dmg_expr:   # precision damage: rolled once, never multiplied on a crit
+        sd, sdetail, _ = _roll(sneak)
+        dmg += sd
+        dm.append(f"sneak attack {sneak} → {sdetail} = {sd}")
+    elif sneak:
+        dm.append(f"reminder: sneak attack applies (+{sneak}); check the player's damage includes it")
+    elif why_not and (a.get("profile") or {}).get("sneak_attack"):
+        dm.append(f"no sneak attack: {why_not}")
     nonlethal = bool(args.nonlethal)
     if dmg < 1:   # CRB pg. 179: "a hit still deals 1 point of nonlethal damage" (on the total, crits included)
         immune = any("nonlethal" in str(x).lower() for x in (t.get("profile") or {}).get("immune") or [])
@@ -1167,10 +1220,10 @@ def cmd_endturn(args: Args, st: State) -> str:
     return f"{c['name']}'s turn is over; the interface plays the next step"
 
 
-ACTOR_ARG = {"maneuver": "attacker", "attack": "attacker", "move": "token", "cast": "token", "sla": "token", "provoke": "token", "area": "frm"}
+ACTOR_ARG = {"ability": "token", "maneuver": "attacker", "attack": "attacker", "move": "token", "cast": "token", "sla": "token", "provoke": "token", "area": "frm"}
 
 
-UNDOABLE = ("attack", "maneuver", "move", "save", "stabilize", "act", "provoke", "endturn")
+UNDOABLE = ("attack", "maneuver", "move", "save", "stabilize", "act", "provoke", "endturn", "ability")
 READ_ONLY = ("show", "dist", "threat", "events", "image", "sight", "actions", "options", "spells", "ask")
 
 
@@ -1308,6 +1361,9 @@ def cmd_next(args: Args, st: State) -> str:
     c["moved"] = 0
     c.pop("stepped", None)
     c.pop("overrun_through", None)
+    if c.get("performing") and c.get("performed_round", 0) < st["round"] - 1:   # not kept up: it ended
+        c.pop("performing", None)
+        out.append(f"  {c['token']}'s performance has ended (not maintained)")
     for k in ("turn_actions", "move_mode", "mode_feet", "chain_feet", "chain_moves", "move_closed", "turn_path"):
         c.pop(k, None)
     if c.get("immediate_used"):   # an immediate action since its last turn took this turn's swift
@@ -1511,6 +1567,154 @@ def _cast_common(st: State, c: Token, name: str, level: int, conc_bonus: int, ar
     return out, True
 
 
+def apply_effect_data(args: Args, data: dict[str, Any] | None, c: Token, st: State) -> None:
+    """Fill in a spell's or ability's effect from the profile (area, save, DC, damage, healing,
+    condition), for whatever the command didn't give itself. Checks the aim and the range.
+
+    Raises:
+        CombatError: if it needs an aim (--target, --toward, --at) or the target is out of range.
+    """
+    if not data:
+        return
+    if data.get("target") == "area" and not args.area:
+        args.area = data.get("area")
+        if data.get("center") == "self" and not args.at:
+            args.at = fmt_pos(c["x"], c["y"])
+        shape = (args.area or "").split()[0]
+        if shape in ("cone", "line") and not args.toward:
+            raise CombatError(f"aim the {args.area}: --toward SQUARE (`options {c['token']} --area \"{args.area}\"` "
+                              f"shows the best placements)")
+        if shape == "burst" and not args.at:
+            raise CombatError(f"place the {args.area}: --at SQUARE")
+    if data.get("target") == "one" and not args.target:
+        raise CombatError("this targets one creature: --target TOKEN")
+    rng = data.get("range")
+    if rng is not None and args.target:
+        d = feet_between(c, token(st, args.target))
+        reach = max(rng, 5) if rng == 0 else rng   # touch: adjacent
+        if d > reach:
+            raise CombatError(f"{args.target} is {d} ft away, out of range ({'touch' if rng == 0 else f'{rng} ft'})")
+    for k in ("save", "dmg", "heal", "cond", "cond_rounds"):
+        if not getattr(args, k, None) and data.get(k):
+            setattr(args, k, data[k])
+    if data.get("half") and not args.half:
+        args.half = True
+    if data.get("dc") and args.dc is None:
+        args.dc = data["dc"]
+    if data.get("touch") and data.get("target") == "one":
+        if data.get("attack") is None:
+            raise CombatError("this effect needs a touch attack, but its effect data has no \"attack\" bonus: "
+                              "add it to the profile, or resolve it with `attack --touch` and the effect by hand")
+        args.touch_attack = (data["attack"], "ranged" if (data.get("range") or 0) > 0 else "melee")
+
+
+def touch_attack(args: Args, st: State, c: Token, t: Token, shown: str) -> tuple[bool, int, list[str]]:
+    """Roll the touch attack of a spell or ability with effect data (against touch AC, with the usual
+    modifiers and miss chance). Returns (hit, crit multiplier, output lines)."""
+    bonus, kind = args.touch_attack
+    delta, ac, notes, _dm, miss = attack_mods(st, c, t, kind, True)
+    total, detail, _ = _roll(f"1d20{bonus + delta:+d}")
+    nat = _natural(detail)
+    hit = nat != 1 and (nat == 20 or total >= ac)
+    mult = 1
+    out = [f"  {kind} touch attack {detail} = {total} vs touch AC {ac}" + (f" ({', '.join(notes)})" if notes else "")
+           + f": {'hit' if hit else 'miss'}"]
+    if hit and nat == 20:
+        conf, cdetail, _ = _roll(f"1d20{bonus + delta:+d}")
+        mult = 2 if conf >= ac else 1
+        out.append(f"  threat: confirm {cdetail} = {conf}: {'critical, damage dice ×2' if mult == 2 else 'no crit'}")
+    if hit and miss:
+        mroll, _, _ = _roll("1d100")
+        out.append(f"  miss chance {miss}%: d% {mroll}")
+        hit = mroll > miss
+    if not t.get("hidden"):
+        vs = f" vs AC {ac}" if t["side"] in FRIENDLY else ""
+        event(st, f"{shown} → {who(t)}: {total}{vs}, {'hit' if hit else 'miss'}")
+    return hit, mult, out
+
+
+def find_ability(c: Token, name: str) -> tuple[str, dict[str, Any]]:
+    """An ability from the profile by exact name, unique prefix or unique substring.
+
+    Raises:
+        CombatError: if there's no such ability (the message lists them).
+    """
+    abilities = (c.get("profile") or {}).get("abilities") or {}
+    key = name.lower()
+    for test in (lambda k: k == key, lambda k: k.startswith(key), lambda k: key in k):
+        hits = [k for k in abilities if test(k.lower())]
+        if len(hits) == 1:
+            return hits[0], abilities[hits[0]]
+    raise CombatError(f"{c['token']} has no ability {name!r} (abilities: {', '.join(abilities) or 'none in its profile'})")
+
+
+def ability_action(c: Token, name: str, spec: dict[str, Any]) -> str:
+    """The action an ability costs now: a performance kept up since its last turn costs its maintain action."""
+    if spec.get("maintain") and c.get("performing") == name:
+        return spec["maintain"]
+    return spec.get("action", "standard")
+
+
+def cmd_ability(args: Args, st: State) -> str:
+    """Use a special ability from the profile: uses per day (rounds per day for a performance),
+    the action (charged to the turn), and its effect: a buff on the allies it reaches, healing,
+    or damage and conditions with saves, like a spell."""
+    c = token(st, args.token)
+    name, spec = find_ability(c, args.name)
+    sp = _spent(c).setdefault("abilities", {})
+    used = sp.get(name, 0)
+    if spec.get("uses") is not None and used >= spec["uses"]:
+        raise CombatError(f"{c['token']} has used {name!r} {used}/{spec['uses']} {'rounds' if spec.get('maintain') else 'times'} today")
+    sp[name] = used + 1
+    out = [f"{c['token']} uses {name}" + (f" ({used + 1}/{spec['uses']} {'rounds' if spec.get('maintain') else 'uses'} today)"
+                                          if spec.get("uses") is not None else "")]
+    if spec.get("maintain"):
+        c["performing"], c["performed_round"] = name, st.get("round", 1)
+    friendly = c["side"] in FRIENDLY
+    if spec.get("allies"):   # a buff
+        if spec.get("target") == "one":
+            if not args.target:
+                raise CombatError("this buff targets one ally: --target TOKEN")
+            targets = [token(st, args.target)]
+        else:
+            targets = [o for o in st["tokens"] if not o.get("removed") and in_fight(o) and (o["side"] in FRIENDLY) == friendly]
+            if spec.get("range") is not None:
+                targets = [o for o in targets if o is c or feet_between(c, o) <= spec["range"]]
+        label_ = spec.get("buff") or name
+        for o in targets:
+            R.add_condition(st, o, label_, rounds=spec.get("buff_rounds", 1), mods=dict(spec["allies"]))
+        out.append(f"  {label_} on {', '.join(o['token'] for o in targets) or 'nobody'}: "
+                   + ", ".join(f"{k} {v:+d}" for k, v in spec["allies"].items()))
+        if not c.get("hidden"):
+            event(st, f"{who(c)}: {name}" + (f" ({', '.join(who(o) for o in targets)})" if targets else ""))
+        return "\n".join(out)
+    if spec.get("heal") and spec.get("target") == "area":   # e.g. channel energy: one roll, everyone it covers
+        at = parse_pos(args.at, st) if args.at else (c["x"], c["y"])
+        shape, ft = spec.get("area", "burst 30").split()
+        squares = R.area_cells(st, "burst", int(ft), origin=at) if shape == "burst" else []
+        hit = [o for o in R.tokens_in(st, squares) if not o.get("removed")]
+        if spec.get("who") == "allies":
+            hit = [o for o in hit if (o["side"] in FRIENDLY) == friendly]
+        amount, detail, _ = _roll(spec["heal"])
+        out.append(f"  heals {spec['heal']} → {detail} = {amount}")
+        for o in hit:
+            before = o["hp"]
+            o["hp"] = min(o.get("max_hp", o["hp"] + amount), o["hp"] + amount)
+            out.append(f"  {o['token']}: {before} → {o['hp']}")
+            if not o.get("hidden"):
+                event(st, f"{name}: {who(o)} is healed, +{o['hp'] - before} HP [{who(o)}: {status(o)}]")
+        return "\n".join(out)
+    # damage, conditions or single-target healing: resolved like a spell
+    ns = argparse.Namespace(command="sla", area=None, at=args.at, toward=args.toward, target=args.target, save=None,
+                            dmg=None, half=False, heal=None, cond=None, cond_rounds=None, dc=None,
+                            light_at=None, light_on=None, rounds=None)
+    apply_effect_data(ns, spec, c, st)
+    out += _spell_effect(ns, st, c, name, ns.dc)
+    if not c.get("hidden"):
+        event(st, f"{who(c)} uses {name}")
+    return "\n".join(out)
+
+
 def cmd_cast(args: Args, st: State) -> str:
     """An NPC casts a spell: check and spend the slot or prepared copy, provoke or cast defensively, then the effect."""
     c = token(st, args.token)
@@ -1535,6 +1739,8 @@ def cmd_cast(args: Args, st: State) -> str:
         raise CombatError(f"{c['token']} doesn't have {args.spell!r}" + (f" at level {args.level}" if args.level is not None else "")
                           + " in its spells known / prepared")
     sc, lvl = found
+    effects = {k.lower(): v for k, v in (sc.get("effects") or {}).items()}
+    apply_effect_data(args, effects.get(spell), c, st)   # before the slot is spent: a missing aim fails cleanly
     key = sc["class"].lower()
     left_note = ""
     if lvl > 0:
@@ -1578,6 +1784,12 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
         out.append(cmd_area(ns, st))
     elif args.target:
         t = token(st, args.target)
+        mult = 1
+        if getattr(args, "touch_attack", None):   # rays and touch spells: roll to hit first
+            hit, mult, lines = touch_attack(args, st, c, t, shown)
+            out += lines
+            if not hit:
+                return out
         if getattr(args, "heal", None):   # cure spells and the like: roll it and heal the target
             amount, detail, _ = _roll(args.heal)
             before = t["hp"]
@@ -1594,6 +1806,9 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
         dmg = 0
         if args.dmg:
             dmg, detail, _ = _roll(args.dmg)
+            if mult == 2:   # a critical touch spell: the dice twice (roll.py-style: roll again and add)
+                extra, detail2, _ = _roll(args.dmg)
+                dmg, detail = dmg + extra, f"{detail} + {detail2}"
             out.append(f"{name}: damage {args.dmg} → {detail} = {dmg}")
         if args.save:
             if dc is None:
@@ -1632,6 +1847,7 @@ def cmd_sla(args: Args, st: State) -> str:
     entry = next((s for s in (c.get("profile") or {}).get("sla") or [] if s["name"].lower() == name), None)
     if not entry:
         raise CombatError(f"{c['token']} has no spell-like ability {args.name!r}")
+    apply_effect_data(args, entry.get("effect"), c, st)
     sp = _spent(c)
     per_day = entry["per_day"]
     note = ""
@@ -1952,6 +2168,12 @@ def charge_action(st: State, args: Args, c: Token) -> str | None:
         return "full" if t in ("full", "round") else t
     if cmd == "area":
         return "standard" if args.frm else None
+    if cmd == "ability":
+        try:
+            name, spec = find_ability(c, args.name)
+        except CombatError:
+            return None   # the command itself reports it
+        return "full" if ability_action(c, name, spec) == "full" else ability_action(c, name, spec)
     if cmd == "attack":
         if args.charge:
             return None if c.get("move_mode") == "charge" else "full"
@@ -2185,6 +2407,310 @@ def _straight_clear(st: State, c: Token, dest: Square) -> bool:
     return True
 
 
+# ---------- turn plans (expected values) ----------
+# Each plan is a whole turn (a move and an action) with rough expected values: damage it deals,
+# support it gives (flanking for an ally, buffs, healing), and damage it risks (the AoOs it provokes,
+# and what the enemies can do to it where it ends up). The numbers make trade-offs visible; the DM
+# or runner still decides by the creature's nature, morale and knowledge.
+
+COND_VALUE = {"asleep": 6, "helpless": 6, "paralyzed": 6, "unconscious": 6, "stunned": 5, "dazed": 5, "nauseated": 4,
+              "panicked": 4, "frightened": 3, "confused": 3, "blinded": 3, "entangled": 2, "shaken": 2, "sickened": 2,
+              "staggered": 3, "dazzled": 1, "prone": 2}
+
+
+def dice_avg(expr: str | None) -> float:
+    """The average of a dice expression like '2d6+3' (at least 1 per hit)."""
+    if not expr:
+        return 0.0
+    total, sign = 0.0, 1
+    for tok in re.findall(r"[+-]|\d+d\d+|\d+", expr.replace(" ", "")):
+        if tok in "+-":
+            sign = -1 if tok == "-" else 1
+        elif "d" in tok:
+            n, d = tok.split("d")
+            total += sign * int(n) * (int(d) + 1) / 2
+        else:
+            total += sign * int(tok)
+    return max(1.0, total)
+
+
+def p_hit(need: int, miss: int = 0) -> float:
+    """The chance to hit with a d20 roll of `need`+, after a miss chance."""
+    return max(0.05, min(0.95, (21 - need) / 20)) * (1 - miss / 100)
+
+
+def p_fail_save(t: Token, kind: str | None, dc: int | None) -> float:
+    """The chance a creature fails a save (its profile bonus; +4 if unknown)."""
+    if not kind or dc is None:
+        return 1.0
+    bonus = R.save_bonus(t, kind)
+    bonus = 4 if bonus is None else bonus
+    return 1 - max(0.05, min(0.95, (21 - (dc - bonus)) / 20))
+
+
+def _attack_ev(st: State, a: Token, t: Token, weapons: list[tuple[str, dict[str, Any], int]], kind: str,
+               charge: bool = False) -> tuple[float, list[str]]:
+    """Expected damage of a set of attacks (name, weapon, bonus) from where `a` stands, and roll notes."""
+    ev, notes = 0.0, []
+    for name, w, bonus in weapons:
+        delta, ac, _n, _d, miss = attack_mods(st, a, t, kind, bool(w.get("touch")), charge, w)
+        need = max(2, min(20, ac - (bonus + delta)))
+        dmg = dice_avg(w.get("damage")) + R.total(a, "dmg") + R.str_damage_change(a, w, kind)
+        sneak, _ = sneak_attack(st, a, t, kind, miss)
+        ev += p_hit(need, miss) * (max(1.0, dmg) + dice_avg(sneak) if sneak else max(1.0, dmg))
+        notes.append(f"{need}+" + (f" (+{sneak} sneak)" if sneak else "") + (f" {miss}% miss" if miss else ""))
+    return ev, notes
+
+
+def _weapons(prof: dict[str, Any], kind: str, full: bool) -> list[tuple[str, dict[str, Any], int]]:
+    """The attacks of one action: the best single attack, or a full attack (full_attack list or iteratives)."""
+    attacks = {n: w for n, w in (prof.get("attacks") or {}).items() if w.get("type", "melee") == kind}
+    if not attacks:
+        return []
+    if full:
+        seq: list[tuple[str, dict[str, Any], int]] = []
+        names = [n for n in (prof.get("full_attack") or []) if n in attacks]
+        if names:
+            for n in names:
+                b = attacks[n]["bonus"]
+                seq.append((n, attacks[n], b[0] if isinstance(b, list) else b))
+        else:
+            for n, w in attacks.items():
+                if isinstance(w["bonus"], list):
+                    seq += [(n, w, b) for b in w["bonus"]]
+                    break
+        if seq:
+            return seq
+    best = max(attacks.items(), key=lambda kv: dice_avg(kv[1].get("damage")) + (kv[1]["bonus"][0] if isinstance(kv[1]["bonus"], list) else kv[1]["bonus"]))
+    b = best[1]["bonus"]
+    return [(best[0], best[1], b[0] if isinstance(b, list) else b)]
+
+
+PC_GUESS = 3.0   # a PC's expected damage per round when its profile lists no attacks (hits half the time for ~6)
+
+
+def _incoming(st: State, c: Token, sq: Square, memo: dict[Square, float]) -> float:
+    """Expected damage the enemies can deal `c` at sq next round (each enemy's best single attack,
+    if it can reach it or see it there)."""
+    if sq in memo:
+        return memo[sq]
+    total = 0.0
+    with _placed(c, sq):
+        for f in _foes(st, c):
+            prof = f.get("profile") or {}
+            best = 0.0
+            if not prof.get("attacks"):   # a PC sheet: guess, nearer is worse
+                near = feet_between(f, c) - 5 <= (f.get("speed") or 30)
+                total += PC_GUESS if near else (PC_GUESS / 2 if V.concealment(st, f, c)[0] < 50 else 0.0)
+                continue
+            mel = _weapons(prof, "melee", False)
+            if mel and feet_between(f, c) - (f.get("reach") or 5) <= (f.get("speed") or 30):
+                _n, w, b = mel[0]
+                ac = (R.defenses(c)["ac"] or 10) + R.total(c, "ac")
+                best = p_hit(max(2, min(20, ac - b))) * dice_avg(w.get("damage"))
+            rng = _weapons(prof, "ranged", False)
+            if rng and V.concealment(st, f, c)[0] < 50:
+                ev, _ = _attack_ev(st, f, c, rng, "ranged")
+                best = max(best, ev)
+            total += best
+    memo[sq] = total
+    return total
+
+
+def _aoo_risk(st: State, c: Token, provokers: list[str]) -> float:
+    """Expected damage from the attacks of opportunity a move provokes."""
+    risk = 0.0
+    for tok in provokers:
+        f = next((o for o in st["tokens"] if o["token"] == tok), None)
+        mel = _weapons((f or {}).get("profile") or {}, "melee", False)
+        if f and not ((f.get("profile") or {}).get("attacks")):
+            risk += PC_GUESS
+        elif f and mel:
+            ev, _ = _attack_ev(st, f, c, mel[:1], "melee")
+            risk += ev
+    return risk
+
+
+def _ally_attack_avg(o: Token) -> float:
+    """An ally's average damage per round (its best melee or ranged attack), for valuing support."""
+    prof = o.get("profile") or {}
+    ws = _weapons(prof, "melee", True) or _weapons(prof, "ranged", True)
+    return sum(dice_avg(w.get("damage")) for _n, w, _b in ws) or (4.0 if o["side"] == "pc" else 0.0)
+
+
+def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square, list[Square]],
+               provokers: Any, limit: int = 8) -> list[str]:
+    """Ranked whole-turn plans for `c` (see the section comment)."""
+    prof = c.get("profile") or {}
+    start = (c["x"], c["y"])
+    friendly = c["side"] in FRIENDLY
+    foes = _foes(st, c)[:4]
+    allies = [o for o in st["tokens"] if o is not c and not o.get("removed") and in_fight(o)
+              and (o["side"] in FRIENDLY) == friendly]
+    memo: dict[Square, float] = {}
+    plans: list[tuple[float, str]] = []
+
+    def add(deal: float, support: float, sq: Square, provoked: list[str], text: str, extra: str = "") -> None:
+        risk_aoo = _aoo_risk(st, c, provoked)
+        risk_next = _incoming(st, c, sq, memo)
+        score = deal + support - risk_aoo - 0.5 * risk_next
+        parts = [f"deals ~{deal:.1f}" if deal else "", f"support ~{support:.1f}" if support else "",
+                 f"AoO risk ~{risk_aoo:.1f} ({', '.join(provoked)})" if provoked else "",
+                 f"takes ~{risk_next:.1f} next round there"]
+        plans.append((score, f"[{score:+.1f}] {text}" + (f" {extra}" if extra else "") + " — " + ", ".join(p for p in parts if p)))
+
+    def where(sq: Square, feet: int) -> str:
+        return "stay, " if sq == start else ("5-ft step to " if feet == 5 and R.sq_dist(start, sq) == 1 else f"move {feet} ft to ") + ("" if sq == start else fmt_pos(*sq))
+
+    for t in foes:
+        for kind in ("melee", "ranged"):
+            best: tuple[float, Any] | None = None
+            for sq, feet in one.items():
+                step = sq == start or (feet == 5 and R.sq_dist(start, sq) == 1)
+                ws = _weapons(prof, kind, step) or []
+                if not ws:
+                    break
+                with _placed(c, sq):
+                    if kind == "melee" and not threatens(c, t):
+                        continue
+                    if kind == "ranged" and V.concealment(st, c, t)[0] >= 50 and not ws:
+                        continue
+                    ev, notes = _attack_ev(st, c, t, ws, kind)
+                    flank_gift = 0.0
+                    gifted = []
+                    if kind == "melee":
+                        for o in allies:
+                            if threatens(o, t) and flanks(c, o, t):
+                                gain = 0.1 * _ally_attack_avg(o)
+                                osneak = (o.get("profile") or {}).get("sneak_attack")
+                                gain += 0.5 * dice_avg(osneak) if osneak else 0
+                                flank_gift += gain
+                                gifted.append(o["token"])
+                    shoot_threat = _threatened_by(st, c) if kind == "ranged" else []
+                provoked = sorted(set(([] if step else provokers(sq)) + shoot_threat))
+                full = step and len(ws) > 1
+                label_ = (f"{where(sq, feet)}{'' if sq == start else ', '}{'full attack' if full else 'attack'} {t['token']} "
+                          f"({'/'.join(n for n, _w, _b in ws[:3])}{'…' if len(ws) > 3 else ''}: hits on {', '.join(notes[:3])})")
+                extra = f"gives {', '.join(gifted)} flanking" if gifted else ""
+                score = ev + flank_gift - _aoo_risk(st, c, provoked)
+                if best is None or score > best[0]:
+                    best = (score, (ev, flank_gift, sq, provoked, label_, extra))
+            if best:
+                ev, gift, sq, provoked, label_, extra = best[1]
+                add(ev, gift, sq, provoked, label_, extra)
+
+    # spells and spell-like abilities with effect data
+    sp = _spent(c)
+    candidates = [start] + sorted((sq for sq in one if sq != start), key=lambda q: min((R.sq_dist(q, (f["x"], f["y"])) for f in foes), default=0))[:6]
+    castables: list[tuple[str, dict[str, Any], int | None]] = []
+    for sc in prof.get("spellcasting") or []:
+        effects = {k.lower(): v for k, v in (sc.get("effects") or {}).items()}
+        for lvl, names in (sc.get("spells") or {}).items():
+            for nm in names:
+                data = effects.get(nm.lower())
+                if not data:
+                    continue
+                left = True
+                if int(lvl) > 0 and sc["type"] == "spontaneous":
+                    left = sp["slots"].get(sc["class"].lower(), {}).get(str(lvl), 0) < sc["slots"].get(str(lvl), 0)
+                elif int(lvl) > 0:
+                    left = sp["prepared"].get(sc["class"].lower(), []).count(nm.lower()) < [x.lower() for x in names].count(nm.lower())
+                if left:
+                    castables.append((f"cast {nm}", data, data.get("dc") or sc["dc_base"] + int(lvl)))
+    for s_ in prof.get("sla") or []:
+        if s_.get("effect") and (s_["per_day"] == "at will" or sp["sla"].get(s_["name"].lower(), 0) < s_["per_day"]):
+            castables.append((f"use {s_['name']}", s_["effect"], s_["effect"].get("dc") or s_.get("dc")))
+    for nm, spec in (prof.get("abilities") or {}).items():
+        used = sp.get("abilities", {}).get(nm, 0)
+        if spec.get("uses") is None or used < spec["uses"]:
+            castables.append((f"ability {nm}", spec, spec.get("dc")))
+    for label_, data, dc in castables:
+        if data.get("allies"):   # a buff
+            reach = data.get("range")
+            hit = [o for o in allies if reach is None or feet_between(c, o) <= reach] + [c]
+            bonus = data["allies"]
+            value = sum(0.05 * bonus.get("atk", 0) * 10 * (_ally_attack_avg(o) / 10) * 2 + 0.6 * bonus.get("dmg", 0)
+                        for o in hit if _ally_attack_avg(o))
+            keep = data.get("maintain") and c.get("performing") == label_.replace("ability ", "")
+            add(0, value, start, [], f"{label_} on {len(hit)} allies" + (" (keep it up: a free action)" if keep else ""))
+            continue
+        if data.get("heal"):
+            amount = dice_avg(data["heal"])
+            if data.get("target") == "area":
+                hit = [o for o in allies + [c] if feet_between(c, o) <= int((data.get("area") or "burst 30").split()[1])]
+                value = sum(min(amount, o.get("max_hp", o["hp"]) - o["hp"]) for o in hit)
+                if value > 0:
+                    add(0, value, start, [], f"{label_} (heals ~{amount:.0f} each, {len(hit)} in reach)")
+            else:
+                wounded = sorted((o for o in allies + [c] if o["hp"] < o.get("max_hp", o["hp"])), key=lambda o: o["hp"] - o.get("max_hp", 0))
+                for o in wounded[:2]:
+                    rng = data.get("range")
+                    reachable = [q for q in candidates if rng is None or 5 * min(R.sq_dist(q, cc) for cc in cells(o)) <= max(rng, 5)]
+                    if reachable:
+                        q = reachable[0]
+                        add(0, min(amount, o.get("max_hp", 0) - o["hp"]), q, [] if q == start else provokers(q),
+                            f"{where(q, one.get(q, 0))}{'' if q == start else ', '}{label_} on {o['token']} ({o['hp']}/{o.get('max_hp')} HP)")
+            continue
+        per_dmg = dice_avg(data.get("dmg")) if data.get("dmg") else 0.0
+        cond_v = COND_VALUE.get(str(data.get("cond", "")).lower(), 2 if data.get("cond") else 0) * min(3, data.get("cond_rounds", 1))
+
+        def value_of(targets: list[Token]) -> float:
+            v = 0.0
+            for o in targets:
+                pf = p_fail_save(o, data.get("save"), dc)
+                dmg_v = per_dmg * (pf + (1 - pf) * (0.5 if data.get("half") else 0.0))
+                sign = 1 if (o["side"] in FRIENDLY) != friendly else -1
+                v += sign * (dmg_v + pf * cond_v)
+            return v
+
+        best_s: tuple[float, str, Square] | None = None
+        for q in candidates:
+            with _placed(c, q):
+                if data.get("target") == "one":
+                    for t in foes:
+                        rng = data.get("range")
+                        if rng is not None and feet_between(c, t) > max(rng, 5):
+                            continue
+                        v = value_of([t])
+                        note = ""
+                        if data.get("touch") and data.get("attack") is not None:   # a ray or touch: it must hit
+                            kind = "ranged" if (data.get("range") or 0) > 0 else "melee"
+                            delta, ac, _n, _d, miss = attack_mods(st, c, t, kind, True)
+                            need = max(2, min(20, ac - (data["attack"] + delta)))
+                            v *= p_hit(need, miss)
+                            note = f" (touch, hits on {need}+)"
+                        if best_s is None or v > best_s[0]:
+                            best_s = (v, f"{label_} on {t['token']}{note}", q)
+                elif data.get("target") == "area" and data.get("area"):
+                    shape, ft = data["area"].split()
+                    aims: list[tuple[str, list[Square]]] = []
+                    if shape == "burst" and data.get("center") == "self":
+                        aims.append((f"--at {fmt_pos(*q)}", R.area_cells(st, "burst", int(ft), origin=q)))
+                    elif shape == "burst":
+                        for t in foes:
+                            if data.get("range") is None or feet_between(c, t) <= data["range"]:
+                                aims.append((f"--at {fmt_pos(t['x'], t['y'])}", R.area_cells(st, "burst", int(ft), origin=(t["x"], t["y"]))))
+                    else:
+                        for t in foes:
+                            aims.append((f"--toward {fmt_pos(t['x'], t['y'])}", R.area_cells(st, shape, int(ft), frm=c, toward=(t["x"], t["y"]))))
+                    for aim, area_sq in aims:
+                        hit = [o for o in R.tokens_in(st, area_sq) if o is not c and not o.get("removed") and in_fight(o)]
+                        v = value_of(hit)
+                        if hit and (best_s is None or v > best_s[0]):
+                            names = ", ".join(o["token"] for o in hit)
+                            best_s = (v, f"{label_} {aim} (hits {names})", q)
+        if best_s and best_s[0] > 0:
+            v, text, q = best_s
+            add(v, 0, q, [] if q == start else provokers(q), f"{where(q, one.get(q, 0))}{'' if q == start else ', '}{text}")
+
+    # defense: total defense where it stands, and the safest square within one move
+    safest = min(one, key=lambda q: (_incoming(st, c, q, memo), one[q]))
+    if safest != start:
+        add(0, 0, safest, provokers(safest), f"{where(safest, one[safest])}, total defense or ready (safest square in reach)")
+    plans.sort(key=lambda p: -p[0])
+    return [f"  {i + 1}. {text}" for i, (_s, text) in enumerate(plans[:limit])]
+
+
 def tactical_options(st: State, c: Token, area: str | None = None, area_range: int | None = None,
                      only: str | None = None, per_target: int = 3) -> str:
     """The options report (see the section comment)."""
@@ -2203,6 +2729,10 @@ def tactical_options(st: State, c: Token, area: str | None = None, area_range: i
            f"({len(one)} squares in one move, {len(two)} in a double move), reach {c.get('reach', 5)} ft. "
            + (f"Threatened here by {', '.join(here_threat)}: moving away provokes (a 5-foot step doesn't)."
               if here_threat else "Not threatened here.")]
+    out.append("Turn plans, ranked by rough expected value [deals + support − AoO risk − ½ of what it takes next round]; "
+               "PCs without listed attacks count as ~3 a round; pick by its nature and morale, not just the top line:")
+    out += turn_plans(st, c, one, routes, provokers) or ["  (no attack, spell or ability reaches an enemy this turn)"]
+    out.append("Details:")
     attacks = prof.get("attacks") or {}
     melee = [(n, w) for n, w in attacks.items() if w.get("type", "melee") == "melee"]
     ranged = [(n, w) for n, w in attacks.items() if w.get("type") == "ranged"]
@@ -3624,6 +4154,8 @@ def main(argv: list[str] | None = None) -> int:
     ac_.add_argument("--log", help="a line for the player-visible combat log")
     ac_.add_argument("--override", action="store_true", help="don't charge it (a feat or ability)")
     sub.add_parser("surprise").add_argument("mode", choices=["on", "off"])
+    ab = sub.add_parser("ability"); ab.add_argument("token"); ab.add_argument("name")
+    ab.add_argument("--target"); ab.add_argument("--at"); ab.add_argument("--toward")
     sub.add_parser("undo", help="take back the player's last command (a corrected roll); NPC rolls stand")
     sub.add_parser("actions").add_argument("token")
     op = sub.add_parser("options"); op.add_argument("token")
@@ -3633,9 +4165,9 @@ def main(argv: list[str] | None = None) -> int:
     for nm in ("cast", "sla"):
         sub.choices[nm].add_argument("--time", choices=["standard", "full", "round", "swift", "immediate"],
                                      help="casting time (default standard; quickened = swift)")
-    for sp in (at, m, mn, ar, sub.choices["cast"], sub.choices["sla"]):
+    for sp in (at, m, mn, ar, ab, sub.choices["cast"], sub.choices["sla"]):
         sp.add_argument("--override", action="store_true", help="don't charge an action (a feat or ability changes the economy)")
-    for sp in (at, m, pv, ar, mn, sub.choices["cast"], sub.choices["sla"]):
+    for sp in (at, m, pv, ar, mn, ab, sub.choices["cast"], sub.choices["sla"]):
         sp.add_argument("--out-of-turn", action="store_true",
                         help="the actor isn't the current one: a readied or immediate action, forced movement, setup")
     args = p.parse_args(argv)
@@ -3647,7 +4179,7 @@ def main(argv: list[str] | None = None) -> int:
                 "ask": cmd_ask, "stabilize": cmd_stabilize, "save": cmd_save, "area": cmd_area,
                 "order": cmd_order, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
                 "provoke": cmd_provoke, "endturn": cmd_endturn, "maneuver": cmd_maneuver,
-                "light": cmd_light, "sight": cmd_sight, "act": cmd_act, "surprise": cmd_surprise,
+                "light": cmd_light, "sight": cmd_sight, "act": cmd_act, "surprise": cmd_surprise, "ability": cmd_ability,
                 "actions": lambda a, st: action_status(st, token(st, a.token)).strip(), "options": cmd_options}
     if args.command == "profile":
         return cmd_profile(args)
@@ -3700,7 +4232,7 @@ def main(argv: list[str] | None = None) -> int:
                     "cast": f"cast {getattr(args, 'spell', '')}", "sla": f"use {getattr(args, 'name', '')}",
                     "area": "area effect"}.get(args.command, args.command)
             record_action(st, actor, cost, what)
-        if actor and st.get("turn") == actor["token"] and args.command in ("attack", "maneuver", "cast", "sla", "area", "move"):
+        if actor and st.get("turn") == actor["token"] and args.command in ("attack", "maneuver", "cast", "sla", "area", "move", "ability"):
             result += "\n" + action_status(st, actor)
         ended = clean_grapples(st) + reveal_observed(st)
         if ended:

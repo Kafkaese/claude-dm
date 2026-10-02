@@ -448,3 +448,148 @@ class SpellConditions(CampaignCase):
         out = self.run_cmd("cast", "s1", "darkness", "--target", "g1", "--cond", "befuddled", "--no-provoke")
         self.assertIn("befuddled", self.conds("g1"))                         # no save: it just applies
         self.assertIn("isn't a known condition", out)
+
+
+ROGUE = dict(GOBLIN, sneak_attack="2d6", attacks={"dagger": {"bonus": 40, "damage": "1d4", "type": "melee"},
+                                                   "sling": {"bonus": 40, "damage": "1d4", "type": "ranged", "range": 50}})
+
+
+class SneakAttack(CampaignCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.new(blank="12x6")
+        self.add("r1", "Rogue", "C2", ROGUE, init=20)
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=15)
+        self.add("g1", "Gob", "J5", GOBLIN, init=10)
+        self.run_cmd("next")                                              # r1: Corin hasn't acted yet
+
+    def test_flat_footed_target(self) -> None:
+        self.assertIn("sneak attack 2d6", self.run_cmd("attack", "r1", "C", "--with", "dagger"))
+
+    def test_rules_that_stop_it(self) -> None:
+        for _ in range(3):
+            self.run_cmd("next")                                          # round 2: Corin has acted
+        out = self.run_cmd("attack", "r1", "C", "--with", "dagger")
+        self.assertIn("no sneak attack: the target is neither flanked nor denied its Dex", out)
+
+    def test_flanking_gives_it(self) -> None:
+        for _ in range(3):
+            self.run_cmd("next")
+        self.run_cmd("move", "g1", "A2", "--out-of-turn")                 # opposite r1 across Corin
+        self.assertIn("sneak attack 2d6", self.run_cmd("attack", "r1", "C", "--with", "dagger"))
+
+    def test_ranged_beyond_30_ft(self) -> None:
+        self.run_cmd("move", "r1", "J2", "--out-of-turn")
+        out = self.run_cmd("attack", "r1", "C", "--with", "sling")
+        self.assertIn("more than 30 ft away", out)
+
+
+BARD = dict(GOBLIN, abilities={
+    "inspire courage": {"action": "standard", "maintain": "free", "uses": 3, "kind": "buff",
+                        "allies": {"atk": 1, "dmg": 1}, "buff": "inspired", "buff_rounds": 1},
+    "channel": {"action": "standard", "uses": 2, "kind": "heal", "target": "area", "area": "burst 30", "center": "self",
+                "heal": "1d6", "who": "allies"}},
+    spellcasting=[dict(CASTER["spellcasting"][0], effects={
+        "magic missile": {"target": "one", "range": 100, "dmg": "1d4+1"},
+        "darkness": {"target": "area", "area": "burst 10", "center": "point", "save": "will", "cond": "shaken", "cond_rounds": 2}})])
+
+
+class Abilities(CampaignCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.new(blank="12x6")
+        self.add("b1", "Bard", "C3", BARD, side="ally", init=20)
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=15)
+        self.add("g1", "Gob", "I3", GOBLIN, init=10)
+        self.run_cmd("next")
+
+    def test_inspire_courage_buffs_and_is_maintained(self) -> None:
+        out = self.run_cmd("ability", "b1", "inspire")
+        self.assertIn("C", out.split("on ")[1])
+        self.assertTrue(any(x["name"] == "inspired" for x in self.tok("C")["conditions"]))
+        self.assertIn("actions left for b1: move", out)                   # it cost the standard action
+        for _ in range(3):
+            self.run_cmd("next")                                          # round 2: the bard again
+        out = self.run_cmd("ability", "b1", "inspire")                    # maintained: a free action
+        self.assertIn("standard", out.split("actions left for b1:")[1])
+
+    def test_channel_heals_allies_in_the_burst(self) -> None:
+        self.run_cmd("hp", "C", "-10")
+        self.run_cmd("ability", "b1", "channel")
+        self.assertGreater(self.tok("C")["hp"], 20)
+        self.assertEqual(self.tok("g1")["hp"], 12)                        # the enemy is out of it anyway
+
+    def test_spell_effect_comes_from_the_profile(self) -> None:
+        out = self.run_cmd("cast", "b1", "magic missile", "--target", "g1", "--no-provoke")
+        self.assertIn("damage 1d4+1", out)
+        self.assertIn("--at", self.fail_cmd("cast", "b1", "darkness", "--no-provoke", "--override"))   # a burst needs a point
+
+
+SCALECASTER = dict(GOBLIN, spellcasting=[dict(CASTER["spellcasting"][0], spells={"1": ["burning hands"]}, slots={"1": 1},
+                                              effects={"burning hands": {"target": "area", "area": "cone 15", "save": "ref",
+                                                                         "half": True, "dmg": "3d4"}})])
+
+
+class TurnPlans(CampaignCase):
+    def plans(self, tok: str) -> list[str]:
+        out = self.run_cmd("options", tok)
+        lines = out.split("Turn plans", 1)[1].split("Details:", 1)[0].splitlines()[1:]
+        return [ln.strip() for ln in lines if ln.strip()]
+
+    def test_area_spell_on_two_beats_a_spear(self) -> None:
+        self.new(blank="12x8")
+        self.add("s1", "Scale", "C6", SCALECASTER, init=20)
+        self.add("C", "Corin", "G4", PC_PROFILE, side="pc", init=15)
+        self.add("M", "Mir", "H5", PC_PROFILE, side="pc", init=14)
+        self.run_cmd("next")
+        plans = self.plans("s1")
+        self.assertIn("cast burning hands --toward", plans[0])
+        self.assertIn("hits C, M", plans[0])
+
+    def test_spent_spell_is_not_offered(self) -> None:
+        self.new(blank="12x8")
+        self.add("s1", "Scale", "C6", SCALECASTER, init=20)
+        self.add("C", "Corin", "D6", PC_PROFILE, side="pc", init=15)
+        self.run_cmd("next")
+        self.run_cmd("cast", "s1", "burning hands", "--toward", "D6")
+        self.assertFalse(any("burning hands" in p for p in self.plans("s1")))
+
+    def test_sneak_attack_and_buff_show(self) -> None:
+        self.new(blank="12x8")
+        self.add("b1", "Bard", "B2", BARD, init=20)
+        self.add("r1", "Rogue", "F4", dict(ROGUE, attacks={"dagger": {"bonus": 5, "damage": "1d4", "type": "melee"}}), init=18)
+        self.add("C", "Corin", "G4", PC_PROFILE, side="pc", init=15)
+        self.run_cmd("next")
+        self.assertTrue(any("inspire courage" in p and "support" in p for p in self.plans("b1")))
+        self.run_cmd("next")
+        self.assertIn("sneak", self.plans("r1")[0])              # Corin hasn't acted: flat-footed
+
+
+RAYCASTER = dict(GOBLIN, spellcasting=[dict(CASTER["spellcasting"][0], spells={"0": ["ray of frost"]}, slots={"0": 99},
+                                            effects={"ray of frost": {"target": "one", "range": 25, "touch": True,
+                                                                      "attack": 4, "dmg": "1d3"}})])
+
+
+class TouchEffects(CampaignCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.new(blank="10x6")
+        self.add("s1", "Ray", "B2", RAYCASTER, init=20)
+        self.add("C", "Corin", "E2", PC_PROFILE, side="pc", init=10)
+        self.run_cmd("next")
+
+    def test_touch_attack_is_rolled_against_touch_ac(self) -> None:
+        out = self.run_cmd("cast", "s1", "ray of frost", "--target", "C")
+        self.assertIn("ranged touch attack", out)
+        self.assertIn("vs touch AC 12", out)                 # flat-footed: Corin hasn't acted
+        hp = self.tok("C")["hp"]
+        self.assertEqual(hp < 30, ": hit" in out)            # damage only on a hit
+
+    def test_missing_attack_bonus_is_refused(self) -> None:
+        prof = json.loads(json.dumps(RAYCASTER))
+        del prof["spellcasting"][0]["effects"]["ray of frost"]["attack"]
+        self.add("s2", "Ray2", "B4", prof, init=5)
+        self.assertIn("touch attack", self.fail_cmd("cast", "s2", "ray of frost", "--target", "C", "--out-of-turn"))
+
+    def test_plans_show_the_touch_roll(self) -> None:
+        self.assertTrue(any("ray of frost on C (touch, hits on" in ln for ln in self.run_cmd("options", "s1").splitlines()))

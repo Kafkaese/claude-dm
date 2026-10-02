@@ -219,6 +219,14 @@ TOOLS: list[Tool] = [
          ["caster", "spell"],
          lambda a: (["sla", a["caster"], a["spell"]] + flags(a, EFFECT_FLAGS) if a.get("sla") else
                     ["cast", a["caster"], a["spell"]] + flags(a, {"level": "--level", "class": "--class", **EFFECT_FLAGS}))),
+    Tool("combat_ability", "Use a special ability from the creature's profile (bardic performance, channel energy, breath weapon, …): "
+         "uses per day, the action (a performance kept up costs its maintain action), and the effect: a buff on the allies it reaches, "
+         "healing, or damage/conditions with saves. Aim it like a spell when it needs it.",
+         {"token": S(TOK), "name": S("ability name (a unique part is enough)"), "target": S("one target"),
+          "at": S("burst centre"), "toward": S("cone/line direction"), "out_of_turn": OOT,
+          "override": B("don't charge an action")},
+         ["token", "name"], lambda a: ["ability", a["token"], a["name"]] + flags(a, {"target": "--target", "at": "--at", "toward": "--toward",
+                                                                                 "out_of_turn": "--out-of-turn", "override": "--override"})),
     Tool("combat_area", "A non-spell area effect (breath weapon, trap, hazard): who it covers, saves and damage. NPC spells use combat_cast.",
          {"shape": S("template", ["burst", "cone", "line"]), "feet": I("size in feet"), "at": S("burst center"),
           "from": S("cone/line source token"), "toward": S("cone/line direction square"), "save": S("save", SAVES),

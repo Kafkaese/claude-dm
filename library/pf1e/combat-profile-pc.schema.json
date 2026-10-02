@@ -194,6 +194,11 @@
       },
       "description": "Feats, at least the ones the script uses: Combat Reflexes, Blind-Fight, Precise Shot, Improved <maneuver>. Listing all is fine; [] if none."
     },
+    "sneak_attack": {
+      "type": "string",
+      "pattern": "^\\d+d6$",
+      "description": "Sneak attack dice, e.g. '1d6'. The player rolls them; the script reminds when they apply (flanking, target denied its Dex)."
+    },
     "uncanny_dodge": {
       "type": "boolean",
       "description": "Uncanny dodge (rogue, barbarian): keeps the Dex bonus when flat-footed."
