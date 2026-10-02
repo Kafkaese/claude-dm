@@ -741,3 +741,71 @@ class DiagonalCount(CampaignCase):
         self.assertEqual(st["turn"], "g1")
         self.run_cmd("next")                                       # Corin again: the count starts over
         self.assertIn("D4 → E5: 5 ft", self.run_cmd("move", "C", "E5"))
+
+
+CLERIC = dict(GOBLIN, spellcasting=[{"class": "cleric", "cl": 3, "type": "prepared", "dc_base": 13, "concentration": 6,
+                                     "slots": {"1": 2}, "spells": {"1": ["bless", "bless"]},
+                                     "effects": {"bless": {"target": "area", "area": "burst 50", "center": "self",
+                                                           "allies": {"atk": 1}, "buff": "blessed", "buff_rounds": 30}}}])
+
+
+class SpellBuffsAndConditions(CampaignCase):
+    def test_bless_buffs_allies_in_the_burst(self) -> None:
+        self.new(blank="20x6")
+        self.add("m1", "Mireth", "B2", CLERIC, side="ally", init=20)
+        self.add("C", "Corin", "E2", PC_PROFILE, side="pc", init=10)
+        self.add("a1", "Far ally", "T5", GOBLIN, side="ally", init=5)
+        self.add("g1", "Gob", "D4", GOBLIN, init=1)
+        self.run_cmd("next")
+        out = self.run_cmd("cast", "m1", "bless")
+        self.assertIn("blessed on", out)
+        import combat_rules as R
+        self.assertTrue(R.has(self.tok("C"), "blessed") and R.has(self.tok("m1"), "blessed"))
+        self.assertFalse(R.has(self.tok("a1"), "blessed"))      # 90 ft away
+        self.assertFalse(R.has(self.tok("g1"), "blessed"))      # an enemy
+        self.assertEqual(R.total(self.tok("C"), "atk"), 1)
+
+    def test_unknown_condition_names_fail_the_check(self) -> None:
+        import combat_rules as R
+        bad = dict(CASTER, spellcasting=[dict(CASTER["spellcasting"][0], effects={
+            "magic missile": {"target": "one", "cond": "frightened (shaken if HD > 5)"}})])
+        errs, _ = R.check_profile(bad)
+        self.assertTrue(any("isn't a condition the script knows" in e for e in errs))
+        ok = dict(CASTER, spellcasting=[dict(CASTER["spellcasting"][0], effects={
+            "magic missile": {"target": "one", "cond": "evil eye", "cond_mods": {"atk": -2}}})])
+        self.assertFalse([e for e in R.check_profile(ok)[0] if "cond" in e])
+
+
+class FearAndAdvance(CampaignCase):
+    def plans(self, tok: str) -> str:
+        return self.run_cmd("options", tok).split("Details:", 1)[0]
+
+    def test_frightened_only_flees(self) -> None:
+        self.new(blank="12x8")
+        self.add("g1", "Gob", "C4", GOBLIN, init=20)
+        self.add("C", "Corin", "D4", PC_PROFILE, side="pc", init=10)
+        self.run_cmd("next")
+        self.run_cmd("cond", "g1", "add", "frightened", "--rounds", "2")
+        out = self.plans("g1")
+        self.assertIn("FRIGHTENED", out)
+        self.assertNotIn("attack C", out)
+        self.assertIn("withdraw", out)
+
+    def test_out_of_reach_melee_closes_in(self) -> None:
+        self.new(blank="16x8")
+        brute = dict(GOBLIN, attacks={"club": {"bonus": 5, "damage": "1d6+3", "type": "melee"}})
+        self.add("b1", "Brute", "A1", brute, init=20)
+        self.add("C", "Corin", "P8", PC_PROFILE, side="pc", init=10)
+        self.run_cmd("next")
+        out = self.plans("b1")
+        self.assertIn("closing on C", out)
+
+    def test_briefing_lookup(self) -> None:
+        self.new(blank="8x6")
+        self.add("g1", "Gob", "B2", GOBLIN, init=20)
+        self.add("C", "Corin", "D2", PC_PROFILE, side="pc", init=10)
+        st = self.state()
+        self.write("dm/combat/briefings.jsonl", json.dumps({"started": st.get("started"), "round": 1, "token": "g1",
+                                                            "name": "Gob", "briefing": "PLANS HERE", "sight": ""}) + "\n")
+        self.assertIn("PLANS HERE", self.run_cmd("briefing", "g1"))
+        self.fail_cmd("briefing", "g1", "--round", "4")

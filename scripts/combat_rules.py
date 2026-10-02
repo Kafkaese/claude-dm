@@ -250,6 +250,16 @@ def check_profile(p: Any, system: str = 'pf1e') -> tuple[list[str], list[str]]:
                 errs.append(f"attacks.{name}.damage: {a['damage']!r} isn't a dice expression ({e})")
         if (a.get("type") == "ranged" or a.get("thrown")) and "range" not in a:
             errs.append(f"attacks.{name}: ranged and thrown attacks need 'range' (the range increment from the weapon table)")
+    effects = [(f"spellcasting[{i}].effects.{k}", v) for i, sc in enumerate(p.get("spellcasting") or []) if isinstance(sc, dict)
+               for k, v in (sc.get("effects") or {}).items()]
+    effects += [(f"sla.{x.get('name')}.effect", x["effect"]) for x in p.get("sla") or [] if isinstance(x, dict) and x.get("effect")]
+    effects += [(f"abilities.{k}", v) for k, v in (p.get("abilities") or {}).items()]
+    for where, eff in effects:
+        cond = eff.get("cond") if isinstance(eff, dict) else None
+        if isinstance(cond, str) and cond.lower() not in CONDITIONS and "cond_mods" not in eff:
+            errs.append(f"{where}.cond: {cond!r} isn't a condition the script knows, so it would do nothing. Use a known "
+                        f"name ({', '.join(sorted(CONDITIONS))}), or give a custom one its modifiers in cond_mods "
+                        f"(e.g. {{\"atk\": -2}}); put rulings the script can't apply in notes")
     for n in p.get("full_attack") or []:
         if n not in attacks:
             errs.append(f"full_attack: '{n}' isn't in attacks ({', '.join(attacks) or 'none'})")

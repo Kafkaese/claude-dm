@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import shlex
 import sys
 from pathlib import Path
@@ -115,13 +116,14 @@ EFFECT_FLAGS = {"area": "--area", "at": "--at", "toward": "--toward", "target": 
 
 def _info(a: Args) -> list[str]:
     what, tok = a["what"], a.get("token")
-    need = {"sight", "spells", "dist", "threat", "actions"}
+    need = {"sight", "spells", "dist", "threat", "actions", "briefing"}
     if what in need and not tok:
         raise ValueError(f"'{what}' needs token")
     return {"show": ["show"], "show_dm": ["show", "--dm"], "events": ["events"] + (["--all"] if a.get("all") else []),
             "sight": ["sight", tok or ""], "actions": ["actions", tok or ""], "spells": ["spells", tok or ""],
             "dist": ["dist", tok or "", a.get("other") or ""], "threat": ["threat", tok or ""],
-            "light_map": ["light", "show"] + (["--for", tok] if tok else [])}[what]
+            "light_map": ["light", "show"] + (["--for", tok] if tok else []),
+            "briefing": ["briefing", tok or ""] + (["--round", str(a["round"])] if a.get("round") else [])}[what]
 
 
 def _light(a: Args) -> list[str]:
@@ -301,9 +303,11 @@ TOOLS: list[Tool] = [
          {"token": S(TOK), "value": S("order", ["always", "never", "ask"])}, ["token", "value"],
          lambda a: ["order", a["token"], "aoo", a["value"]]),
     Tool("combat_info", "Look things up: show (player view), show_dm (never show it), events (new log lines), sight (what a creature "
-         "sees, hiding spots), spells (what's left), dist (token to token/square), threat (who threatens/flanks), light_map.",
-         {"what": S("what", ["show", "show_dm", "events", "sight", "spells", "dist", "threat", "light_map", "actions"]),
-          "token": S(TOK), "other": S("dist: second token or square"), "all": B("events: all lines")},
+         "sees, hiding spots), spells (what's left), dist (token to token/square), threat (who threatens/flanks), light_map, "
+         "briefing (the tactical options and turn plans an NPC's step was given, as logged: to explain a decision; never move tokens for that).",
+         {"what": S("what", ["show", "show_dm", "events", "sight", "spells", "dist", "threat", "light_map", "actions", "briefing"]),
+          "token": S(TOK), "other": S("dist: second token or square"), "all": B("events: all lines"),
+          "round": I("briefing: that round's (default: its latest)")},
          ["what"], _info),
     Tool("combat_options", "A creature's tactical options (DM only): reachable squares that threaten each target with the d20 roll "
          "needed (flanking, cover, light included), what provokes, charge lanes, ranged positions, retreat squares; with area, "
@@ -379,7 +383,7 @@ class Server:
     """The tool dispatcher, with the remembered campaign."""
 
     def __init__(self) -> None:
-        self.campaign: str | None = None
+        self.campaign: str | None = os.environ.get("CLAUDE_DM_CAMPAIGN") or None   # set by the interface
 
     def _campaign(self, a: Args) -> str:
         camp = a.pop("campaign", None) or self.campaign

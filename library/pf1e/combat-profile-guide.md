@@ -98,9 +98,11 @@ Where the stat block lists the spell's level, put it in `level`, because the con
 | *ray of frost* (a Small caster, BAB +0, Dex 16) | `"ray of frost": {"target": "one", "range": 25, "touch": true, "attack": 4, "dmg": "1d3"}`. `attack` is the touch attack bonus (ranged: BAB + Dex + size; melee: BAB + Str + size); the script rolls it against touch AC before the effect lands |
 | *sleep* | `"sleep": {"target": "area", "area": "burst 10", "center": "point", "range": 110, "save": "will", "cond": "asleep", "cond_rounds": 10}` |
 | *cure light wounds* (CL 3) | `"cure light wounds": {"target": "one", "range": 0, "heal": "1d8+3"}` |
+| *bless* (CL 3) | `"bless": {"target": "area", "area": "burst 50", "center": "self", "allies": {"atk": 1}, "buff": "blessed", "buff_rounds": 30, "notes": "+1 morale on saves vs. fear too"}`: a buff puts its condition with the `allies` modifiers on every ally it reaches |
+| *evil eye* hex (a custom condition) | `"cond": "evil eye (attack rolls)", "cond_mods": {"atk": -2}`. A `cond` must be a condition the script knows (`profile check` lists them), or bring its modifiers in `cond_mods`; `"cond_mods": {}` tracks it by name on purpose (*command*, *charm person*) |
 | an SLA | the same object as `"effect"` on the `sla` entry |
 
-`dc` is optional (the script uses `dc_base` + level, or the SLA's `dc`).
+`dc` is optional (the script uses `dc_base` + level, or the SLA's `dc`). `notes` holds what the script can't apply (temporary HP, a fear-only save bonus, HD limits); the DM handles it. **Work every number out from the spell's own text** (range, duration, save, what a bonus applies to): the profile check can't tell a wrong range from a right one.
 
 ## Sneak attack and special abilities
 | Stat block | Profile |

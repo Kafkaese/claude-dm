@@ -75,6 +75,7 @@ Play
                                   modifiers applied; attacker-side ones are listed as reminders). Without
                                   --damage a hit waits for the player's damage roll:
   damage ATT N [--nonlethal]      the player's damage for that hit (DR, minimum damage, the log line)
+  briefing TOKEN [--round N]      the tactical options and turn plans an NPC's step was given (DM only)
        ammunition: an attack with "ammo": N (creatures) or the PC profile's "ammo" map counts shots and
        throws, reports what's left and refuses an empty one (--override if it found more)
        all: [--no-crit] (mercy: treat a crit as a normal hit)  [--ac N] (override)
@@ -1120,6 +1121,20 @@ def cmd_damage(args: Args, st: State) -> str:
     return "\n".join(dm + [f"HP {t['hp']}/{t['max_hp']}. Log: {pend['line']}{res}"])
 
 
+def cmd_briefing(args: Args, st: State) -> str:
+    """The briefing an NPC's combat step was given (tactical options, turn plans, sight), as the
+    interface logged it in dm/combat/briefings.jsonl: to explain or audit a decision afterwards."""
+    path = PROJECT / "campaigns" / args.campaign / "dm" / "combat" / "briefings.jsonl"
+    rows = [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()] if path.exists() else []
+    rows = [r for r in rows if r.get("token") == args.token and r.get("started") == st.get("started")
+            and (args.round is None or r.get("round") == args.round)]
+    if not rows:
+        raise CombatError(f"no logged briefing for {args.token}" + (f" in round {args.round}" if args.round else "")
+                          + " in this fight (only steps the interface ran are logged)")
+    r = rows[-1]
+    return f"Briefing for {r['token']} ({r['name']}), round {r['round']}:\n{r['briefing']}" + (f"\n{r['sight']}" if r.get("sight") else "")
+
+
 def cmd_ask(args: Args, st: State) -> str:
     """Set (or clear) the open question that pauses auto-combat."""
     if args.clear or not args.question:
@@ -1306,7 +1321,7 @@ ACTOR_ARG = {"ability": "token", "maneuver": "attacker", "attack": "attacker", "
 
 
 UNDOABLE = ("attack", "damage", "maneuver", "move", "save", "stabilize", "act", "provoke", "endturn", "ability")
-READ_ONLY = ("show", "dist", "threat", "events", "image", "sight", "actions", "options", "spells", "ask")
+READ_ONLY = ("show", "dist", "threat", "events", "image", "sight", "actions", "options", "spells", "ask", "briefing")
 
 
 def undo_path(campaign: str) -> Path:
@@ -1716,7 +1731,7 @@ def apply_effect_data(args: Args, data: dict[str, Any] | None, c: Token, st: Sta
         reach = max(rng, 5) if rng == 0 else rng   # touch: adjacent
         if d > reach:
             raise CombatError(f"{args.target} is {d} ft away, out of range ({'touch' if rng == 0 else f'{rng} ft'})")
-    for k in ("save", "dmg", "heal", "cond", "cond_rounds"):
+    for k in ("save", "dmg", "heal", "cond", "cond_rounds", "cond_mods"):
         if not getattr(args, k, None) and data.get(k):
             setattr(args, k, data[k])
     if data.get("half") and not args.half:
@@ -1777,6 +1792,48 @@ def ability_action(c: Token, name: str, spec: dict[str, Any]) -> str:
     return spec.get("action", "standard")
 
 
+def is_buff(spec: dict[str, Any] | None) -> bool:
+    """Whether effect data is a buff for allies (bless, inspire courage), not damage or healing."""
+    return bool(spec and (spec.get("allies") or (spec.get("buff") and not spec.get("heal") and not spec.get("dmg")
+                                                   and not spec.get("cond"))))
+
+
+def buff_targets(st: State, c: Token, spec: dict[str, Any], target: str | None) -> list[Token]:
+    """Who a buff reaches: one ally (--target), or every ally in range (a burst on the user: its radius).
+
+    Raises:
+        CombatError: a one-ally buff without --target, or a target out of range.
+    """
+    friendly = c["side"] in FRIENDLY
+    rng = spec.get("range")
+    area = str(spec.get("area") or "")
+    if rng is None and area.startswith("burst") and spec.get("center", "self") == "self":
+        rng = int(area.split()[1])
+    if spec.get("target") == "one":
+        if not target:
+            raise CombatError("this buff targets one ally: --target TOKEN")
+        t = token(st, target)
+        if rng is not None and t is not c and feet_between(c, t) > max(rng, 5):
+            raise CombatError(f"{t['token']} is {feet_between(c, t)} ft away, out of range ({'touch' if rng == 0 else f'{rng} ft'})")
+        return [t]
+    allies = [o for o in st["tokens"] if not o.get("removed") and in_fight(o) and o["hp"] >= 0
+              and (o["side"] in FRIENDLY) == friendly]
+    return [o for o in allies if o is c or rng is None or feet_between(c, o) <= rng]
+
+
+def apply_buff(st: State, c: Token, spec: dict[str, Any], name: str, target: str | None) -> list[str]:
+    """Put a buff's condition (with its modifiers) on everyone it reaches, for buff_rounds rounds."""
+    targets = buff_targets(st, c, spec, target)
+    label_ = spec.get("buff") or name
+    mods = dict(spec.get("allies") or {})
+    for o in targets:
+        R.add_condition(st, o, label_, rounds=spec.get("buff_rounds", 1), mods=mods or None)
+    if targets and not c.get("hidden"):
+        event(st, f"{label_}: {', '.join(who(o) for o in targets)} ({spec.get('buff_rounds', 1)} rounds)")
+    return [f"  {label_} on {', '.join(o['token'] for o in targets) or 'nobody in range'} for {spec.get('buff_rounds', 1)} rounds"
+            + (": " + ", ".join(f"{k} {v:+d}" for k, v in mods.items()) if mods else " (tracked by name)")]
+
+
 def cmd_ability(args: Args, st: State) -> str:
     """Use a special ability from the profile: uses per day (rounds per day for a performance),
     the action (charged to the turn), and its effect: a buff on the allies it reaches, healing,
@@ -1793,22 +1850,10 @@ def cmd_ability(args: Args, st: State) -> str:
     if spec.get("maintain"):
         c["performing"], c["performed_round"] = name, st.get("round", 1)
     friendly = c["side"] in FRIENDLY
-    if spec.get("allies"):   # a buff
-        if spec.get("target") == "one":
-            if not args.target:
-                raise CombatError("this buff targets one ally: --target TOKEN")
-            targets = [token(st, args.target)]
-        else:
-            targets = [o for o in st["tokens"] if not o.get("removed") and in_fight(o) and (o["side"] in FRIENDLY) == friendly]
-            if spec.get("range") is not None:
-                targets = [o for o in targets if o is c or feet_between(c, o) <= spec["range"]]
-        label_ = spec.get("buff") or name
-        for o in targets:
-            R.add_condition(st, o, label_, rounds=spec.get("buff_rounds", 1), mods=dict(spec["allies"]))
-        out.append(f"  {label_} on {', '.join(o['token'] for o in targets) or 'nobody'}: "
-                   + ", ".join(f"{k} {v:+d}" for k, v in spec["allies"].items()))
+    if is_buff(spec):
+        out += apply_buff(st, c, spec, name, args.target)
         if not c.get("hidden"):
-            event(st, f"{who(c)}: {name}" + (f" ({', '.join(who(o) for o in targets)})" if targets else ""))
+            event(st, f"{who(c)} uses {name}")
         return "\n".join(out)
     if spec.get("heal") and spec.get("target") == "area":   # e.g. channel energy: one roll, everyone it covers
         at = parse_pos(args.at, st) if args.at else (c["x"], c["y"])
@@ -1862,7 +1907,11 @@ def cmd_cast(args: Args, st: State) -> str:
                           + " in its spells known / prepared")
     sc, lvl = found
     effects = {k.lower(): v for k, v in (sc.get("effects") or {}).items()}
-    apply_effect_data(args, effects.get(spell), c, st)   # before the slot is spent: a missing aim fails cleanly
+    data = effects.get(spell)
+    if data and is_buff(data):
+        buff_targets(st, c, data, args.target)   # before the slot is spent: a missing target fails cleanly
+    else:
+        apply_effect_data(args, data, c, st)   # before the slot is spent: a missing aim fails cleanly
     key = sc["class"].lower()
     left_note = ""
     if lvl > 0:
@@ -1885,7 +1934,8 @@ def cmd_cast(args: Args, st: State) -> str:
     if not c.get("hidden"):
         event(st, f"{who(c)} casts a spell" + ("" if ok else ", but loses it"))
     head = f"{c['token']} casts {args.spell} ({sc['class']} {lvl}, CL {sc['cl']}, save DC {dc}): {'OK' if ok else 'LOST'}"
-    effect = _spell_effect(args, st, c, args.spell, dc) if ok else []
+    effect = ([] if not ok else apply_buff(st, c, data, args.spell, args.target) if data and is_buff(data)
+              else _spell_effect(args, st, c, args.spell, dc))
     return "\n".join([head] + ([f"  {left_note}"] if left_note else []) + lines + effect)
 
 
@@ -1902,7 +1952,8 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
             raise CombatError('--area must look like "cone 15", "burst 20" or "line 60"')
         ns = argparse.Namespace(shape=m.group(1), feet=int(m.group(2)), at=args.at, frm=c["token"],
                                 toward=args.toward, save=args.save, dc=dc, dmg=args.dmg, half=args.half,
-                                name=name, no_slot=True, log_name=shown, cond=getattr(args, "cond", None), cond_rounds=getattr(args, "cond_rounds", None))
+                                name=name, no_slot=True, log_name=shown, cond=getattr(args, "cond", None), cond_rounds=getattr(args, "cond_rounds", None),
+                                cond_mods=getattr(args, "cond_mods", None))
         out.append(cmd_area(ns, st))
     elif args.target:
         t = token(st, args.target)
@@ -1939,7 +1990,8 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
             if t["side"] == "pc":
                 st.setdefault("pending_saves", {})[t["token"]] = {
                     "kind": args.save, "dc": dc, "dmg": dmg, "half": args.half, "name": shown,
-                    "cond": getattr(args, "cond", None), "cond_rounds": getattr(args, "cond_rounds", None)}
+                    "cond": getattr(args, "cond", None), "cond_rounds": getattr(args, "cond_rounds", None),
+                    "cond_mods": getattr(args, "cond_mods", None)}
                 st["awaiting"] = f"{t['name']}: roll a {args.save.capitalize()} save against {shown}"
                 out.append(f"  {t['name']}'s save is pending: ask the player, then `save {t['token']} --total N` (question set)")
             else:
@@ -1953,13 +2005,13 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
                     event(st, f"{shown}: {who(t)} {args.save} save {total_s} — {'success' if ok else 'failure'}"
                               + (f", {taken} damage [{who(t)}: {status(t)}]" if args.dmg else ""))
                 if not ok:
-                    out += spell_condition(st, t, getattr(args, "cond", None), getattr(args, "cond_rounds", None), shown)
+                    out += spell_condition(st, t, getattr(args, "cond", None), getattr(args, "cond_rounds", None), shown, getattr(args, "cond_mods", None))
         elif dmg:
             apply_damage(t, dmg)
             if not t.get("hidden"):
                 event(st, f"{shown}: {who(t)} takes {dmg} damage [{who(t)}: {status(t)}]")
         if not args.save:   # no save allowed: the condition just applies
-            out += spell_condition(st, t, getattr(args, "cond", None), getattr(args, "cond_rounds", None), shown)
+            out += spell_condition(st, t, getattr(args, "cond", None), getattr(args, "cond_rounds", None), shown, getattr(args, "cond_mods", None))
     return out
 
 
@@ -1970,7 +2022,10 @@ def cmd_sla(args: Args, st: State) -> str:
     entry = next((s for s in (c.get("profile") or {}).get("sla") or [] if s["name"].lower() == name), None)
     if not entry:
         raise CombatError(f"{c['token']} has no spell-like ability {args.name!r}")
-    apply_effect_data(args, entry.get("effect"), c, st)
+    if is_buff(entry.get("effect")):
+        buff_targets(st, c, entry["effect"], args.target)
+    else:
+        apply_effect_data(args, entry.get("effect"), c, st)
     sp = _spent(c)
     per_day = entry["per_day"]
     note = ""
@@ -1991,7 +2046,8 @@ def cmd_sla(args: Args, st: State) -> str:
     head = f"{c['token']} uses {args.name} (SLA, CL {entry.get('cl', '?')}{dc}): {'OK' if ok else 'LOST'}"
     if ok and (args.area or args.target) and args.save and not dc_val:
         raise CombatError(f"{args.name} has no DC in the profile: pass --dc")
-    effect = _spell_effect(args, st, c, args.name, dc_val) if ok else []
+    effect = ([] if not ok else apply_buff(st, c, entry["effect"], args.name, args.target) if is_buff(entry.get("effect"))
+              else _spell_effect(args, st, c, args.name, dc_val))
     return "\n".join([head] + ([f"  {note}"] if note else []) + lines + effect)
 
 
@@ -2744,6 +2800,14 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
     head: list[str] = []
     if wnote:
         head.append(f"  (its tactics: {wnote})")
+    fear = next((n for n in ("cowering", "panicked", "frightened") if R.has(c, n)), None)
+    if fear == "cowering":
+        return ["  COWERING: it can take no actions this turn."]
+    if fear:
+        head.append(f"  {fear.upper()}: it must flee from the source of its fear as well as it can"
+                    + (", dropping what it holds; it can't attack" if fear == "panicked"
+                       else "; it fights only if cornered") + ". Only flight is listed.")
+    attackable = [] if fear else foes
 
     def add(kind: str, deal: float, support: float, sq: Square, provoked: list[str], text: str,
             extra: str = "", exposure: float = 1.0) -> None:
@@ -2763,7 +2827,8 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
         return how + fmt_pos(*sq) + ", "
 
     # --- attacks ---
-    for t in foes:
+    attacked: set[str] = set()   # foes with a melee attack plan this turn
+    for t in attackable:
         unseen = V.concealment(st, c, t)[0] >= 50
         for kind in ("melee", "ranged"):
             best: tuple[float, Any] | None = None
@@ -2800,6 +2865,31 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
             if best:
                 ev, gift, sq, provoked, label_, extra = best[1]
                 add(kind, ev, gift, sq, provoked, label_, extra)
+                if kind == "melee":
+                    attacked.add(t["token"])
+
+    # --- advance: a melee creature that can't reach a foe this turn closes in (a double move) ---
+    melee_ws = _weapons(prof, "melee", True)
+    if two and routes2 and melee_ws:
+        memo2: dict[Square, list[str]] = {}
+        for t in [o for o in attackable if o["token"] not in attacked][:3]:
+            spots = []
+            for q, feet in two.items():
+                with _placed(c, q):
+                    if threatens(c, t):
+                        spots.append(q)
+            if not spots:   # too far even so: as close as it gets
+                spots = [min(two, key=lambda q: (min(R.sq_dist(q, cc) for cc in cells(t)), two[q]))]
+            prov_of = {q: path_provokers(st, c, routes2.get(q, [start, q]), memo2) for q in spots}
+            q = min(spots, key=lambda q: (_aoo_risk(st, c, prov_of[q]), _incoming(st, c, q, memo), two[q]))
+            with _placed(c, q):
+                reach_next = threatens(c, t)
+                ev_next, _n = _attack_ev(st, c, t, melee_ws, "melee")
+                hidden = c.get("hidden") and all(V.hidden_from(st, c, V.presumed(f, c)) for f in foes)
+            how = f"move {one[q]} ft" if q in one else f"double move {two[q]} ft"
+            add("melee", 0.5 * ev_next if reach_next else 0.0, 0, q, prov_of[q],
+                f"{how} to {fmt_pos(*q)}, closing on {t['token']}" + (" (stays hidden)" if hidden else ""),
+                f"(next round: full attack ~{ev_next:.1f}, counted at half)" if reach_next else "(still out of reach)")
 
     # --- spells, spell-like abilities and special abilities with effect data ---
     sp = _spent(c)
@@ -2831,6 +2921,9 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
         used = sp.get("abilities", {}).get(nm, 0)
         if spec.get("uses") is None or used < spec["uses"]:
             castables.append((f"ability {nm}", spec, spec.get("dc"), 0, 0, False))   # Su/Ex: no AoO
+
+    if fear:
+        castables = []
 
     def casting(q: Square, lvl: int, conc: int, provokes: bool) -> tuple[float, list[str], str]:
         """Casting at q: (chance the effect happens, who it provokes, a note). Threatened, a spell
@@ -2955,12 +3048,15 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                 f"{where(q, one.get(q, 0))}{text}{note}")
 
     # --- defense: total defense here or on the safest square in one move (+4 AC: ~20% fewer hits) ---
-    add("defense", 0, 0, start, [], "stay, total defense", exposure=0.8)
+    if not fear:
+        add("defense", 0, 0, start, [], "stay, total defense", exposure=0.8)
     safest = min(one, key=lambda q: (_incoming(st, c, q, memo), one[q]))
     if safest != start:
         add("defense", 0, 0, safest, provokers(safest), f"{where(safest, one[safest])}total defense (safest square in one move)",
             exposure=0.8)
     # --- retreat: withdraw (full-round double move; leaving the first square doesn't provoke) ---
+    if fear and two and routes2 and foes:   # a run (×4 speed) would go further; the withdraw is the safe minimum
+        head.append("  (it may also run: `move … --as run`, four times its speed, away from the source)")
     if two and routes2 and foes:
         def far(q: Square) -> tuple[float, int]:
             return (_incoming(st, c, q, memo), -min(R.sq_dist(q, (f["x"], f["y"])) for f in foes))
@@ -4137,19 +4233,21 @@ def cmd_save(args: Args, st: State) -> str:
         else:
             event(st, f"{shown} — {'success' if ok else 'failure'}" + ("" if not pending["dmg"] else f": no damage from {pending['name']}"))
         if not ok:
-            out += spell_condition(st, c, pending.get("cond"), pending.get("cond_rounds"), pending["name"])
+            out += spell_condition(st, c, pending.get("cond"), pending.get("cond_rounds"), pending["name"], pending.get("cond_mods"))
     else:
         event(st, f"{shown} — {'success' if ok else 'failure'}")
     return "\n".join(out)
 
 
-def spell_condition(st: State, t: Token, cond: str | None, rounds: int | None, source: str) -> list[str]:
-    """Put a spell's condition on a target that failed its save (or had none). Returns report lines."""
+def spell_condition(st: State, t: Token, cond: str | None, rounds: int | None, source: str,
+                    mods: dict[str, int] | None = None) -> list[str]:
+    """Put a spell's condition on a target that failed its save (or had none). A custom condition
+    (evil eye) brings its own modifiers (`cond_mods`). Returns report lines."""
     if not cond:
         return []
-    R.add_condition(st, t, cond, rounds=rounds)
+    R.add_condition(st, t, cond, rounds=rounds, mods=mods or None)
     out = [f"  {t['token']}: {cond}" + (f" for {rounds} rounds" if rounds else " (until removed)")]
-    if cond.lower() not in R.CONDITIONS:
+    if cond.lower() not in R.CONDITIONS and mods is None:
         out.append(f"  NOTE: '{cond}' isn't a known condition, so it's tracked by name only (no automatic effects); "
                    f"known ones: {', '.join(sorted(R.CONDITIONS))}")
     if not t.get("hidden"):
@@ -4202,7 +4300,8 @@ def cmd_area(args: Args, st: State) -> str:
         if o["side"] == "pc":
             st.setdefault("pending_saves", {})[o["token"]] = {
                 "kind": args.save, "dc": args.dc, "dmg": dmg, "half": args.half, "name": shown_name,
-                "cond": getattr(args, "cond", None), "cond_rounds": getattr(args, "cond_rounds", None)}
+                "cond": getattr(args, "cond", None), "cond_rounds": getattr(args, "cond_rounds", None),
+                    "cond_mods": getattr(args, "cond_mods", None)}
             pcs.append(o)
             continue
         ok, total_s, how = _save(st, o, args.save, args.dc)
@@ -4214,7 +4313,7 @@ def cmd_area(args: Args, st: State) -> str:
             shown = f"{who(o)} {args.save} save {total_s}" + (f" vs DC {args.dc}" if o["side"] in FRIENDLY else "")
             event(st, f"{shown_name}: {shown} — {'success' if ok else 'failure'}, {taken} damage [{who(o)}: {status(o)}]")
         if not ok:
-            out += spell_condition(st, o, getattr(args, "cond", None), getattr(args, "cond_rounds", None), shown_name)
+            out += spell_condition(st, o, getattr(args, "cond", None), getattr(args, "cond_rounds", None), shown_name, getattr(args, "cond_mods", None))
     if pcs:
         names = ", ".join(o["name"] for o in pcs)
         st["awaiting"] = f"{names}: roll a {args.save.capitalize()} save against {shown_name}"
@@ -4332,6 +4431,7 @@ def main(argv: list[str] | None = None) -> int:
     at.add_argument("--range-inc", type=int, help="with --roll: range increment in feet")
     lg = sub.add_parser("log"); lg.add_argument("text")
     ak = sub.add_parser("ask"); ak.add_argument("question", nargs="?"); ak.add_argument("--clear", action="store_true")
+    bf = sub.add_parser("briefing"); bf.add_argument("token"); bf.add_argument("--round", type=int)
     dg = sub.add_parser("damage"); dg.add_argument("token"); dg.add_argument("amount", type=int)
     dg.add_argument("--nonlethal", action="store_true")
     ev = sub.add_parser("events"); ev.add_argument("--all", action="store_true")
@@ -4447,7 +4547,7 @@ def main(argv: list[str] | None = None) -> int:
                 "threat": cmd_threat, "hp": cmd_hp, "cond": cmd_cond, "init": cmd_init,
                 "reveal": cmd_flag, "hide": cmd_flag, "remove": cmd_flag, "end": cmd_end,
                 "image": cmd_image, "attack": cmd_attack, "log": cmd_log, "events": cmd_events,
-                "ask": cmd_ask, "damage": cmd_damage, "stabilize": cmd_stabilize, "save": cmd_save, "area": cmd_area,
+                "ask": cmd_ask, "briefing": cmd_briefing, "damage": cmd_damage, "stabilize": cmd_stabilize, "save": cmd_save, "area": cmd_area,
                 "order": cmd_order, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
                 "provoke": cmd_provoke, "endturn": cmd_endturn, "maneuver": cmd_maneuver,
                 "light": cmd_light, "sight": cmd_sight, "act": cmd_act, "surprise": cmd_surprise, "ability": cmd_ability,

@@ -35,9 +35,14 @@ EventHandler = Callable[[Event], None]
 REPO = Path(__file__).resolve().parent
 STATE = REPO / ".play"
 
+# The built-in tools the DM process has at all (`--tools`; it also limits its subagents, so the web
+# tools stay for dm-researcher and dm-scribe, while the DM itself never uses them). Every built-in
+# tool's definition rides along in every model call: the full set costs ~30k tokens per call.
+DM_TOOLS = "Bash,Read,Write,Edit,Glob,Grep,Skill,Agent,WebFetch,WebSearch"
+
 ALLOWED_TOOLS = [
-    "Read", "Glob", "Grep", "Edit", "Write", "Agent", "Task", "Skill", "TodoWrite",
-    "WebFetch", "WebSearch",
+    "Read", "Glob", "Grep", "Edit", "Write", "Agent", "Skill",
+    "WebFetch", "WebSearch",   # for the research subagents (the allowlist hook limits the sites)
     "mcp__dm",   # the game tools (scripts/mcp_server.py): dice_roll, world, combat_*; the scripts aren't run via Bash here
     "Bash(ls:*)", "Bash(cat:*)", "Bash(head:*)", "Bash(tail:*)", "Bash(grep:*)",
     "Bash(sed -n:*)", "Bash(wc:*)", "Bash(find:*)", "Bash(mkdir:*)",
@@ -75,6 +80,7 @@ WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude 
   - THE COMBAT RUNNER plays most NPC turns: a separate, lean process the interface hands each enemy's step to (it saves most of the tokens). You then get "[Interface recap: …]" in front of the player's next message: what it narrated and the combat log. Treat that as what happened; the player saw it. Creatures you play yourself (a boss, a story NPC: `dm_plays` in the encounter, or combat_add main_dm) still come to you as combat steps.
   - THE INTERFACE RUNS THE TURN ORDER. Never run `next` (it's refused). A bracketed "[Combat step …]" message names ONE actor, what it can see, and its tactical options (squares, the roll it needs there, what provokes; combat_options with area for area effects): resolve exactly that actor in ONE combat_batch call, narrate only that actor, and stop. Play it by its nature and what it sees. A hidden actor's step: reply "…" unless it gets revealed.
   - SUBMIT WHAT THE PLAYER DECLARED, EXACTLY: never judge yourself whether an action is legal or already used up, the script does. The "Now: round N, …'s turn. Actions left …" line in the bracket is the truth about whose turn it is and what's left; earlier turns don't count. If a tool REFUSES the declared action (e.g. a 5-foot step that costs 10 ft), tell the player plainly why and ask what they do instead. Never substitute another action for them (no full move instead of a refused step).
+  - To explain why an NPC did something, show its logged briefing: combat_info what=briefing token=… (round=N). Never move tokens back and forth to recreate an earlier position.
   - Corrections go through combat_undo (the player's last command) or the specific command (combat_hp, combat_condition). NEVER edit the combat state files or the scripts yourself: if you think the script is wrong, say so out of character and go on with its result, or ask the player how to rule.
   - Every action is charged to the actor's turn, and the tool results say what's left; actions without their own tool (draw a weapon, stand up, drink a potion) are combat_act. On the PC's turn, resolve what the player declares and say which actions remain, from that report. If the player corrects a roll they already gave (a forgotten modifier), call combat_undo and enter the corrected one: never `override` for that. `override` is only for a feat or ability that changes the rules (Spring Attack, Quick Draw). If the player ends the turn in other words or together with their actions, call combat_endturn.
   - When a tool result sets a question (an AoO, a save, a stabilization check) or the player must decide something mid-round, ask them (combat_ask for your own questions). A dying PC rolls their own stabilization checks; never play the fight forward without the player.
@@ -199,7 +205,8 @@ class Engine:
     """One headless DM session. `send()` blocks until the reply to that message is complete."""
 
     def __init__(self, on_event: EventHandler, model: str | None = None, effort: str = 'medium', debug: bool = False,
-                 record_session: bool = False, role: str = "dm", system_prompt: str | None = None) -> None:
+                 record_session: bool = False, role: str = "dm", system_prompt: str | None = None,
+                 campaign: str | None = None) -> None:
         """Args:
             on_event: called with every event (from a reader thread).
             model: model alias or id for `claude --model`, or None for the default.
@@ -211,7 +218,10 @@ class Engine:
             role: "dm" (the full DM: Claude Code's prompt, tools, skills and the project) or "runner"
                 (the combat runner: a lean process with only `system_prompt` and the dm tools).
             system_prompt: the runner's whole system prompt.
+            campaign: the game tools' default campaign (CLAUDE_DM_CAMPAIGN), so a fresh process's
+                first tool call doesn't fail for want of one.
         """
+        self.campaign = campaign
         self.on_event = on_event
         self.record_session = record_session
         self.role = role
@@ -301,7 +311,7 @@ class Engine:
                     "--system-prompt", self.system_prompt or RUNNER_PROMPT, "--no-session-persistence"]
             resume = None
         else:
-            cmd += ["--allowedTools", *ALLOWED_TOOLS, "--disallowedTools", "AskUserQuestion",
+            cmd += ["--tools", DM_TOOLS, "--allowedTools", *ALLOWED_TOOLS,
                     "--append-system-prompt", WRAPPER_PROMPT]
         if self.model:
             cmd += ["--model", self.model]
@@ -313,6 +323,8 @@ class Engine:
         cmd += ["--mcp-config", str(REPO / ".mcp.json"), "--strict-mcp-config"]
         # load the game tools up front (no tool-search round trip before the first use of each)
         env = dict(os.environ, CLAUDE_DM_MODE="play", ENABLE_TOOL_SEARCH="false")
+        if self.campaign:
+            env["CLAUDE_DM_CAMPAIGN"] = self.campaign
         self.proc = subprocess.Popen(cmd, cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, text=True, bufsize=1, env=env)
         threading.Thread(target=self._drain_stderr, args=(self.proc,), daemon=True).start()
@@ -1053,7 +1065,7 @@ RUNNER_PROMPT = """You are the combat runner of a tabletop DM interface (Pathfin
 
 Every message is a combat step for ONE creature, with a DM-only briefing: its attacks, positions, tactical options (squares, the d20 roll it needs, what provokes) and what it can see.
 1. Decide what this creature does, by its nature, its knowledge and the encounter's tactics and morale (not by what you know as the DM). A cowardly creature may retreat; morale breaks per the notes.
-2. Resolve it in ONE combat_batch call with the dm tools (move, attack, cast/sla through combat_cast with the effect in the same call: dmg/save, heal dice for cure spells, cond + cond_rounds for a condition on a failed save, unless the profile's effect data fills it in; special abilities like bardic performance or channel energy through combat_ability; maneuvers, conditions). The turn plans in the briefing weigh damage, support and risk, including its tactics weights and broken morale: use the spells, buffs, heals, defense and retreats they list, but play the creature's nature over the top number. The tools roll and apply every effect themselves: never fix HP afterwards with dice_roll and combat_hp. If a call fails, fix that call; if the effect really wasn't applied, say so in one line instead of patching it. The tools do all the rule math. Never run combat_next or combat_end; act only for this creature.
+2. Resolve it in ONE combat_batch call with the dm tools (move, attack, cast/sla through combat_cast with the effect in the same call: dmg/save, heal dice for cure spells, cond + cond_rounds for a condition on a failed save, unless the profile's effect data fills it in; special abilities like bardic performance or channel energy through combat_ability; maneuvers, conditions). The turn plans in the briefing weigh damage, support and risk, including its tactics weights and broken morale: use the spells, buffs, heals, defense and retreats they list, but play the creature's nature over the top number. A frightened or panicked creature's plans list only flight: it flees. Buff spells (bless) apply their bonus to every ally in range through combat_cast. The tools roll and apply every effect themselves: never fix HP afterwards with dice_roll and combat_hp. If a call fails, fix that call; if the effect really wasn't applied, say so in one line instead of patching it. The tools do all the rule math. Never run combat_next or combat_end; act only for this creature.
 3. Then narrate only this creature's turn, in 1-3 lines, and stop.
 
 Narration rules (strict):
@@ -1100,7 +1112,7 @@ class CombatRunner:
         """
         self.campaign = campaign
         self.engine = Engine(on_event, model=model, effort=effort, role="runner",
-                             system_prompt=runner_system_prompt(campaign))
+                             system_prompt=runner_system_prompt(campaign), campaign=campaign)
         self.after_send = after_send
         self.steps = 0
         self.recent: list[str] = []   # the last narrations, for continuity
