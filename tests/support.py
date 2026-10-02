@@ -53,11 +53,13 @@ class CampaignCase(unittest.TestCase):
         self._env = os.environ.pop("CLAUDE_DM_MODE", None)
         combat.RNG = random.Random(1)
         world.RNG = random.Random(1)
+        R.SPELLS_DIR = self.dir / "spells"   # hermetic: only the spells a test writes (the library's are local data)
 
     def tearDown(self) -> None:
         shutil.rmtree(self.dir, ignore_errors=True)
         combat.RNG = None
         world.RNG = None
+        R.SPELLS_DIR = None
         if self._env is not None:
             os.environ["CLAUDE_DM_MODE"] = self._env
 

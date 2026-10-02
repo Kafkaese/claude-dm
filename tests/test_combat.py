@@ -809,3 +809,75 @@ class FearAndAdvance(CampaignCase):
                                                             "name": "Gob", "briefing": "PLANS HERE", "sight": ""}) + "\n")
         self.assertIn("PLANS HERE", self.run_cmd("briefing", "g1"))
         self.fail_cmd("briefing", "g1", "--round", "4")
+
+
+BURNING = '# Burning Hands\n```spell-effect\n{"target": "area", "area": "cone 15", "save": "ref", "half": true, "dmg": "{min(cl,5)}d4"}\n```\n'
+SLEEPY = '# Sleep\n```spell-effect\n{"target": "area", "area": "burst 10", "center": "point", "range": "medium", "save": "will", "cond": "asleep", "cond_rounds": "10*cl"}\n```\n'
+
+
+class LibrarySpells(CampaignCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.write("spells/burning-hands.md", BURNING)
+        self.write("spells/sleep.md", SLEEPY)
+        self.write("spells/detect-magic.md", '# Detect Magic\n```spell-effect\n{"utility": true}\n```\n')
+
+    def caster(self, cl: int, **effects: dict) -> dict:
+        return dict(GOBLIN, spellcasting=[{"class": "sorcerer", "cl": cl, "type": "spontaneous", "dc_base": 13,
+                                           "concentration": 5, "slots": {"0": 99, "1": 4},
+                                           "spells": {"0": ["detect magic"], "1": ["burning hands", "sleep", "magic missile"]},
+                                           "effects": effects}])
+
+    def test_effects_scale_with_caster_level(self) -> None:
+        import combat_rules as R
+        prof, errs, warns = R.resolve_spell_effects(self.caster(3))
+        eff = prof["spellcasting"][0]["effects"]
+        self.assertEqual(errs, [])
+        self.assertEqual(eff["burning hands"]["dmg"], "3d4")
+        self.assertEqual(eff["sleep"]["range"], 130)           # medium: 100 + 10/level
+        self.assertEqual(eff["sleep"]["cond_rounds"], 30)
+        self.assertNotIn("detect magic", eff)                    # utility: no effect, no warning
+        self.assertTrue(any("magic missile" in w for w in warns))
+        self.assertEqual(R.resolve_spell_effects(self.caster(9))[0]["spellcasting"][0]["effects"]["burning hands"]["dmg"], "5d4")
+
+    def test_caster_overrides_merge_on_top(self) -> None:
+        import combat_rules as R
+        prof, errs, _ = R.resolve_spell_effects(self.caster(1, **{"burning hands": {"dmg_bonus": 1}}))
+        self.assertEqual(prof["spellcasting"][0]["effects"]["burning hands"]["dmg"], "1d4+1")
+        self.assertEqual(prof["spellcasting"][0]["effects"]["burning hands"]["save"], "ref")
+        _, errs, _ = R.resolve_spell_effects(self.caster(1, **{"sleep": {"cond_rounds": "10*level"}}))
+        self.assertTrue(any("not allowed in a formula" in e for e in errs))
+
+    def test_cast_uses_the_library_effect(self) -> None:
+        self.new(blank="10x6")
+        self.add("s1", "Caster", "B3", self.caster(1), init=20)
+        self.add("C", "Corin", "C3", PC_PROFILE, side="pc", init=10)
+        self.run_cmd("next")
+        out = self.run_cmd("cast", "s1", "burning hands", "--toward", "C3")
+        self.assertIn("1d4", out)
+        self.assertIn("PC saves pending (Corin)", out)
+        self.assertIn("burning hands", self.run_cmd("options", "s1"))   # the plans see it too
+
+
+class EffectDetails(CampaignCase):
+    def test_dice_duration_self_buff_and_notes(self) -> None:
+        self.write("spells/cause-fear.md", '```spell-effect\n{"target": "one", "range": "close", "save": "will", '
+                                           '"cond": "frightened", "cond_rounds": "1d4", "notes": "6+ HD immune"}\n```\n')
+        self.write("spells/shield.md", '```spell-effect\n{"target": "self", "range": "personal", "allies": {"ac": 4}, '
+                                       '"buff": "shield", "buff_rounds": "10*cl"}\n```\n')
+        caster = dict(GOBLIN, saves={"fort": 0, "ref": 0, "will": -20},
+                      spellcasting=[{"class": "wizard", "cl": 2, "type": "spontaneous", "dc_base": 13, "concentration": 5,
+                                     "slots": {"1": 3}, "spells": {"1": ["cause fear", "shield"]}}])
+        self.new(blank="10x6")
+        self.add("w1", "Witch", "B2", caster, init=20)
+        self.add("a1", "Pal", "C2", GOBLIN, side="ally", init=15)
+        self.add("g1", "Foe", "F2", dict(GOBLIN, saves={"fort": 0, "ref": 0, "will": -20}), init=10)
+        self.run_cmd("next")
+        out = self.run_cmd("cast", "w1", "cause fear", "--target", "g1")
+        self.assertIn("DM, by hand: 6+ HD immune", out)
+        cond = next(x for x in self.tok("g1")["conditions"] if x["name"] == "frightened")
+        self.assertIn(cond["expires"]["round"] - 1, range(1, 5))     # 1d4 rounds, rolled
+        self.run_cmd("cast", "w1", "shield", "--override")
+        import combat_rules as R
+        self.assertTrue(R.has(self.tok("w1"), "shield"))
+        self.assertFalse(R.has(self.tok("a1"), "shield"))           # self only

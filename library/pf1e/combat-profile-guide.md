@@ -89,20 +89,18 @@ Each spellcasting class or source becomes one entry in `spellcasting`:
 
 Where the stat block lists the spell's level, put it in `level`, because the concentration DC depends on it.
 
-**Effect data** lets the script resolve a spell in one call and lets the tactical options weigh it. Add it for every spell or SLA that deals damage, heals, buffs or imposes a condition in a fight. Work out the numbers at this creature's caster level, from the spell's text in the library:
+**Spell effects come from the library.** List the spells; the script takes each one's effect from `library/pf1e/spells/<name>.md` (its ```spell-effect block, see that folder's README) and works it out at this entry's `cl` when the creature joins a fight. Most casters need **no** `effects` at all. `effects` holds only what's specific to this caster, merged on top:
 
-| Spell | Effect |
+| Situation | `effects` entry |
 |---|---|
-| *burning hands* (CL 1) | `"effects": {"burning hands": {"target": "area", "area": "cone 15", "save": "ref", "half": true, "dmg": "1d4"}}` in the spellcasting entry |
-| *magic missile* (CL 3) | `"magic missile": {"target": "one", "range": 130, "dmg": "2d4+2"}` |
-| *ray of frost* (a Small caster, BAB +0, Dex 16) | `"ray of frost": {"target": "one", "range": 25, "touch": true, "attack": 4, "dmg": "1d3"}`. `attack` is the touch attack bonus (ranged: BAB + Dex + size; melee: BAB + Str + size); the script rolls it against touch AC before the effect lands |
-| *sleep* | `"sleep": {"target": "area", "area": "burst 10", "center": "point", "range": 110, "save": "will", "cond": "asleep", "cond_rounds": 10}` |
-| *cure light wounds* (CL 3) | `"cure light wounds": {"target": "one", "range": 0, "heal": "1d8+3"}` |
-| *bless* (CL 3) | `"bless": {"target": "area", "area": "burst 50", "center": "self", "allies": {"atk": 1}, "buff": "blessed", "buff_rounds": 30, "notes": "+1 morale on saves vs. fear too"}`: a buff puts its condition with the `allies` modifiers on every ally it reaches |
-| *evil eye* hex (a custom condition) | `"cond": "evil eye (attack rolls)", "cond_mods": {"atk": -2}`. A `cond` must be a condition the script knows (`profile check` lists them), or bring its modifiers in `cond_mods`; `"cond_mods": {}` tracks it by name on purpose (*command*, *charm person*) |
-| an SLA | the same object as `"effect"` on the `sla` entry |
+| a touch or ray spell (*ray of frost*, Small caster, BAB +0, Dex 16) | `"ray of frost": {"attack": 4}`: the touch attack bonus (ranged: BAB + Dex + size; melee: BAB + Str + size), rolled against touch AC before the effect lands |
+| bloodline arcana or another fixed extra (+1 damage) | `"burning hands": {"dmg_bonus": 1}` |
+| a printed DC that differs from `dc_base` + level (Spell Focus) | `"daze": {"dc": 13}` |
+| a spell the library doesn't have yet | add it to the library instead (spells/README.md); a whole effect here works too, as a stopgap |
+| an SLA | the same, as `"effect"` on the `sla` entry (usually nothing: the library has it) |
 
-`dc` is optional (the script uses `dc_base` + level, or the SLA's `dc`). `notes` holds what the script can't apply (temporary HP, a fear-only save bonus, HD limits); the DM handles it. **Work every number out from the spell's own text** (range, duration, save, what a bonus applies to): the profile check can't tell a wrong range from a right one.
+`profile check` resolves every listed spell and warns about the ones without effect data. Conditions and buffs use the names in `library/pf1e/conditions.json` (`blessed`, `frightened`, `evil eye (attack rolls)`, …); a custom one brings `cond_mods` (`{}` = tracked by name on purpose).
+
 
 ## Sneak attack and special abilities
 | Stat block | Profile |

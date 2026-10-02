@@ -1257,6 +1257,8 @@ def cmd_add(args: Args, st: State) -> str:
         if errs:
             raise CombatError(f"the combat profile for {args.token} has errors (fix the stat block's block, "
                               f"see library/<system>/combat-profile-guide.md):\n  " + "\n  ".join(errs))
+        if prof.get("spellcasting") or prof.get("sla"):   # spell effects from the library, at its caster level
+            prof = R.resolve_spell_effects(prof, system)[0]
 
     def pick(arg: Any, key: str, default: Any = None) -> Any:
         """The command-line value if given, else the profile's, else the default."""
@@ -1792,10 +1794,20 @@ def ability_action(c: Token, name: str, spec: dict[str, Any]) -> str:
     return spec.get("action", "standard")
 
 
+def effect_notes(spec: dict[str, Any] | None) -> list[str]:
+    """The effect's notes (what the script doesn't apply) as a reminder line for the DM."""
+    return [f"  DM, by hand: {spec['notes']}"] if spec and spec.get("notes") else []
+
+
 def is_buff(spec: dict[str, Any] | None) -> bool:
     """Whether effect data is a buff for allies (bless, inspire courage), not damage or healing."""
     return bool(spec and (spec.get("allies") or (spec.get("buff") and not spec.get("heal") and not spec.get("dmg")
                                                    and not spec.get("cond"))))
+
+
+def buff_mods(spec: dict[str, Any]) -> dict[str, int]:
+    """A buff's modifiers: its own `allies`, else those of the catalog condition it names."""
+    return dict(spec.get("allies") or R.catalog_mods(spec.get("buff") or ""))
 
 
 def buff_targets(st: State, c: Token, spec: dict[str, Any], target: str | None) -> list[Token]:
@@ -1809,6 +1821,8 @@ def buff_targets(st: State, c: Token, spec: dict[str, Any], target: str | None) 
     area = str(spec.get("area") or "")
     if rng is None and area.startswith("burst") and spec.get("center", "self") == "self":
         rng = int(area.split()[1])
+    if spec.get("target") == "self":
+        return [c]
     if spec.get("target") == "one":
         if not target:
             raise CombatError("this buff targets one ally: --target TOKEN")
@@ -1825,13 +1839,16 @@ def apply_buff(st: State, c: Token, spec: dict[str, Any], name: str, target: str
     """Put a buff's condition (with its modifiers) on everyone it reaches, for buff_rounds rounds."""
     targets = buff_targets(st, c, spec, target)
     label_ = spec.get("buff") or name
-    mods = dict(spec.get("allies") or {})
+    mods = buff_mods(spec)
+    base = R.catalog_mods(label_)   # a catalog condition brings its own modifiers: store only the difference
+    extra = {k: v - base.get(k, 0) for k, v in mods.items() if v != base.get(k, 0)}
+    rounds = rounds_of(spec.get("buff_rounds", 1))
     for o in targets:
-        R.add_condition(st, o, label_, rounds=spec.get("buff_rounds", 1), mods=mods or None)
+        R.add_condition(st, o, label_, rounds=rounds, mods=extra or None)
     if targets and not c.get("hidden"):
-        event(st, f"{label_}: {', '.join(who(o) for o in targets)} ({spec.get('buff_rounds', 1)} rounds)")
-    return [f"  {label_} on {', '.join(o['token'] for o in targets) or 'nobody in range'} for {spec.get('buff_rounds', 1)} rounds"
-            + (": " + ", ".join(f"{k} {v:+d}" for k, v in mods.items()) if mods else " (tracked by name)")]
+        event(st, f"{label_}: {', '.join(who(o) for o in targets)} ({rounds} rounds)")
+    return [f"  {label_} on {', '.join(o['token'] for o in targets) or 'nobody in range'} for {rounds} rounds"
+            + (": " + ", ".join(f"{k} {v:+d}" for k, v in mods.items()) if mods else " (tracked by name)")] + effect_notes(spec)
 
 
 def cmd_ability(args: Args, st: State) -> str:
@@ -1935,7 +1952,7 @@ def cmd_cast(args: Args, st: State) -> str:
         event(st, f"{who(c)} casts a spell" + ("" if ok else ", but loses it"))
     head = f"{c['token']} casts {args.spell} ({sc['class']} {lvl}, CL {sc['cl']}, save DC {dc}): {'OK' if ok else 'LOST'}"
     effect = ([] if not ok else apply_buff(st, c, data, args.spell, args.target) if data and is_buff(data)
-              else _spell_effect(args, st, c, args.spell, dc))
+              else _spell_effect(args, st, c, args.spell, dc) + effect_notes(data))
     return "\n".join([head] + ([f"  {left_note}"] if left_note else []) + lines + effect)
 
 
@@ -2047,7 +2064,7 @@ def cmd_sla(args: Args, st: State) -> str:
     if ok and (args.area or args.target) and args.save and not dc_val:
         raise CombatError(f"{args.name} has no DC in the profile: pass --dc")
     effect = ([] if not ok else apply_buff(st, c, entry["effect"], args.name, args.target) if is_buff(entry.get("effect"))
-              else _spell_effect(args, st, c, args.name, dc_val))
+              else _spell_effect(args, st, c, args.name, dc_val) + effect_notes(entry.get("effect")))
     return "\n".join([head] + ([f"  {note}"] if note else []) + lines + effect)
 
 
@@ -2627,6 +2644,11 @@ def dice_avg(expr: str | None) -> float:
     return max(1.0, total)
 
 
+def avg_rounds(v: Any) -> float:
+    """A duration's expected rounds (dice durations averaged)."""
+    return dice_avg(v) if isinstance(v, str) else float(v or 1)
+
+
 def p_hit(need: int, miss: int = 0) -> float:
     """The chance to hit with a d20 roll of `need`+, after a miss chance."""
     return max(0.05, min(0.95, (21 - need) / 20)) * (1 - miss / 100)
@@ -2947,21 +2969,23 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
 
     for label_, data, dc, lvl, conc, provokes in castables:
         name = label_.split(" ", 1)[1]
-        if data.get("allies"):   # a buff: per round, for every ally it reaches
+        if is_buff(data):   # a buff: per round, for every ally it reaches
             if data.get("maintain") and c.get("performing") == name:
                 head.append(f"  (keeps up {name} with a {data['maintain']} action alongside any plan below)")
                 continue
             reach = data.get("range")
             hit = [o for o in allies + [c] if can_act(o) and (reach is None or feet_between(c, o) <= reach)]
-            if data.get("target") == "one":
+            if data.get("target") == "self":
+                hit = [c]
+            elif data.get("target") == "one":
                 hit = sorted((o for o in hit if o is not c), key=lambda o: -_ally_attack_avg(o))[:1]
-            bonus = data["allies"]
+            bonus = buff_mods(data)
             per_round = 0.0
             for o in hit:
                 n_att, avg = _ally_attacks(o)
                 per_round += n_att * (0.05 * bonus.get("atk", 0) * avg + 0.6 * bonus.get("dmg", 0))
                 per_round += 0.15 * bonus.get("ac", 0) * PC_GUESS + 0.1 * bonus.get("save", 0)
-            rounds = 2 if data.get("maintain") else min(3, data.get("buff_rounds", 1))
+            rounds = 2 if data.get("maintain") else min(3.0, avg_rounds(data.get("buff_rounds", 1)))
             keep, prov, note = casting(start, lvl, conc, provokes)
             if per_round > 0:
                 add("buff", 0, per_round * rounds * keep, start, prov,
@@ -2994,7 +3018,7 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                     f"{where(q, one.get(q, 0))}{label_} on {o['token']} ({state_}){note}")
             continue
         per_dmg = dice_avg(data.get("dmg")) if data.get("dmg") else 0.0
-        cond_v = COND_VALUE.get(str(data.get("cond", "")).lower(), 2 if data.get("cond") else 0) * min(3, data.get("cond_rounds", 1))
+        cond_v = COND_VALUE.get(str(data.get("cond", "")).lower(), 2 if data.get("cond") else 0) * min(3.0, avg_rounds(data.get("cond_rounds", 1)))
 
         def value_of(targets: list[Token]) -> float:
             v = 0.0
@@ -4239,12 +4263,20 @@ def cmd_save(args: Args, st: State) -> str:
     return "\n".join(out)
 
 
-def spell_condition(st: State, t: Token, cond: str | None, rounds: int | None, source: str,
+def rounds_of(rounds: int | str | None) -> int | None:
+    """A duration in rounds: a number, or dice rolled now (cause fear's 1d4)."""
+    if isinstance(rounds, str):
+        return max(1, _roll(rounds)[0])
+    return rounds
+
+
+def spell_condition(st: State, t: Token, cond: str | None, rounds: int | str | None, source: str,
                     mods: dict[str, int] | None = None) -> list[str]:
     """Put a spell's condition on a target that failed its save (or had none). A custom condition
     (evil eye) brings its own modifiers (`cond_mods`). Returns report lines."""
     if not cond:
         return []
+    rounds = rounds_of(rounds)
     R.add_condition(st, t, cond, rounds=rounds, mods=mods or None)
     out = [f"  {t['token']}: {cond}" + (f" for {rounds} rounds" if rounds else " (until removed)")]
     if cond.lower() not in R.CONDITIONS and mods is None:
@@ -4542,6 +4574,9 @@ def main(argv: list[str] | None = None) -> int:
         sp.add_argument("--out-of-turn", action="store_true",
                         help="the actor isn't the current one: a readied or immediate action, forced movement, setup")
     args = p.parse_args(argv)
+    system = campaign_system(args.campaign)
+    if system != "pf1e":   # pf1e's catalog is loaded on import
+        R.load_conditions(system)
 
     handlers = {"add": cmd_add, "next": cmd_next, "move": cmd_move, "dist": cmd_dist,
                 "threat": cmd_threat, "hp": cmd_hp, "cond": cmd_cond, "init": cmd_init,

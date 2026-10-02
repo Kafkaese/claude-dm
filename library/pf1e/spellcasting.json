@@ -1,0 +1,10 @@
+{
+ "_about": "PF1e spellcasting data for scripts/combat.py: range keywords as formulas of the caster level (cl), used in spell effects. Source: Core Rulebook, Magic chapter (Range).",
+ "ranges": {
+  "personal": "0",
+  "touch": "0",
+  "close": "25 + 5 * (cl // 2)",
+  "medium": "100 + 10 * cl",
+  "long": "400 + 40 * cl"
+ }
+}

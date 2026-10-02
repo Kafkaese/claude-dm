@@ -1,0 +1,177 @@
+{
+ "_about": "PF1e conditions for scripts/combat.py: numeric modifiers (atk, dmg, save, check, ac), ability score penalties (str, dex), and flags (flatfooted, str_zero, dex_zero, concealment, prone, helpless, no_move, no_aoo). What the keys mean is defined in scripts/combat_rules.py. Sources: Core Rulebook, Conditions appendix (library/pf1e/rules/conditions.md); the named buffs and debuffs from their spells and abilities. A stat block's effect data names a condition from here, or brings its own cond_mods.",
+ "conditions": {
+  "shaken": {
+   "atk": -2,
+   "save": -2,
+   "check": -2
+  },
+  "frightened": {
+   "atk": -2,
+   "save": -2,
+   "check": -2
+  },
+  "panicked": {
+   "save": -2,
+   "check": -2,
+   "no_aoo": true
+  },
+  "sickened": {
+   "atk": -2,
+   "dmg": -2,
+   "save": -2,
+   "check": -2
+  },
+  "dazzled": {
+   "atk": -1
+  },
+  "dazzled by light": {
+   "atk": -1,
+   "note": "light sensitivity (combat.py adds and removes it)"
+  },
+  "entangled": {
+   "atk": -2,
+   "dex": -4
+  },
+  "grappled": {
+   "atk": -2,
+   "dex": -4,
+   "no_aoo": true,
+   "no_move": true,
+   "note": "also -2 CMB except to grapple or escape (not automated)"
+  },
+  "pinning": {
+   "flatfooted": true,
+   "note": "the grappler holding a pin loses its Dex bonus to AC"
+  },
+  "pinned": {
+   "flatfooted": true,
+   "ac": -4,
+   "no_aoo": true,
+   "no_move": true,
+   "note": "replaces grappled"
+  },
+  "blinded": {
+   "ac": -2,
+   "flatfooted": true
+  },
+  "stunned": {
+   "ac": -2,
+   "flatfooted": true,
+   "no_aoo": true,
+   "no_move": true
+  },
+  "cowering": {
+   "ac": -2,
+   "flatfooted": true,
+   "no_aoo": true,
+   "no_move": true
+  },
+  "flat-footed": {
+   "flatfooted": true
+  },
+  "helpless": {
+   "dex_zero": true,
+   "helpless": true,
+   "no_aoo": true,
+   "no_move": true
+  },
+  "asleep": {
+   "dex_zero": true,
+   "helpless": true,
+   "no_aoo": true,
+   "no_move": true,
+   "note": "sleep: helpless"
+  },
+  "dazed": {
+   "no_aoo": true,
+   "no_move": true,
+   "note": "can take no actions; no AC penalty"
+  },
+  "unconscious": {
+   "dex_zero": true,
+   "helpless": true,
+   "no_aoo": true,
+   "no_move": true
+  },
+  "paralyzed": {
+   "dex_zero": true,
+   "str_zero": true,
+   "helpless": true,
+   "no_aoo": true,
+   "no_move": true
+  },
+  "prone": {
+   "prone": true
+  },
+  "invisible": {
+   "concealment": 50
+  },
+  "concealed": {
+   "concealment": 20
+  },
+  "charged": {
+   "ac": -2
+  },
+  "running": {
+   "flatfooted": true,
+   "note": "a run without the Run feat: no Dex bonus to AC until the start of its next turn"
+  },
+  "fighting defensively": {
+   "atk": -4,
+   "ac": 2
+  },
+  "total defense": {
+   "ac": 4,
+   "no_aoo": true,
+   "note": "+4 dodge (+6 with 3 ranks of Acrobatics: cond --ac 6); no AoOs"
+  },
+  "fatigued": {
+   "str": -2,
+   "dex": -2
+  },
+  "exhausted": {
+   "str": -6,
+   "dex": -6
+  },
+  "staggered": {},
+  "nauseated": {
+   "no_aoo": true
+  },
+  "stable": {},
+  "dying": {},
+  "blessed": {
+   "atk": 1,
+   "note": "bless: +1 morale on attack rolls; also +1 on saves vs. fear (not automated)"
+  },
+  "aided": {
+   "atk": 1,
+   "note": "aid: +1 morale on attack rolls; +1 on saves vs. fear and temporary HP (not automated)"
+  },
+  "inspired (courage)": {
+   "atk": 1,
+   "dmg": 1,
+   "note": "inspire courage +1 (bard 1-4): competence on attack and weapon damage rolls; +1 morale on saves vs. charm and fear (not automated). Higher levels: the ability's own modifiers add on top"
+  },
+  "inspired (competence)": {
+   "check": 2,
+   "note": "inspire competence +2 (bard 3-6), on one skill: the DM applies it to that skill only"
+  },
+  "evil eye (attack rolls)": {
+   "atk": -2,
+   "note": "witch hex: -2 on attack rolls (the witch's choice; see the other evil eye entries)"
+  },
+  "evil eye (ac)": {
+   "ac": -2,
+   "note": "witch hex: -2 AC"
+  },
+  "evil eye (saves)": {
+   "save": -2,
+   "note": "witch hex: -2 on saving throws"
+  },
+  "evil eye (checks)": {
+   "check": -2,
+   "note": "witch hex: -2 on ability and skill checks"
+  }
+ }
+}

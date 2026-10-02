@@ -1,0 +1,154 @@
+{
+ "type": "object",
+ "additionalProperties": false,
+ "properties": {
+  "target": {
+   "enum": [
+    "one",
+    "area",
+    "self"
+   ],
+   "description": "one creature (--target), an area (from the area template), or the user itself"
+  },
+  "area": {
+   "type": "string",
+   "pattern": "^(burst|cone|line) \\d+$",
+   "description": "e.g. 'cone 15', 'burst 30'"
+  },
+  "center": {
+   "enum": [
+    "self",
+    "point"
+   ],
+   "description": "a burst centred on the user (channel energy) or on a point within range"
+  },
+  "range": {
+   "type": "integer",
+   "minimum": 0,
+   "description": "range in feet (to the target or the burst's centre); 0 = touch"
+  },
+  "save": {
+   "enum": [
+    "fort",
+    "ref",
+    "will"
+   ]
+  },
+  "dc": {
+   "type": "integer"
+  },
+  "half": {
+   "type": "boolean"
+  },
+  "notes": {
+   "type": "string",
+   "description": "rulings the script doesn't apply (the DM handles them)"
+  },
+  "dmg": {
+   "type": "string",
+   "description": "damage dice at this creature's caster level, e.g. '2d4'"
+  },
+  "heal": {
+   "type": "string",
+   "description": "healing dice, e.g. '1d8+3'"
+  },
+  "cond": {
+   "type": "string",
+   "description": "condition on a failed save (or without a save), e.g. 'asleep'"
+  },
+  "cond_rounds": {
+   "anyOf": [
+    {
+     "type": "integer",
+     "minimum": 1
+    },
+    {
+     "type": "string",
+     "pattern": "^\\d+d\\d+([+-]\\d+)?$"
+    }
+   ],
+   "description": "Dice (e.g. '1d4') are rolled when it lands."
+  },
+  "cond_mods": {
+   "type": "object",
+   "additionalProperties": false,
+   "description": "modifiers of a custom condition (one the script doesn't know, e.g. evil eye)",
+   "properties": {
+    "atk": {
+     "type": "integer"
+    },
+    "ac": {
+     "type": "integer"
+    },
+    "save": {
+     "type": "integer"
+    },
+    "check": {
+     "type": "integer"
+    },
+    "dmg": {
+     "type": "integer"
+    }
+   }
+  },
+  "who": {
+   "enum": [
+    "enemies",
+    "allies",
+    "all",
+    "living"
+   ],
+   "description": "who an area affects (default: everyone in it)"
+  },
+  "allies": {
+   "type": "object",
+   "additionalProperties": false,
+   "description": "a buff: modifiers for the allies it reaches",
+   "properties": {
+    "atk": {
+     "type": "integer"
+    },
+    "dmg": {
+     "type": "integer"
+    },
+    "ac": {
+     "type": "integer"
+    },
+    "save": {
+     "type": "integer"
+    },
+    "check": {
+     "type": "integer"
+    }
+   }
+  },
+  "buff": {
+   "type": "string",
+   "description": "the buff's condition name, e.g. 'inspired (courage)'"
+  },
+  "buff_rounds": {
+   "anyOf": [
+    {
+     "type": "integer",
+     "minimum": 1,
+     "description": "how long a buff lasts (performances: 1, refreshed while maintained)"
+    },
+    {
+     "type": "string",
+     "pattern": "^\\d+d\\d+([+-]\\d+)?$"
+    }
+   ],
+   "description": "how long a buff lasts (performances: 1, refreshed while maintained) Dice (e.g. '1d4') are rolled when it lands."
+  },
+  "touch": {
+   "type": "boolean",
+   "description": "needs a touch attack"
+  },
+  "attack": {
+   "type": "integer",
+   "description": "the touch attack bonus (ranged touch for a ray: BAB + Dex mod; melee touch: BAB + Str mod), rolled against touch AC before the effect lands"
+  }
+ },
+ "$comment": "A spell's or spell-like ability's effect as the script uses it, resolved at the caster's level. Library spell files (library/pf1e/spells/*.md) hold it in a ```spell-effect block, where numbers may be formulas of cl (e.g. \"10*cl\", dice \"{min(cl,5)}d4\") and ranges keywords (touch, close, medium, long; library/pf1e/spellcasting.json). A spell without a combat effect: {\"utility\": true}.",
+ "title": "PF1e spell effect (resolved)"
+}

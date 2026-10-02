@@ -34,38 +34,33 @@ FRIENDLY = {"pc", "ally"}
 #   no_move                         can't move on its own (forced movement still works: --out-of-turn)
 #   no_aoo                          can't make attacks of opportunity (grappled and pinned by their
 #                                   text; the others because they can't act or attack at all)
-# Conditions not listed here are tracked by name only (the DM applies them).
-CONDITIONS: dict[str, dict[str, Any]] = {
-    "shaken": {"atk": -2, "save": -2, "check": -2},
-    "frightened": {"atk": -2, "save": -2, "check": -2},
-    "panicked": {"save": -2, "check": -2, "no_aoo": True},
-    "sickened": {"atk": -2, "dmg": -2, "save": -2, "check": -2},
-    "dazzled": {"atk": -1},
-    "dazzled by light": {"atk": -1},        # light sensitivity (combat.py adds/removes it)
-    "entangled": {"atk": -2, "dex": -4},
-    "grappled": {"atk": -2, "dex": -4, "no_aoo": True, "no_move": True},       # also -2 CMB except to grapple/escape (not automated)
-    "pinning": {"flatfooted": True},           # the grappler holding a pin loses its Dex bonus to AC
-    "pinned": {"flatfooted": True, "ac": -4, "no_aoo": True, "no_move": True},  # replaces grappled
-    "blinded": {"ac": -2, "flatfooted": True},
-    "stunned": {"ac": -2, "flatfooted": True, "no_aoo": True, "no_move": True},
-    "cowering": {"ac": -2, "flatfooted": True, "no_aoo": True, "no_move": True},
-    "flat-footed": {"flatfooted": True},
-    "helpless": {"dex_zero": True, "helpless": True, "no_aoo": True, "no_move": True},
-    "asleep": {"dex_zero": True, "helpless": True, "no_aoo": True, "no_move": True},   # sleep: helpless
-    "dazed": {"no_aoo": True, "no_move": True},                              # can take no actions; no AC penalty
-    "unconscious": {"dex_zero": True, "helpless": True, "no_aoo": True, "no_move": True},
-    "paralyzed": {"dex_zero": True, "str_zero": True, "helpless": True, "no_aoo": True, "no_move": True},
-    "prone": {"prone": True},
-    "invisible": {"concealment": 50},
-    "concealed": {"concealment": 20},
-    "charged": {"ac": -2},
-    "running": {"flatfooted": True},           # a run without the Run feat: no Dex bonus to AC                    # until the start of its next turn
-    "fighting defensively": {"atk": -4, "ac": 2},
-    "total defense": {"ac": 4, "no_aoo": True},   # +4 dodge (+6 with 3 ranks of Acrobatics: cond --ac 6); no AoOs
-    "fatigued": {"str": -2, "dex": -2},
-    "exhausted": {"str": -6, "dex": -6},
-    "staggered": {}, "nauseated": {"no_aoo": True}, "stable": {}, "dying": {},
-}
+# The catalog itself is data: library/<system>/conditions.json (names, these keys, and a note).
+# Conditions not listed there are tracked by name only, unless they bring their own modifiers.
+CONDITIONS: dict[str, dict[str, Any]] = {}
+CONDITION_NOTES: dict[str, str] = {}
+
+
+def load_conditions(system: str = "pf1e") -> None:
+    """Load the system's condition catalog into CONDITIONS (in place, so every reference sees it)."""
+    path = PROJECT / "library" / system / "conditions.json"
+    data = json.loads(path.read_text(encoding="utf-8")).get("conditions", {}) if path.exists() else {}
+    CONDITIONS.clear()
+    CONDITION_NOTES.clear()
+    for name, eff in data.items():
+        eff = dict(eff)
+        note = eff.pop("note", None)
+        CONDITIONS[name.lower()] = eff
+        if note:
+            CONDITION_NOTES[name.lower()] = note
+
+
+def catalog_mods(name: str) -> dict[str, int]:
+    """The numeric modifiers (atk, dmg, save, check, ac) a catalog condition gives, for valuing it."""
+    return {k: v for k, v in CONDITIONS.get(name.lower(), {}).items()
+            if k in ("atk", "dmg", "save", "check", "ac") and isinstance(v, int) and not isinstance(v, bool)}
+
+
+load_conditions()
 
 
 def conditions(c: Token) -> list[dict[str, Any]]:
@@ -225,6 +220,173 @@ def _validate(v: Any, s: dict[str, Any], path: str, errs: list[str]) -> list[str
     return errs
 
 
+# ---------- library spell effects ----------
+# A stat block lists its spells; their effects come from the library (library/<system>/spells/
+# <name>.md, a ```spell-effect block) worked out at the caster's level. Numbers there may be formulas
+# of `cl` ("10*cl"; dice "{min(cl,5)}d4"), ranges keywords (library/<system>/spellcasting.json).
+# The stat block's own `effects` entry merges on top: an `attack` bonus for a touch spell,
+# `dmg_bonus`, or a whole effect the library lacks.
+
+NUMERIC_FIELDS = ("range", "dc", "cond_rounds", "buff_rounds", "attack")
+DICE_FIELDS = ("dmg", "heal", "area")
+_FORMULA_FUNCS = {"min": min, "max": max}
+
+
+def eval_formula(expr: str, values: dict[str, int]) -> int:
+    """An integer formula of the given variables: + - * // / ( ), min(), max(); '/' rounds down.
+
+    Raises:
+        ValueError: anything else (names, calls, syntax).
+    """
+    import ast
+    import operator
+    ops = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+           ast.FloorDiv: operator.floordiv, ast.Div: operator.floordiv}
+
+    def ev(n: ast.AST) -> int:
+        if isinstance(n, ast.Expression):
+            return ev(n.body)
+        if isinstance(n, ast.Constant) and isinstance(n.value, int) and not isinstance(n.value, bool):
+            return n.value
+        if isinstance(n, ast.Name) and n.id in values:
+            return values[n.id]
+        if isinstance(n, ast.BinOp) and type(n.op) in ops:
+            return int(ops[type(n.op)](ev(n.left), ev(n.right)))
+        if isinstance(n, ast.UnaryOp) and isinstance(n.op, ast.USub):
+            return -ev(n.operand)
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in _FORMULA_FUNCS and not n.keywords:
+            return int(_FORMULA_FUNCS[n.func.id](*(ev(a) for a in n.args)))
+        raise ValueError(f"not allowed in a formula: {ast.dump(n)[:60]}")
+    try:
+        return ev(ast.parse(str(expr).strip(), mode="eval"))
+    except SyntaxError as e:
+        raise ValueError(f"bad formula {expr!r}: {e.msg}") from None
+
+
+def spell_ranges(system: str = "pf1e") -> dict[str, str]:
+    """Range keywords of the system (touch, close, …) as formulas of cl."""
+    path = PROJECT / "library" / system / "spellcasting.json"
+    return json.loads(path.read_text(encoding="utf-8")).get("ranges", {}) if path.exists() else {}
+
+
+def spell_slug(name: str) -> str:
+    """The library file name of a spell: 'Cure Light Wounds' → 'cure-light-wounds'."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower().replace("'", "")).strip("-")
+
+
+SPELLS_DIR: Path | None = None   # tests point this at their own spell files (default: library/<system>/spells)
+
+
+def library_spell_effect(name: str, system: str = "pf1e") -> tuple[dict[str, Any] | None, str]:
+    """The ```spell-effect block of a library spell, unresolved, and where it was looked for.
+
+    Raises:
+        ValueError: the block isn't valid JSON.
+    """
+    path = (SPELLS_DIR or PROJECT / "library" / system / "spells") / f"{spell_slug(name)}.md"
+    rel = str(path.relative_to(PROJECT)) if path.is_relative_to(PROJECT) else str(path)
+    if not path.exists():
+        return None, rel
+    m = re.search(r"```spell-effect\s*\n(.*?)\n```", path.read_text(encoding="utf-8"), re.S)
+    if not m:
+        return None, rel
+    try:
+        return json.loads(m.group(1)), rel
+    except json.JSONDecodeError as e:
+        raise ValueError(f"{rel}: the spell-effect block isn't valid JSON ({e})") from None
+
+
+def resolve_effect(raw: dict[str, Any], cl: int, system: str = "pf1e") -> dict[str, Any]:
+    """An effect at caster level `cl`: formulas evaluated, range keywords turned into feet,
+    dmg_bonus folded into the damage.
+
+    Raises:
+        ValueError: a formula that doesn't evaluate.
+    """
+    values = {"cl": cl}
+    ranges = spell_ranges(system)
+    out = dict(raw)
+    for k in NUMERIC_FIELDS:
+        v = out.get(k)
+        if isinstance(v, str) and k in ("cond_rounds", "buff_rounds") and re.match(r"^\s*\d+d\d+\s*([+-]\s*\d+)?\s*$", v):
+            out[k] = v.replace(" ", "")   # dice: rolled when the effect lands
+        elif isinstance(v, str):
+            out[k] = eval_formula(ranges.get(v.lower(), v), values)
+    for k in DICE_FIELDS:
+        v = out.get(k)
+        if isinstance(v, str) and "{" in v:
+            out[k] = re.sub(r"\{([^}]*)\}", lambda m: str(eval_formula(m.group(1), values)), v)
+    if isinstance(out.get("allies"), dict):
+        out["allies"] = {k: eval_formula(v, values) if isinstance(v, str) else v for k, v in out["allies"].items()}
+    bonus = out.pop("dmg_bonus", None)
+    if bonus and out.get("dmg"):
+        out["dmg"] = f"{out['dmg']}{bonus:+d}"
+    return out
+
+
+def resolve_spell_effects(p: dict[str, Any], system: str = "pf1e") -> tuple[dict[str, Any], list[str], list[str]]:
+    """The profile with every spell's and SLA's effect filled in from the library at its caster level
+    (the stat block's own entries merged on top). Returns (profile, errors, warnings).
+    Spells without any effect data are left out, with a warning (utility ones: mark them)."""
+    import copy
+    out = copy.deepcopy(p)
+    errs: list[str] = []
+    warns: list[str] = []
+    strict_path = PROJECT / "library" / system / "spell-effect.schema.json"
+    strict = json.loads(strict_path.read_text(encoding="utf-8")) if strict_path.exists() else None
+    missing: list[str] = []
+
+    def one(name: str, own: dict[str, Any] | None, cl: int, where: str) -> dict[str, Any] | None:
+        try:
+            lib, rel = library_spell_effect(name, system)
+        except ValueError as e:
+            errs.append(str(e))
+            return None
+        merged = dict(lib or {})
+        merged.update(own or {})
+        if not merged:
+            missing.append(name)
+            return None
+        if merged.get("utility"):
+            return None
+        try:
+            eff = resolve_effect(merged, cl, system)
+        except ValueError as e:
+            errs.append(f"{where}: {e}")
+            return None
+        if strict:
+            errs.extend(_validate(eff, strict, where, []))
+        if eff.get("touch") and eff.get("target") == "one" and eff.get("attack") is None:
+            warns.append(f"{where}: a touch spell needs this caster's touch attack bonus: "
+                         f"\"effects\": {{\"{name}\": {{\"attack\": N}}}} (ranged touch: BAB + Dex + size)")
+        return eff
+
+    for i, sc in enumerate(out.get("spellcasting") or []):
+        if not isinstance(sc, dict):
+            continue
+        own = {k.lower(): v for k, v in (sc.get("effects") or {}).items()}
+        resolved: dict[str, Any] = {}
+        names = list(dict.fromkeys(n.lower() for lst in (sc.get("spells") or {}).values() for n in lst))
+        for n in names + [k for k in own if k not in names]:
+            eff = one(n, own.get(n), int(sc.get("cl") or 1), f"spellcasting[{i}].effects.{n}")
+            if eff is not None:
+                resolved[n] = eff
+        sc["effects"] = resolved
+    for x in out.get("sla") or []:
+        if not isinstance(x, dict) or x.get("per_day") == "constant":
+            continue
+        eff = one(str(x.get("name", "")), x.get("effect"), int(x.get("cl") or 1), f"sla.{x.get('name')}.effect")
+        if eff is not None:
+            x["effect"] = eff
+        else:
+            x.pop("effect", None)
+    if missing:
+        warns.append("no effect data for " + ", ".join(sorted(set(missing))) + ": casting them applies nothing automatic. "
+                     "Add a ```spell-effect block to library/<system>/spells/<name>.md (or {\"utility\": true} for a spell "
+                     "without a combat effect)")
+    return out, errs, warns
+
+
 def check_profile(p: Any, system: str = 'pf1e') -> tuple[list[str], list[str]]:
     """Returns (errors, warnings) for a combat profile: the schema plus checks it can't express."""
     kind = p.get("kind") if isinstance(p, dict) else None
@@ -250,6 +412,10 @@ def check_profile(p: Any, system: str = 'pf1e') -> tuple[list[str], list[str]]:
                 errs.append(f"attacks.{name}.damage: {a['damage']!r} isn't a dice expression ({e})")
         if (a.get("type") == "ranged" or a.get("thrown")) and "range" not in a:
             errs.append(f"attacks.{name}: ranged and thrown attacks need 'range' (the range increment from the weapon table)")
+    if p.get("spellcasting") or p.get("sla"):
+        p, rerrs, rwarns = resolve_spell_effects(p, system)
+        errs += rerrs
+        warns += rwarns
     effects = [(f"spellcasting[{i}].effects.{k}", v) for i, sc in enumerate(p.get("spellcasting") or []) if isinstance(sc, dict)
                for k, v in (sc.get("effects") or {}).items()]
     effects += [(f"sla.{x.get('name')}.effect", x["effect"]) for x in p.get("sla") or [] if isinstance(x, dict) and x.get("effect")]
