@@ -25,6 +25,8 @@ Every action reports what's left. --override: a feat or ability changes it (Spri
                                   prone and provokes; an immediate action off-turn takes the next swift
   move TOKEN POS --as charge|withdraw|run   movement as part of that full-round action
   actions TOKEN                   what the creature has left this turn
+  undo                            take back the last command if it was the player's input (e.g. a roll
+                                  they correct: forgot flanking), then enter it again. NPC rolls stand
   options TOKEN [--target T] [--area "burst 20" --range 100]
                                   tactical options (DM only): squares that threaten each target and the d20
                                   roll needed there, what provokes, charge lanes, ranged spots, retreat
@@ -1168,6 +1170,44 @@ def cmd_endturn(args: Args, st: State) -> str:
 ACTOR_ARG = {"maneuver": "attacker", "attack": "attacker", "move": "token", "cast": "token", "sla": "token", "provoke": "token", "area": "frm"}
 
 
+UNDOABLE = ("attack", "maneuver", "move", "save", "stabilize", "act", "provoke", "endturn")
+READ_ONLY = ("show", "dist", "threat", "events", "image", "sight", "actions", "options", "spells", "ask")
+
+
+def undo_path(campaign: str) -> Path:
+    """Where the state before the last undoable command is kept (one level)."""
+    return state_path(campaign).with_name("undo.json")
+
+
+def remember_undo(args: Args, st: State, before: str) -> None:
+    """Keep the state from before this command, with who acted, for `undo`."""
+    actor_tok = getattr(args, ACTOR_ARG.get(args.command, "") or "_", None) or getattr(args, "token", None)
+    actor = next((t for t in st["tokens"] if t["token"] == actor_tok), None)
+    undo_path(args.campaign).write_text(json.dumps({
+        "state": json.loads(before), "command": args.command, "actor": actor_tok,
+        "pc": bool(actor and actor["side"] == "pc")}))
+
+
+def cmd_undo(args: Args) -> str:
+    """Take back the last command, if it was the player's own input (a PC's attack, save, maneuver,
+    move, …): e.g. the player forgot a modifier and gives the corrected roll. NPC rolls stand
+    ("never reroll silently"), and the correction is visible in the combat log."""
+    path = undo_path(args.campaign)
+    if not path.exists():
+        raise CombatError("nothing to undo (only the last command can be taken back, once)")
+    rec = json.loads(path.read_text())
+    if not rec.get("pc"):
+        raise CombatError(f"the last command ({rec.get('command')} by {rec.get('actor')}) wasn't the player's input: "
+                          f"NPC rolls stand. Fix a mistake with the specific command (hp, cond, …) instead")
+    st = rec["state"]
+    who_ = next((t["name"] for t in st["tokens"] if t["token"] == rec.get("actor")), rec.get("actor"))
+    event(st, f"(correction: {who_}'s {rec['command']} is re-entered)")
+    save(args.campaign, st)
+    path.unlink()
+    return (f"Undone: {rec['command']} by {rec['actor']}. The fight is as it was before it (HP, log, actions); "
+            f"enter the corrected command now.")
+
+
 def check_actor(args: Args, st: State) -> None:
     """The actor lock: only the creature the turn pointer is on takes actions. Attacks of opportunity
     (`--aoo`) and anything marked `--out-of-turn` (readied or immediate actions, forced movement,
@@ -1725,14 +1765,33 @@ def cmd_move(args: Args, st: State) -> str:
             if extra > 0:
                 spend_moves(st, c, extra, "movement")
             c["chain_feet"], c["chain_moves"] = chain, max(need, c.get("chain_moves", 0))
-    # attacks of opportunity for leaving threatened squares (not on a 5-foot step; a withdraw's
-    # first square isn't threatened by foes it can see)
-    if not args.step and not (mode == "withdraw" and c.get("mode_feet", 0) == feet):
-        lines, _dmg = provoke_aoos(st, c, args.no_aoo, "moving out of a threatened square")
-        out += lines
-        if c["hp"] <= 0:
-            out.insert(0, f"{c['token']} is dropped by an attack of opportunity at {frm} and doesn't move")
-            return "\n".join(out)
+    # attacks of opportunity for every threatened square it leaves along the way (not on a 5-foot
+    # step; a withdraw's first square isn't threatened by foes it can see). "Moving out of more than
+    # one square threatened by the same opponent in the same round doesn't count as more than one
+    # opportunity for that opponent." If an AoO drops it, it falls where it was.
+    if not args.step:
+        rnd = st.get("round", 1)
+        seen = c.get("aoo_opportunities") or {}
+        given = set(seen.get("by", [])) if seen.get("round") == rnd else set()
+        withdraw_start = mode == "withdraw" and c.get("mode_feet", 0) == feet
+        for i, sq in enumerate(route[:-1]):
+            if i == 0 and withdraw_start:
+                continue
+            c["x"], c["y"] = sq
+            fresh = [o for o in st["tokens"] if o["token"] not in given and threatens(o, c)]
+            if not fresh:
+                continue
+            given |= {o["token"] for o in fresh}
+            lines, _dmg = provoke_aoos(st, c, args.no_aoo, f"moving out of a threatened square ({fmt_pos(*sq)})", only=fresh)
+            out += lines
+            if c["hp"] <= 0:
+                c["aoo_opportunities"] = {"round": rnd, "by": sorted(given)}
+                if st.get("turn") == c["token"] and i:
+                    c.setdefault("turn_path", []).extend(list(q) for q in route[1:i + 1])
+                out.insert(0, f"{c['token']} is dropped by an attack of opportunity at {fmt_pos(*sq)}"
+                              + (f" ({5 * i} ft into its move)" if i else " and doesn't move"))
+                return "\n".join(out)
+        c["aoo_opportunities"] = {"round": rnd, "by": sorted(given)}
     c["x"], c["y"] = dest
     if st.get("turn") == c["token"]:   # its own movement this turn, for the map's movement line
         tp = c.setdefault("turn_path", [])
@@ -2006,8 +2065,9 @@ def _placed(c: Token, sq: Square) -> Any:
         c["x"], c["y"] = old
 
 
-def reach_map(st: State, c: Token, max_feet: int) -> dict[Square, int]:
-    """Every square the token can end its movement on within max_feet, with the cost in feet."""
+def reach_map(st: State, c: Token, max_feet: int, routes: dict[Square, list[Square]] | None = None) -> dict[Square, int]:
+    """Every square the token can end its movement on within max_feet, with the cost in feet.
+    With `routes`, also fills in the cheapest route to each of them (start and end included)."""
     import heapq
     start = (c["x"], c["y"])
 
@@ -2021,6 +2081,8 @@ def reach_map(st: State, c: Token, max_feet: int) -> dict[Square, int]:
 
     best = {(start, 0): 0}
     out = {start: 0}
+    came: dict[tuple[Square, int], tuple[Square, int]] = {}
+    end_key: dict[Square, tuple[Square, int]] = {start: (start, 0)}
     heap = [(0, start, 0)]
     while heap:
         feet, (x, y), parity = heapq.heappop(heap)
@@ -2042,15 +2104,36 @@ def reach_map(st: State, c: Token, max_feet: int) -> dict[Square, int]:
                 if nf > max_feet or nf >= best.get(((nx, ny), npar), 10 ** 9):
                     continue
                 best[((nx, ny), npar)] = nf
+                came[((nx, ny), npar)] = ((x, y), parity)
                 heapq.heappush(heap, (nf, (nx, ny), npar))
-                if fits(nx, ny, True):
-                    out[(nx, ny)] = min(out.get((nx, ny), 10 ** 9), nf)
+                if fits(nx, ny, True) and nf < out.get((nx, ny), 10 ** 9):
+                    out[(nx, ny)] = nf
+                    end_key[(nx, ny)] = ((nx, ny), npar)
+    if routes is not None:
+        for sq, key in end_key.items():
+            route = [sq]
+            while key in came:
+                key = came[key]
+                route.append(key[0])
+            routes[sq] = route[::-1]
     return out
 
 
 def _foes(st: State, c: Token) -> list[Token]:
     """Active creatures on the other side, nearest first."""
     return sorted(V.enemies(st, c), key=lambda o: feet_between(c, o))
+
+
+def path_provokers(st: State, c: Token, route: list[Square], memo: dict[Square, list[str]]) -> list[str]:
+    """Who would get an attack of opportunity on this route: everyone threatening a square it leaves
+    (the same rule `move` applies). `memo` caches who threatens each square."""
+    out: list[str] = []
+    for sq in route[:-1]:
+        if sq not in memo:
+            with _placed(c, sq):
+                memo[sq] = _threatened_by(st, c)
+        out += [t for t in memo[sq] if t not in out]
+    return out
 
 
 def _threatened_by(st: State, c: Token) -> list[str]:
@@ -2090,8 +2173,13 @@ def tactical_options(st: State, c: Token, area: str | None = None, area_range: i
     prof = c.get("profile") or {}
     speed = c.get("speed") or 30
     start = (c["x"], c["y"])
-    one = reach_map(st, c, speed)
+    routes: dict[Square, list[Square]] = {}
+    one = reach_map(st, c, speed, routes)
     two = reach_map(st, c, 2 * speed)
+    threat_memo: dict[Square, list[str]] = {}
+
+    def provokers(sq: Square) -> list[str]:
+        return path_provokers(st, c, routes.get(sq, [start, sq]), threat_memo)
     here_threat = _threatened_by(st, c)
     out = [f"Options for {c['token']} ({c['name']}) at {fmt_pos(*start)}: speed {speed} ft "
            f"({len(one)} squares in one move, {len(two)} in a double move), reach {c.get('reach', 5)} ft. "
@@ -2117,7 +2205,7 @@ def tactical_options(st: State, c: Token, area: str | None = None, area_range: i
                     others = [o for o in _threatened_by(st, c) if o != t["token"]]
                     flank = flanking(st, c, t)
                 step = sq == start or (feet == 5 and R.sq_dist(start, sq) == 1)
-                provokes = [] if step else here_threat
+                provokes = [] if step else provokers(sq)
                 act = (("full attack" if full else "attack") + (" after a 5-foot step" if sq != start else " from where it stands")
                        if step else f"attack after moving {feet} ft")
                 score = need + (0 if step and full else 3) + 4 * len(provokes) + 2 * len(others) + feet / 30
@@ -2152,7 +2240,7 @@ def tactical_options(st: State, c: Token, area: str | None = None, area_range: i
                 with _placed(c, sq):
                     need, miss, notes = _needs(st, c, t, w, "ranged")
                     threat = _threatened_by(st, c)
-                provokes = sorted(set(threat + ([] if sq == start or (feet == 5) else here_threat)))
+                provokes = sorted(set(threat + ([] if sq == start or feet == 5 else provokers(sq))))
                 score = need + miss / 10 + 5 * len(provokes) + feet / 30
                 where = "from here" if sq == start else f"from {fmt_pos(*sq)} ({feet} ft)"
                 rrows.append((score, sq == start, f"    {name} {where}: hits on {need}+" + (f", {miss}% miss" if miss else "")
@@ -3491,6 +3579,7 @@ def main(argv: list[str] | None = None) -> int:
     ac_.add_argument("--log", help="a line for the player-visible combat log")
     ac_.add_argument("--override", action="store_true", help="don't charge it (a feat or ability)")
     sub.add_parser("surprise").add_argument("mode", choices=["on", "off"])
+    sub.add_parser("undo", help="take back the player's last command (a corrected roll); NPC rolls stand")
     sub.add_parser("actions").add_argument("token")
     op = sub.add_parser("options"); op.add_argument("token")
     op.add_argument("--area", help='also place an area effect, e.g. "burst 20", "cone 15"'); op.add_argument("--range", type=int, help="burst range in ft")
@@ -3527,7 +3616,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         if args.command == "new":
+            undo_path(args.campaign).unlink(missing_ok=True)
             print(cmd_new(args))
+            return 0
+        if args.command == "undo":
+            print(cmd_undo(args))
             return 0
         if args.command == "encounter":
             print(cmd_encounter(args))
@@ -3545,6 +3638,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "show":
             print(render(st, dm=args.dm))
             return 0
+        before = json.dumps(st)   # for `undo` (the player's input only)
         if args.command not in ("ask", "dist", "threat", "events", "image", "sight", "actions", "options"):
             st.pop("awaiting", None)   # any real change answers an open question
         actor_tok = getattr(args, ACTOR_ARG.get(args.command, "") or "_", None)
@@ -3569,6 +3663,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command != "end":
             if args.command not in ("image", "dist", "threat"):
                 maybe_image(args, st)
+            if args.command in UNDOABLE:
+                remember_undo(args, st, before)
+            elif args.command not in READ_ONLY:   # anything else moves on: no undoing past it
+                undo_path(args.campaign).unlink(missing_ok=True)
             save(args.campaign, st)
         print(result)
     except CombatError as e:

@@ -324,3 +324,66 @@ class MovementLine(CampaignCase):
         self.run_cmd("next")                                   # Corin, then he ends without moving
         self.run_cmd("next")                                   # g1 again (new round)
         self.assertIsNone(self.line())                         # the last actor (Corin) didn't move
+
+
+class AoOPath(CampaignCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.new(blank="10x3")
+        self.add("C", "Corin", "A2", PC_PROFILE, side="pc", init=5)
+        self.add("g1", "Gob", "E1", GOBLIN, init=20)
+        self.run_cmd("next")                                              # g1 acts: no longer flat-footed
+        self.run_cmd("next")                                              # Corin
+
+    def test_passing_by_provokes(self) -> None:
+        out = self.run_cmd("move", "C", "H2")                             # starts unthreatened, passes E1's reach
+        self.assertIn("Attack of opportunity", out)
+        self.assertEqual(self.tok("g1")["aoo_used"], 1)
+
+    def test_one_opportunity_per_opponent_per_round(self) -> None:
+        out = self.run_cmd("move", "C", "C2", "--override")               # up to its reach: nothing left yet
+        self.assertNotIn("Attack of opportunity", out)
+        out = self.run_cmd("move", "C", "H2", "--override")               # through D2/E2/F2: its one chance
+        self.assertIn("Attack of opportunity", out)
+        self.run_cmd("move", "C", "E3", "--override", "--out-of-turn")
+        out = self.run_cmd("move", "C", "A3", "--override")               # past it again, same round
+        self.assertNotIn("Attack of opportunity", out)
+
+    def test_dropped_mid_move_falls_there(self) -> None:
+        self.run_cmd("hp", "C", "-29")                                    # 1 HP left
+        import combat
+        combat.RNG = __import__("random").Random(4)
+        out = self.run_cmd("move", "C", "H2")
+        c = self.tok("C")
+        if c["hp"] <= 0:                                                  # the AoO hit: it stopped next to g1
+            self.assertIn("dropped by an attack of opportunity", out)
+            self.assertLess(c["x"], 7)
+        else:
+            self.assertEqual((c["x"], c["y"]), (7, 1))
+
+
+class Undo(CampaignCase):
+    """The player corrects a roll: undo the last PC command and enter it again; NPC rolls stand."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.new()
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=20)
+        self.add("g1", "Gob", "C2", GOBLIN, init=10)
+        self.run_cmd("next")                                              # Corin
+
+    def test_corrected_roll(self) -> None:
+        self.run_cmd("attack", "C", "g1", "--total", "13", "--damage", "5")     # 13 vs AC 14: miss
+        self.assertEqual(self.tok("g1")["hp"], 12)
+        self.run_cmd("undo")                                              # "I forgot +2 flanking"
+        out = self.run_cmd("attack", "C", "g1", "--total", "15", "--damage", "5")
+        self.assertEqual(self.tok("g1")["hp"], 7)
+        self.assertIn("actions left for C: move, swift", out)            # still one attack, not a full attack
+        self.assertTrue(any("correction" in e["text"] for e in self.state()["events"]))
+
+    def test_npc_rolls_stand_and_no_undo_past_the_turn(self) -> None:
+        self.run_cmd("attack", "C", "g1", "--total", "13", "--damage", "5")
+        self.run_cmd("next")                                              # the turn moved on
+        self.assertIn("nothing to undo", self.fail_cmd("undo"))
+        self.run_cmd("attack", "g1", "C", "--with", "spear")
+        self.assertIn("NPC rolls stand", self.fail_cmd("undo"))

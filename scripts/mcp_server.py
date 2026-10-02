@@ -262,6 +262,9 @@ TOOLS: list[Tool] = [
          lambda a: ["act", a["token"], a["kind"], a["what"]] + flags(a, {"provokes": "--provokes", "log": "--log", "override": "--override"})),
     Tool("combat_surprise", "Turn the surprise round on or off (one standard or move action each; ends when the next round starts).",
          {"on": B("true: surprise round")}, ["on"], lambda a: ["surprise", "on" if a["on"] else "off"]),
+    Tool("combat_undo", "Take back the last command if it was the player's own input (e.g. they correct a roll: "
+         "forgot flanking), restoring HP, log and actions; then enter the corrected command. NPC rolls stand. "
+         "Use this, never override, for corrections.", {}, [], lambda a: ["undo"]),
     Tool("combat_next", "Advance the turn pointer (Claude Code UI / gm-screen only; in web/terminal play the interface does this).",
          {}, [], lambda a: ["next"]),
     Tool("combat_endturn", "The player ended the PC's turn in other words, or together with their actions: the interface plays the next step.",
