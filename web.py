@@ -330,6 +330,7 @@ class Hub:
         if resume:
             self._pin_campaign()
             self.system(f"Continuing {campaign_title(slug)}. Say what you do, or \"recap\" for a reminder.")
+            self.resume_fight()
             self.publish({"type": "busy", "busy": False})
             return
         text = (f"/new-campaign slug={slug} {pitch or name}".strip() if mode == "new" else f"/start-session {slug}")
@@ -337,6 +338,20 @@ class Hub:
             self.history.append({"role": "player", "text": text})
             self.publish({"type": "player", "text": text})
         self._run_turn(text)
+
+    def resume_fight(self) -> None:
+        """A continued conversation with a fight in progress: show the fight at once (this conversation
+        engaged it) and say whose turn it is, so the Next button or the player's turn picks it up."""
+        st = combat_state(self.campaign())
+        if not st or st.get("turn") is None:
+            return
+        self.eng.combat_engaged = True
+        self.refresh_combat()
+        cur = next((t for t in st.get("tokens", []) if t["token"] == st["turn"]), None)
+        if cur and cur["side"] == "pc":
+            self.system(f"The fight goes on: round {st.get('round')}, it's your turn.")
+        elif cur:
+            self.system(f"The fight goes on (round {st.get('round')}). Press Next (or say \"continue\") to play on.")
 
     def system(self, text: str) -> None:
         """Add a system note (not from the DM) to the chat."""
@@ -497,6 +512,7 @@ def main() -> None:
         hub.campaign_arg, hub.history = camp, history
         engine.campaign = camp
         engine.start(resume=resume)
+        hub.resume_fight()
     elif args.campaign:
         if not is_campaign(args.campaign):
             raise SystemExit(f"No campaign '{args.campaign}'.")

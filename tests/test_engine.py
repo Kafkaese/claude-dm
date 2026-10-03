@@ -377,3 +377,18 @@ class FollowUp(CampaignCase):
 
         E.run_combat_step(E.Engine(lambda ev: None), self.slug, send)
         self.assertFalse([p for p in prompts if p.startswith("[Combat step continued")])
+
+
+class ResumeFight(CampaignCase):
+    def test_continuing_shows_the_fight_and_whose_turn(self) -> None:
+        import web
+        self.new(blank="8x6")
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=5)
+        self.add("g1", "Gob", "E2", GOBLIN, init=20)
+        self.run_cmd("next")                                   # the goblin holds the turn
+        hub = web.Hub(self.slug)
+        hub.engine = E.Engine(lambda ev: None)
+        self.assertIsNone(hub.fight())                         # a new conversation doesn't show an old fight…
+        hub.resume_fight()                                     # …a continued one does
+        self.assertTrue(hub.fight()["active"])
+        self.assertIn("Press Next", hub.history[-1]["text"])
