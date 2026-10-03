@@ -1004,6 +1004,20 @@ class SurpriseRound(CampaignCase):
         self.assertEqual((st["turn"], st["round"]), ("C", 2))
         self.assertNotIn("surprise", st)
 
+    def test_plans_take_one_action_in_the_surprise_round(self) -> None:
+        # g1 (F2) has to move to reach Corin (B2): in the surprise round that's its one action
+        self.run_cmd("surprise", "on", "--unaware", "party")
+        self.run_cmd("next")
+        out = self.run_cmd("options", "g1").split("Details:")[0]
+        self.assertIn("ONE ACTION THIS TURN", out)
+        for line in out.splitlines():
+            if "attack C" in line:
+                self.assertTrue("stay" in line or "5-ft step" in line, line)
+        plans = out.split("not both.")[1]
+        self.assertNotIn("withdraw", plans)
+        self.assertNotIn("double move", plans)
+        self.assertIn("move 15 ft to C1, closing on C", plans)
+
     def test_no_surprise_round_unless_some_are_aware(self) -> None:
         self.assertIn("some, but not all", self.fail_cmd("surprise", "on", "--unaware", "party,enemies"))
         self.assertIn("who was unaware", self.fail_cmd("surprise", "on"))

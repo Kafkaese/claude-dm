@@ -205,10 +205,19 @@ def _error_line(content: Any) -> str:
     lines = [l.strip() for l in body.splitlines() if l.strip()]
     for pick in (lambda l: "combat error:" in l, lambda l: "Error" in l or "error:" in l,
                  lambda l: "error" in l.lower() and not l.startswith("Exit code")):
-        hit = [l for l in lines if pick(l)]
+        hit = [i for i, l in enumerate(lines) if pick(l)]
         if hit:
-            return hit[-1][:240]   # the last one: a traceback ends with the actual exception
-    return lines[0][:240] if lines else ""
+            return _with_reason(lines, hit[-1])   # the last one: a traceback ends with the actual exception
+    first = next((i for i, l in enumerate(lines) if "invalid arguments" in l), 0)
+    return _with_reason(lines, first) if lines else ""
+
+
+def _with_reason(lines: list[str], i: int) -> str:
+    """Line i, plus the next one when it ends in a colon ("invalid arguments:" + what was wrong)."""
+    text = lines[i]
+    if text.endswith(":") and i + 1 < len(lines):
+        text += " " + lines[i + 1]
+    return text[:240]
 
 
 class Engine:

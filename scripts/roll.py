@@ -5,13 +5,15 @@ Usage:
   python3 scripts/roll.py [options] ROLL [ROLL ...]
 
 A ROLL is a dice expression, optionally prefixed with a label and a colon (or =).
-Labels may contain spaces and dashes; quote them:
+Labels may contain spaces and dashes; quote them. A label without a colon before or after the
+expression works too ("1d20+5 Kovan Stealth"):
   1d20+5                     d20 = 1d20, d% = 1d100
   "Goblin 1 init: 1d20+6"
   "Longsword: 1d8+4"
   4d6dl1                     drop lowest 1 (also dh = drop highest)
   2d20kh1                    keep highest 1 (also kl = keep lowest)
   2d6+1d4-1                  any mix of dice and numbers joined by + and -
+  2d6*10+50                  * and / scale the term before them (/ rounds down)
 
 Options:
   -n, --times N        roll each ROLL N times (e.g. -n 6 4d6dl1 for ability scores)
@@ -40,7 +42,8 @@ from datetime import datetime
 from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[1]
-TERM = re.compile(r"([+-])?\s*(?:(\d*)d(\d+|%)(?:(kh|kl|dh|dl)(\d+))?|(\d+))", re.I)
+TERM = re.compile(r"([+-])?\s*(?:(\d*)d(\d+|%)(?:(kh|kl|dh|dl)(\d+))?|(\d+))((?:[*/]\d+)*)", re.I)
+DICE_WORD = re.compile(r"\d*d(?:\d+|%)(?:kh|kl|dh|dl)?\d*", re.I)
 
 
 class RollError(ValueError):
@@ -83,6 +86,26 @@ def roll_dice(rng: random.Random, count: int, sides: int, mod: str | None, mod_n
     return total, f"[{shown}]", kept
 
 
+def split_label(raw: str) -> tuple[str, str]:
+    """A ROLL's (label, expression): "Label: expr", "Label=expr", or the label as plain words before
+    or after the expression ("1d20+5 Kovan Stealth", "Stealth 1d20+5")."""
+    label, sep, expr = raw.rpartition(":")
+    if sep:
+        return label.strip(), expr
+    if "=" in raw:
+        label, _, expr = raw.partition("=")
+        return label.strip(), expr
+    words = raw.split()
+    is_expr = [not re.sub(r"[\d+\-*/%]", "", DICE_WORD.sub("", w)) for w in words]
+    if all(is_expr) or not any(is_expr):
+        return "", raw
+    first = is_expr.index(True)
+    last = len(is_expr) - 1 - is_expr[::-1].index(True)
+    if not all(is_expr[first:last + 1]):
+        return "", raw   # words inside the expression: let the parser report it
+    return " ".join(words[:first] + words[last + 1:]), " ".join(words[first:last + 1])
+
+
 def evaluate(expr: str, rng: random.Random) -> tuple[int, str, list[str]]:
     """Evaluate a dice expression such as '2d6+1d4-1' or '4d6dl1'.
 
@@ -116,6 +139,11 @@ def evaluate(expr: str, rng: random.Random) -> tuple[int, str, list[str]]:
             value, text, kept = roll_dice(rng, count, sides, m.group(4), int(m.group(5) or 0))
             if sides == 20 and len(kept) == 1 and kept[0] in (1, 20):
                 flags.append(f"NAT {kept[0]}")
+        for op, n in re.findall(r"([*/])(\d+)", m.group(7) or ""):
+            if op == "/" and int(n) == 0:
+                raise RollError("division by zero")
+            value = value * int(n) if op == "*" else value // int(n)
+            text += ("×" if op == "*" else "/") + n
         total += sign * value
         parts.append(prefix + text)
     if pos != len(compact):
@@ -229,10 +257,7 @@ def main(argv: list[str] | None = None) -> int:
                 lines += [roll_table(table, rng) for _ in range(args.times)]
             args.rolls = []
         for raw in args.rolls:
-            label, sep, expr = raw.rpartition(":")
-            if not sep and "=" in raw:  # also accept "Label=1d20+5"
-                label, _, expr = raw.partition("=")
-            label = label.strip()
+            label, expr = split_label(raw)
             for i in range(args.times):
                 total, detail, flags = evaluate(expr, rng)
                 name = f"{label} #{i + 1}".strip() if args.times > 1 else label

@@ -347,7 +347,8 @@ TOOLS: list[Tool] = [
     Tool("combat_profile_check", "Validate combat-profile blocks in stat blocks or character sheets.",
          {"files": {"type": "array", "items": {"type": "string"}, "minItems": 1}}, ["files"],
          lambda a: ["profile", "check", *a["files"]]),
-    Tool("dice_roll", "Roll dice (every roll the DM makes). rolls: expressions, optionally labeled (\"Goblin init: 1d20+6\"). "
+    Tool("dice_roll", "Roll dice (every roll the DM makes). rolls: expressions, optionally labeled (\"Goblin init: 1d20+6\"); "
+         "+ - between terms, * and / scale a term (\"2d6*10+50\"). "
          "hidden for secret rolls. oracle: each roll is a yes/no question answered YES with that % chance. table: each roll is a table file.",
          {"rolls": {"type": "array", "items": {"type": "string"}, "minItems": 1}, "hidden": B("a secret (GM screen) roll"),
           "note": S("context for the roll log"), "times": I("roll each N times"), "oracle": I("yes/no odds in %"),

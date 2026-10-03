@@ -119,6 +119,12 @@ class Snapshot(CampaignCase):
 
 
 class Telemetry(CampaignCase):
+    def test_error_line_keeps_the_reason(self) -> None:
+        import dm_engine
+        body = "[1] combat_move: invalid arguments:\n  combat_move: unknown field 'stp'\n(stopped; nothing after this ran)"
+        self.assertIn("unknown field 'stp'", dm_engine._error_line(body))
+        self.assertEqual(dm_engine._error_line("combat error: it isn't C's turn"), "combat error: it isn't C's turn")
+
     def test_record_written(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             old = E.TELEMETRY

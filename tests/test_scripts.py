@@ -22,6 +22,21 @@ class Dice(unittest.TestCase):
         with self.assertRaises(roll.RollError):
             roll.evaluate("2d6+", rng)
 
+    def test_scaling_and_loose_labels(self) -> None:
+        rng = random.Random(3)
+        total, detail, _ = roll.evaluate("2d6*10+50", rng)
+        self.assertTrue(70 <= total <= 170 and total % 10 == 0, (total, detail))
+        self.assertIn("×10", detail)
+        total, _, _ = roll.evaluate("3d6/2", rng)
+        self.assertTrue(1 <= total <= 9)
+        self.assertEqual(roll.split_label("1d20+5 Kovan Stealth"), ("Kovan Stealth", "1d20+5"))
+        self.assertEqual(roll.split_label("Stealth 1d20 + 4"), ("Stealth", "1d20 + 4"))
+        self.assertEqual(roll.split_label("Dex check: 1d20+2"), ("Dex check", " 1d20+2"))
+        self.assertEqual(roll.split_label("gp=2d6*10"), ("gp", "2d6*10"))
+        self.assertEqual(roll.split_label("4d6dl1"), ("", "4d6dl1"))
+        with self.assertRaises(roll.RollError):
+            roll.evaluate("1d20/0", rng)
+
     def test_nat20_flag_and_oracle(self) -> None:
         rng = random.Random(0)
         flags = set()

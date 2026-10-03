@@ -3120,6 +3120,18 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
         head.append("  ITS STANDARD ACTION IS SPENT: only its move action is left (move, or stay put).")
         attackable = []
         two, routes2 = one, routes   # "advance" and "withdraw" become single moves
+    # A single action this turn (surprise round, staggered; nauseated: only a move): it acts where it
+    # stands or after a 5-foot step, or it moves, not both. Plans that act use only those squares;
+    # "advance" and "withdraw" become single moves.
+    limited = None if move_only else restriction(st, c)
+    if limited:
+        head.append(f"  ONE ACTION THIS TURN ({limited}): it acts where it stands (or after a 5-foot step) "
+                    "or it moves, not both.")
+        if R.has(c, "nauseated"):
+            attackable = []
+        two, routes2 = one, routes
+        one = {q: f for q, f in one.items() if q == start or (f == 5 and R.sq_dist(start, q) == 1)}
+    single = move_only or bool(limited)
 
     def add(kind: str, deal: float, support: float, sq: Square, provoked: list[str], text: str,
             extra: str = "", exposure: float = 1.0, idle: float = 0.0) -> None:
@@ -3147,8 +3159,10 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
             best: tuple[float, Any] | None = None
             for sq, feet in one.items():
                 step = sq == start or (feet == 5 and R.sq_dist(start, sq) == 1)
-                ws = [x for x in _weapons(prof, kind, step) if ammo_left(c, x[0]) != 0 and at_hand(c, x[0])]
+                ws = [x for x in _weapons(prof, kind, step and not limited) if ammo_left(c, x[0]) != 0 and at_hand(c, x[0])]
                 draw = ""
+                if not ws and limited:   # drawing takes the move action, and the attack would be a second one
+                    break
                 if not ws:   # nothing of this kind in hand: draw one (the move action: no full attack this turn)
                     ws = [x for x in _weapons(prof, kind, False) if ammo_left(c, x[0]) != 0][:1]
                     if not ws:
@@ -3212,7 +3226,7 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                 ev_next, _n = _attack_ev(st, c, t, melee_ws, "melee")
                 hidden = c.get("hidden") and all(V.hidden_from(st, c, V.presumed(f, c)) for f in foes)
                 in_view = unseen_now and V.concealment(st, c, t)[0] < 50
-            how = f"move {one[q]} ft" if q in one else f"double move {two[q]} ft"
+            how = f"move {two[q]} ft" if single else f"move {one[q]} ft" if q in one else f"double move {two[q]} ft"
             if move_only and q not in one:
                 continue
             spot = SPOT_VALUE if in_view else 0.0   # an enemy back in sight: it (and its allies) can strike next round
@@ -3252,7 +3266,7 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
         if spec.get("uses") is None or used < spec["uses"]:
             castables.append((f"ability {nm}", spec, spec.get("dc"), 0, 0, False))   # Su/Ex: no AoO
 
-    if fear or move_only:
+    if fear or move_only or (limited and R.has(c, "nauseated")):
         castables = []
 
     def casting(q: Square, lvl: int, conc: int, provokes: bool) -> tuple[float, list[str], str]:
@@ -3330,7 +3344,7 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                     state_ = "dying" if o["hp"] < 0 else f"{o['hp']}/{o.get('max_hp')} HP"
                     reached = 5 * min(R.sq_dist(q, cc) for cc in cells(o)) <= rng
                     add("heal", 0, 0.5 * heal_value(o) if reached else 0.25 * heal_value(o), q, prov,
-                        f"{'move' if q in one else 'double move'} {two[q]} ft to {fmt_pos(*q)}, toward {o['token']} ({state_}) "
+                        f"{'move' if q in one or single else 'double move'} {two[q]} ft to {fmt_pos(*q)}, toward {o['token']} ({state_}) "
                         f"to {label_.split(' ', 1)[0]} {label_.split(' ', 1)[1]} next round",
                         "(counted at half)" if reached else "(still not there: counted at a quarter)")
                     continue
@@ -3430,10 +3444,10 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
             prov = path_provokers(st, c, route[1:], {}) if len(route) > 2 else []
             with _placed(c, dest):
                 out_of_sight = all(V.concealment(st, V.presumed(f, c), c)[0] >= 50 for f in foes)
-            if move_only:
+            if single:
                 prov = provokers(dest)
-            add("retreat", 0, 0, dest, prov, (f"move {two[dest]} ft away to " if move_only else f"withdraw {two[dest]} ft to ")
-                + fmt_pos(*dest) + (" (out of their sight)" if out_of_sight else "") + ("" if move_only else " (full-round)"),
+            add("retreat", 0, 0, dest, prov, (f"move {two[dest]} ft away to " if single else f"withdraw {two[dest]} ft to ")
+                + fmt_pos(*dest) + (" (out of their sight)" if out_of_sight else "") + ("" if single else " (full-round)"),
                 idle=0.0 if holding_ok else IDLE)
     plans.sort(key=lambda p: -p[0])
     return head + [f"  {i + 1}. {text}" for i, (_s, text) in enumerate(plans[:limit])]
