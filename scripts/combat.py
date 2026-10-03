@@ -2970,6 +2970,7 @@ def _weapons(prof: dict[str, Any], kind: str, full: bool) -> list[tuple[str, dic
     return [(best[0], best[1], b[0] if isinstance(b, list) else b)]
 
 
+SPOT_VALUE = 1.5   # finding an enemy that slipped out of sight again (a turn's worth of not losing it)
 PC_GUESS = 3.0   # a PC's expected damage per round when its profile lists no attacks (hits half the time for ~6)
 
 
@@ -3205,16 +3206,19 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                 continue
             prov_of = {q: path_provokers(st, c, routes2.get(q, [start, q]), memo2) for q in spots}
             q = min(spots, key=lambda q: (_aoo_risk(st, c, prov_of[q]), _incoming(st, c, q, memo), two[q]))
+            unseen_now = V.concealment(st, c, t)[0] >= 50
             with _placed(c, q), _holding(c, imagined):
                 reach_next = threatens(c, t)
                 ev_next, _n = _attack_ev(st, c, t, melee_ws, "melee")
                 hidden = c.get("hidden") and all(V.hidden_from(st, c, V.presumed(f, c)) for f in foes)
+                in_view = unseen_now and V.concealment(st, c, t)[0] < 50
             how = f"move {one[q]} ft" if q in one else f"double move {two[q]} ft"
             if move_only and q not in one:
                 continue
-            add("melee", 0.5 * ev_next if reach_next else 0.0, 0, q, prov_of[q],
+            spot = SPOT_VALUE if in_view else 0.0   # an enemy back in sight: it (and its allies) can strike next round
+            add("melee", 0.5 * ev_next if reach_next else 0.0, spot, q, prov_of[q],
                 f"{how} to {fmt_pos(*q)}" + (f", drawing its {imagined[0]}" if imagined else "") + f", closing on {t['token']}"
-                + (" (stays hidden)" if hidden else ""),
+                + (" (stays hidden)" if hidden else "") + (" (it comes into view there)" if in_view else ""),
                 f"(next round: full attack ~{ev_next:.1f}, counted at half)" if reach_next else "(still out of reach)")
 
     # --- spells, spell-like abilities and special abilities with effect data ---

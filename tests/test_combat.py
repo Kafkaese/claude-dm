@@ -1207,3 +1207,18 @@ class NoIdleTurns(CampaignCase):
         self.assertNotIn("withdraw", first)
         self.assertIn("a wasted turn", plans)                    # holding back is marked as such
         self.assertIn("toward b1", plans)                        # get to the hurt ally to heal her next round
+
+
+class Pursuit(CampaignCase):
+    def test_bringing_a_lost_enemy_back_into_view_counts(self) -> None:
+        self.new(blank="20x8", light="dark")
+        hunter = dict(GOBLIN, senses={"darkvision": 60}, attacks={"kukri": {"bonus": 4, "damage": "1d4+1", "type": "melee"}})
+        self.add("k1", "Kovan", "B4", hunter, side="ally", init=20)
+        self.add("b1", "Brenna", "B5", GOBLIN, side="ally", init=15)
+        self.add("C", "Ilvan", "A4", PC_PROFILE, side="pc", init=10)
+        self.add("g1", "Guard", "R4", GOBLIN, init=5)          # 80 ft away in the dark: beyond darkvision
+        self.run_cmd("next")
+        plans = self.run_cmd("options", "k1").split("Details:")[0]
+        self.assertIn("it comes into view there", plans)
+        first = plans.split("  1. ", 1)[1].splitlines()[0]
+        self.assertIn("closing on g1", first)

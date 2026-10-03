@@ -80,7 +80,9 @@ Combat runs **one actor at a time**. Each non-PC actor's turn is its own reply, 
 - **Spells and abilities resolve from the profile.** Each spell's effect lives once in the library (`library/<system>/spells/<name>.md`, worked out at the caster's level when it joins the fight), so `cast`/`sla` fill in the area, save, damage, healing, buff and condition; special abilities (bardic performance, channel energy, breath weapons) are `combat.py ability`. Sneak attack is added to NPC attacks automatically; for a PC, the script reminds when it applies.
 - **Play every creature by what it can see** (the `sight` report in each step):
   - Creatures with darkvision fight from the dark, and go for the enemy's light: snuff the torch, sunder the lantern, grab the sunrod, cast *darkness*.
-  - Creatures without darkvision stay in the light or bring their own, and don't wander into darkness they can't see in.
+  - Creatures without darkvision stay in the light or bring their own, and don't wander blindly into darkness they can't see in.
+  - **An enemy out of sight hasn't vanished.** Unless a creature is afraid or its nature says hide, it goes after an enemy it lost sight of: to where it was last seen, close enough to see it, or with light. Holding back or going on the defensive with nothing threatening it is a wasted turn (the turn plans say so).
+  - Allies act on what the PC says aloud ("Get him!") when it fits them.
   - Hiders move to squares where they're unseen.
   - Creatures with light sensitivity avoid bright light.
 - **Morale:** most creatures flee or surrender when the fight is clearly lost. Use the morale entry in the stat block, if it has one.

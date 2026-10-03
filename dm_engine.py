@@ -979,8 +979,9 @@ def _sight(camp: str, st: dict[str, Any], tok: str) -> str:
                        cwd=REPO, env=env, capture_output=True, text=True)
     if r.returncode:
         return ""
-    return ("\nWhat it sees (use it: fight from where it sees and isn't seen, avoid what it can't see in, "
-            "go for light sources if darkness favors it):\n" + r.stdout.strip())
+    return ("\nWhat it sees (use it: fight from where it sees and isn't seen, go for light sources if darkness favors it. "
+            "An enemy out of sight hasn't vanished: unless it's afraid or its nature says hide, go where it was last seen, "
+            "close in until it can see it, or bring light; don't hold back or defend against nothing):\n" + r.stdout.strip())
 
 
 def _step_context(st: dict[str, Any], c: dict[str, Any]) -> str:
@@ -1192,7 +1193,7 @@ def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool], runn
 RUNNER_PROMPT = """You are the combat runner of a tabletop DM interface (Pathfinder 1e). You play the turns of the non-player creatures in a fight, one creature per message. The player sees ONLY the narration you write after your last tool call; everything else stays hidden.
 
 Every message is a combat step for ONE creature, with a DM-only briefing: its attacks, positions, tactical options (squares, the d20 roll it needs, what provokes) and what it can see.
-1. Decide what this creature does, by its nature, its knowledge and the encounter's tactics and morale (not by what you know as the DM). A cowardly creature may retreat; morale breaks per the notes.
+1. Decide what this creature does, by its nature, its knowledge and the encounter's tactics and morale (not by what you know as the DM). A cowardly creature may retreat; morale breaks per the notes. An enemy it can't see isn't gone: if it isn't afraid and has no reason to hide, it goes after it (toward where it was last seen, into view, or with light) instead of holding back. Allies of the player act on what the player's character says aloud (an order, "get him!") when it fits them.
 2. Resolve it in ONE combat_batch call with the dm tools (move, attack, cast/sla through combat_cast with the effect in the same call: dmg/save, heal dice for cure spells, cond + cond_rounds for a condition on a failed save, unless the profile's effect data fills it in; special abilities like bardic performance or channel energy through combat_ability; maneuvers, conditions). The turn plans in the briefing weigh damage, support and risk, including its tactics weights and broken morale: use the spells, buffs, heals, defense and retreats they list, but play the creature's nature over the top number. A frightened or panicked creature's plans list only flight: it flees. Buff spells (bless) apply their bonus to every ally in range through combat_cast. The tools roll and apply every effect themselves: never fix HP afterwards with dice_roll and combat_hp. If a call fails, fix that call; if the effect really wasn't applied, say so in one line instead of patching it. The tools do all the rule math. Never run combat_next or combat_end; act only for this creature.
 3. Then narrate only this creature's turn, in 1-3 lines, and stop.
 
@@ -1245,6 +1246,7 @@ class CombatRunner:
         self.steps = 0
         self.recent: list[str] = []   # the last narrations, for continuity
         self.recap: list[str] = []    # what the main DM hasn't heard about yet
+        self.player_said: list[str] = []   # the player's latest messages: allies hear what the PC says
 
     def send(self, prompt: str) -> bool:
         """Send one step to the runner (starting or refreshing its process as needed)."""
@@ -1275,7 +1277,16 @@ class CombatRunner:
                 pass
         if self.recent:
             parts.append("Recent narration (for continuity; don't repeat it):\n" + "\n".join(self.recent[-4:]))
+        if self.player_said:
+            parts.append("What the player said last (\"quotes\" are the PC speaking aloud: allies who hear it act on it "
+                         "when it fits them; enemies only if they'd hear and understand):\n" + "\n".join(self.player_said[-2:]))
         return "\n".join(parts) + "\n\n" + prompt
+
+    def heard(self, text: str) -> None:
+        """Remember what the player just said (their own words, not interface messages)."""
+        t = player_part(text) or ""
+        if t.strip() and not t.startswith(("/", "[")):
+            self.player_said = (self.player_said + [t.strip()[:400]])[-2:]
 
     def note(self, name: str, text: str, by_runner: bool) -> None:
         """Remember a step's narration: for continuity, and (if the runner played it) for the recap."""

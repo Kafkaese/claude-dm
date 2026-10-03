@@ -477,3 +477,16 @@ class TalkingOutOfTurn(CampaignCase):
         self.assertIn("hasn't been played yet", line)
         self.assertIn("next up: Corin (the player's turn)", line)
         self.assertIn("NOT the player's turn", E.with_recap("Can I see his face?", "", [], self.state()))
+
+
+class RunnerHearsThePlayer(CampaignCase):
+    def test_player_words_reach_the_runner_frame(self) -> None:
+        self.new(blank="8x6")
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=5)
+        runner = E.CombatRunner(lambda ev: None, self.slug)
+        runner.heard(E.with_recap('"Get him!" I point at the fleeing guard', "", [], self.state()))
+        runner.heard("[Combat step, sent by the interface]")                  # not the player's words
+        frame = runner.frame("STEP", self.slug, self.state())
+        self.assertIn('"Get him!" I point at the fleeing guard', frame)
+        self.assertNotIn("Combat step, sent", frame.split("STEP")[0])
+        self.assertFalse(runner.engine.alive())                              # nothing started

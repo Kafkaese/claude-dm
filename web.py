@@ -205,6 +205,9 @@ class Hub:
         """Worker thread: send the message to the engine and wait for the reply. If that reply
         leaves a combat step due (the player ended their turn in the same message, or a fight was
         just set up with the PC first), the step runs right after."""
+        camp = self.campaign()
+        if camp and self.eng.combat_engaged and combat_state(camp):
+            self._get_runner(camp).heard(text)   # allies hear what the PC says (no process starts here)
         ok = self._exchange(self._with_recap(text))
         self.refresh_combat()
         if ok and self.eng.combat_engaged and step_due(self.campaign(), text):
