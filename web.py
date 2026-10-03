@@ -31,7 +31,8 @@ from typing import Any
 from dm_engine import (EFFORTS, REPO, CombatRunner, Engine, with_recap, campaign_for_session, campaign_title, is_campaign, remember_campaign, combat_snapshot, combat_state,
                        end_fight, fight_over, fight_over_prompt,
                        is_go_signal, list_campaigns, run_combat_step, slugify, step_due,
-                       last_combat_events, last_session, load_history)
+                       last_combat_events, last_session, load_history,
+                       FLUSH_PROMPT, WISHES_QUESTION, close_prompt, session_in_progress, write_transcript)
 
 WEB = REPO / "web"
 
@@ -58,6 +59,7 @@ class Hub:
         self.engine: Engine | None = None         # set by main() before the server starts
         self.worker: threading.Thread | None = None
         self.shown_campaign: str | None = None     # the campaign the page's title shows
+        self.closing = False                       # /end-session asked the stars & wishes; the next message answers
 
     @property
     def eng(self) -> Engine:
@@ -180,6 +182,8 @@ class Hub:
         parts = text.split()
         if parts[0] == "/new-campaign" or (parts[0] == "/start-session" and len(parts) > 1 and parts[1] != self.campaign()):
             return 409, "Use the campaign menu (the gear) to start or switch campaigns."
+        if parts[0] == "/end-session" or self.closing:
+            return self._close_input(text)
         with self.lock:
             if self.busy():
                 return 409, "The DM is still busy."
@@ -192,6 +196,64 @@ class Hub:
             self.worker = threading.Thread(target=self._run_step if step else self._run_turn, args=(text,), daemon=True)
             self.worker.start()
         return 202, "ok"
+
+    # --- closing a session (see FLUSH_PROMPT in dm_engine) ---
+    def _close_input(self, text: str) -> tuple[int, str]:
+        """/end-session: ask the stars & wishes here (no DM call); the answer closes the session in
+        a fresh conversation, "cancel" goes back to the game."""
+        with self.lock:
+            if self.busy():
+                return 409, "The DM is still busy."
+            self.history.append({"role": "player", "text": text})
+            self.publish({"type": "player", "text": text})
+            if not self.closing:
+                if session_in_progress(self.campaign()) is None:
+                    self.closing = False
+                    self.system("No session is in progress to end. Start one from the campaign menu (the gear).")
+                    return 202, "ok"
+                self.closing = True
+                self.interface_says(WISHES_QUESTION)
+                return 202, "ok"
+            self.closing = False
+            if text.lower().strip(" .!\"'") in ("cancel", "keep playing", "never mind", "nevermind"):
+                self.system("Okay, back to the game.")
+                return 202, "ok"
+            self.publish({"type": "busy", "busy": True})
+            self.worker = threading.Thread(target=self._run_close, args=(text,), daemon=True)
+            self.worker.start()
+        return 202, "ok"
+
+    def _run_close(self, wishes: str) -> None:
+        """Worker thread: close the session in a fresh conversation."""
+        self.close_session(wishes)
+        self.refresh_campaign()
+        self.publish({"type": "busy", "busy": False})
+
+    def close_session(self, wishes: str) -> bool:
+        """The playing DM brings its live log up to date (one short, hidden exchange); then a fresh
+        conversation, locked to the same campaign, runs /end-session from the files and the
+        session's transcript. Its reply (award, recap, teaser) is shown. Returns whether it ran."""
+        camp = self.campaign()
+        nn = session_in_progress(camp)
+        if not camp or nn is None:
+            return False
+        self.system("Wrapping up the session…")
+        if self.eng.alive() and self.eng.session_id:
+            self.eng.hold()
+            try:
+                self._exchange(FLUSH_PROMPT)
+            finally:
+                self.eng.release(publish=False)
+        transcript = write_transcript(camp, nn, self.history)
+        if self.runner:
+            self.runner.stop()
+            self.runner = None
+        self.eng.new_session()   # same campaign lock, a fresh and small context
+        with self.lock:
+            self.turn_dm = None
+        ok = self._exchange(close_prompt(camp, nn, wishes, transcript))
+        self._pin_campaign()   # "continue" now picks up the closing conversation
+        return ok
 
     def busy(self) -> bool:
         """Whether a turn (or a campaign switch) is running."""
@@ -310,11 +372,10 @@ class Hub:
     def _run_open(self, slug: str, mode: str, end_current: bool, name: str, pitch: str) -> None:
         """Worker thread for open_campaign()."""
         old = self.campaign()
-        if end_current and old and self.history and self.eng.alive():
+        if end_current and old and session_in_progress(old) is not None:
             self.system(f"Ending the session of {campaign_title(old)} first…")
-            self._exchange(f"[The player is switching to another campaign. If a session of {old} is in progress "
-                           f"in this conversation, run /end-session for it now. If not, reply only: "
-                           f"\"No session in progress.\"]")
+            self.close_session("skip (the player is switching to another campaign)")
+        self.closing = False
         if self.runner:
             self.runner.stop()
             self.runner = None
@@ -381,6 +442,14 @@ class Hub:
             self.system(f"The fight goes on: round {st.get('round')}, it's your turn.")
         elif cur:
             self.system(f"The fight goes on (round {st.get('round')}). Press Next (or say \"continue\") to play on.")
+
+    def interface_says(self, text: str) -> None:
+        """A message in the DM's place, written by the interface (markdown, like the DM's own)."""
+        with self.lock:
+            self.history.append({"role": "dm", "text": text})
+            self.turn_dm = None
+            for ev in ({"type": "text_start", "new": True}, {"type": "text", "delta": text}, {"type": "turn_end"}):
+                self.publish(ev)
 
     def system(self, text: str) -> None:
         """Add a system note (not from the DM) to the chat."""

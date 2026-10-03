@@ -90,7 +90,7 @@ Everything you write to the player describes **what the character has perceived,
 - **The world moves.** NPCs and factions pursue their goals, and time passes.
 
 ## Live log & persistence
-Keep the running notes in `dm/session-log/session-NN.md` **during** play, not just at the end. The context can get compacted during a long session, and the log is what survives (`dm-procedures.md`, "Live log and checkpoints").
+Keep the running notes in `dm/session-log/session-NN.md` **during** play, not just at the end. The context can get compacted during a long session, and the log is what survives (`dm-procedures.md`, "Live log and checkpoints"). The session is also closed from it: `/end-session` runs in a fresh conversation that only has the files and the chat transcript.
 - **After each scene or combat,** the log gets the key events, decisions, rolls that mattered, NPCs met, loot, and HP and resources spent.
 - **Improvised NPCs and places that matter** get their own quick file in `dm/npcs/` or `dm/locations/` (after the improvisation check).
 - **When the characters learn a secret,** add it to the player-facing notes, e.g. `players/party.md` or a handout.

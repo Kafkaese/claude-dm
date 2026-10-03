@@ -10,6 +10,8 @@ Use the campaign that was just played, or `$ARGUMENTS`. `NN` is the current sess
 
 If the session stops mid-scene (including mid-combat), that's fine. Record the exact situation, including enemy HP and initiative, so play can resume there.
 
+**In the web interface** the session is closed in a fresh conversation, to save tokens. The interface asks Step 1 itself, has the playing DM bring the live log up to date, and then starts this skill with the player's answer and a player-visible transcript (`.play/transcripts/`). So work from the files: the live log, `dm/` files and the combat tools, plus the transcript for the recap. Then start at Step 2.
+
 ## Step 1: Wrap up with the player
 Keep this to one message, out of character:
 1. **Stars & wishes:** what did they enjoy this session, and what would they like to see more of? A short answer, or "skip", is fine.

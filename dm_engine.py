@@ -141,7 +141,8 @@ def is_combat_tool(name: str, inp: dict[str, Any]) -> bool:
     return name == "Bash" and "combat.py" in str(inp.get("command", "")) and " profile check" not in str(inp.get("command", ""))
 
 
-INTERFACE_PREFIXES = ("[Combat step", "[The player is switching to another campaign", "[Test setup", "[The fight is over", "/compact")
+INTERFACE_PREFIXES = ("[Combat step", "[The player is switching to another campaign", "[Test setup", "[The fight is over", "/compact",
+                      "[The session is ending", "[Close the session")
 RECAP_PREFIX = "[Interface recap"
 
 
@@ -150,6 +151,73 @@ COMPACT_PROMPT = ("/compact Keep what running this table needs: the campaign and
                   "character did and said recently and what they're trying to do, NPCs met and what was said, rulings, "
                   "corrections and table preferences from this conversation, open threads touched this session, and anything "
                   "promised to the player. Facts from dm/ files can be dropped: they're in the files (and dm/screen-digest.md).")
+
+
+# Closing a session (web.py): the interface asks the stars & wishes itself, the playing DM brings
+# its live log up to date (FLUSH_PROMPT, one short exchange), and a FRESH conversation runs
+# /end-session from the files (close_prompt). The skill's heavy part then reads ~30k tokens of
+# context per call instead of the whole session's 200k+.
+WISHES_QUESTION = ("Before we wrap up, out of character:\n"
+                   "1. **Stars & wishes:** what did you enjoy this session, and what would you like to see more of?\n"
+                   "2. **Anything to note:** rulings you disagreed with, or changes to lines and veils?\n\n"
+                   "A short answer or \"skip\" is fine. Say \"cancel\" to keep playing instead.")
+
+FLUSH_PROMPT = ("[The session is ending. Another conversation will close it from the files, without this one's memory. "
+                "Bring the live log (dm/session-log/session-NN.md) up to date NOW, tersely, with one Edit: everything "
+                "since its last entry that only this conversation knows (scenes, hidden rolls and their outcomes, "
+                "improvised facts and NPCs, rulings, promises, the exact current situation). Don't write anything "
+                "else, and reply only: \"done\".]")
+
+
+def close_prompt(slug: str, nn: int, wishes: str, transcript: Path | None) -> str:
+    """The fresh closing conversation's first message: run /end-session from the files."""
+    where = (f" The player-visible transcript of the session (what was said and narrated, no DM secrets) is in "
+             f"`{transcript.relative_to(REPO) if transcript.is_relative_to(REPO) else transcript}`: use it for the recap, and read it by sections if it's long."
+             if transcript else "")
+    return (f"[Close the session (from the interface): run the /end-session skill for campaign `{slug}`, session {nn:02d}. "
+            f"This is a fresh conversation: the session was played in another one, so don't run /start-session; "
+            f"work from the files. The DM side is in the live log `dm/session-log/session-{nn:02d}.md`.{where} "
+            f"A fight that's still in progress is in the combat tools (combat_info).\n"
+            f"Step 1 is done (the interface asked). The player's answer to stars & wishes and anything to note: "
+            f"\"{wishes.strip() or 'skip'}\". Start at Step 2.]")
+
+
+def session_in_progress(slug: str | None) -> int | None:
+    """The number of the campaign's session being played: its live log exists, and the session
+    hasn't been closed yet (closing increments "Sessions played"). None otherwise."""
+    md = REPO / "campaigns" / str(slug) / "campaign.md"
+    if not slug or not md.is_file():
+        return None
+    text = md.read_text(encoding="utf-8")
+    played = re.search(r"\*\*Sessions played:\*\*\s*(\d+)", text)
+    nn = (int(played.group(1)) if played else 0) + 1
+    return nn if (REPO / "campaigns" / str(slug) / "dm" / "session-log" / f"session-{nn:02d}.md").exists() else None
+
+
+def write_transcript(slug: str, nn: int, history: list[dict[str, Any]]) -> Path | None:
+    """The session's chat as the player saw it (.play/transcripts/<slug>-session-NN.md), from the
+    last /start-session on: the closing conversation's memory of what was said. None if empty."""
+    start = max((i for i, h in enumerate(history)
+                 if h.get("role") == "player" and str(h.get("text", "")).startswith("/start-session")), default=0)
+    lines: list[str] = []
+    for h in history[start:]:
+        role, text = h.get("role"), str(h.get("text") or "").strip()
+        if role == "player" and text:
+            lines.append(f"**Player:** {text}")
+        elif role == "dm" and text:
+            lines.append(f"**DM:** {text}")
+        elif role == "log":
+            events = [str(e.get("text", e)) if isinstance(e, dict) else str(e) for e in h.get("events") or []]
+            lines.append(f"*({h.get('title') or 'combat log'})*" + "".join(f"\n- {e}" for e in events))
+        elif role == "system" and text:
+            lines.append(f"*({text})*")
+    if not lines:
+        return None
+    path = STATE / "transcripts" / f"{slug}-session-{nn:02d}.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"# {campaign_title(slug)}, session {nn:02d}: transcript\n\n" + "\n\n".join(lines) + "\n",
+                    encoding="utf-8")
+    return path
 
 
 def player_part(text: str) -> str | None:
@@ -177,6 +245,10 @@ def exchange_kind(text: str) -> str:
         return "switch"
     if t.startswith("[The fight is over"):
         return "combat-end"
+    if t.startswith("[The session is ending"):
+        return "close-flush"
+    if t.startswith("[Close the session"):
+        return "command:end-session"
     if t.startswith("/"):
         return "command:" + t.split()[0][1:]
     if t.lower().rstrip(".!") in ("next", "end turn"):

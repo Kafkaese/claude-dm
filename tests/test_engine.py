@@ -513,3 +513,59 @@ class Compaction(CampaignCase):
         self.assertEqual(eng.context_tokens, 0)
         self.assertIsNone(E.player_part(sent[0]))                    # never shown as the player's message
         self.assertEqual(E.exchange_kind(sent[0]), "command:compact")
+
+
+class ClosingSession(CampaignCase):
+    """/end-session: the interface asks the stars & wishes, the playing DM flushes its live log, and
+    a fresh conversation runs the skill from the files and the transcript."""
+
+    def hub(self) -> tuple[Any, list[str]]:
+        import web
+        hub = web.Hub(self.slug)
+        hub.engine = E.Engine(lambda ev: None)
+        hub.engine.session_id = "old"
+        hub.engine.alive = lambda: True                          # type: ignore[method-assign]
+        sent: list[str] = []
+        hub.engine.new_session = lambda: sent.append("NEW SESSION")   # type: ignore[method-assign]  # never a real process
+        hub._exchange = lambda text: sent.append(text) or True   # type: ignore[method-assign]
+        hub.history = [{"role": "player", "text": "/start-session " + self.slug}, {"role": "dm", "text": "Rain on the docks."},
+                       {"role": "player", "text": "I follow the smuggler."}]
+        return hub, sent
+
+    def test_close_in_a_fresh_conversation(self) -> None:
+        self.write("dm/session-log/session-01.md", "# Session 01\n")
+        hub, sent = self.hub()
+        with tempfile.TemporaryDirectory() as d:
+            old, E.STATE = E.STATE, Path(d)
+            try:
+                hub.send("/end-session")
+                self.assertTrue(hub.closing)
+                self.assertIn("Stars & wishes", hub.history[-1]["text"])
+                self.assertEqual(sent, [])                                  # no DM call for the question
+                hub.send("cancel")
+                self.assertFalse(hub.closing)
+                hub.send("/end-session")
+                hub.send("More rooftop chases")
+                hub.worker.join(5)
+                self.assertTrue(sent[0].startswith("[The session is ending"))   # the flush, in the old conversation
+                self.assertEqual(sent[1], "NEW SESSION")
+                self.assertIn("/end-session skill for campaign", sent[2])
+                self.assertIn('"More rooftop chases"', sent[2])
+                self.assertIn("Start at Step 2", sent[2])
+                transcript = Path(d) / "transcripts" / f"{self.slug}-session-01.md"
+                self.assertIn(str(transcript), sent[2])
+                text = transcript.read_text()
+                self.assertIn("**Player:** I follow the smuggler.", text)
+                self.assertIn("**DM:** Rain on the docks.", text)
+            finally:
+                E.STATE = old
+        self.assertEqual(E.exchange_kind(sent[2]), "command:end-session")
+        self.assertIsNone(E.player_part(sent[0]))
+        self.assertIsNone(E.player_part(sent[2]))
+
+    def test_nothing_to_close(self) -> None:
+        hub, sent = self.hub()
+        hub.send("/end-session")
+        self.assertFalse(hub.closing)
+        self.assertIn("No session is in progress", hub.history[-1]["text"])
+        self.assertEqual(sent, [])
