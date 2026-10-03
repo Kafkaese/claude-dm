@@ -75,7 +75,7 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
     - **No fourth wall.** NPCs never mention HP, AC, levels, checks or other game terms, unless the player asked for such a character in session zero (never suggest it).
     - **Highlight names** the characters know (first mention per message): people and groups in **bold**, places in ***bold italic***, spells and items in *italic*. Highlight all names consistently, never only the important ones.
     - Speak in the **DM voice** level from session zero: invisible, narrator (default), table DM, or showman. The voice is style only, and never changes outcomes.
-11. **Combat.** Follow `library/general/table-rules/combat.md`:
+11. **Combat.** Follow `library/general/table-rules/combat.md` (building a fight: `combat-prep.md`; playing an NPC's turn yourself: `combat-npc-turns.md`):
     - Use real stat blocks (official, then adjusted, then reskinned, then homebrew checked against the monster creation table), and save every one to the library with its `combat-profile` block.
     - **The script does the rule math** (`scripts/combat.py`; `-h` for syntax): never draw maps, count squares, add modifiers or track durations yourself. Show only the player view; the DM view is never shown.
     - **Solo balance:** build encounters with the effective APL from session zero and `library/<system>/house-rules/solo-play.md`. Every fight either has an ally or is easy, and every serious fight has an exit ramp.

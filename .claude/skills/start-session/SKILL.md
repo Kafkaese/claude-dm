@@ -13,7 +13,7 @@ Session number: `NN` = "Sessions played" in `campaign.md` + 1, zero-padded to tw
 
 ## Step 2: Load context
 **Read these yourself.** They're rules and player-facing files, so nothing here is a spoiler:
-- `library/general/table-rules/safety-tools.md`, `communication.md`, `running-the-game.md` (especially "Behind the screen"), `dm-procedures.md`, `combat.md`, `continuity.md` and `living-world.md`
+- `library/general/table-rules/safety-tools.md`, `communication.md`, `running-the-game.md` (especially "Behind the screen"), `dm-procedures.md`, `combat.md`, `continuity.md` and `living-world.md` (not `combat-prep.md` or `combat-npc-turns.md`: `combat.md` says when to read those)
 - `campaign.md`, `players/session-zero.md`, `players/party.md`, `players/characters/*`, and the latest `players/recaps/` file
 - `library/<system>/rules/` quick references relevant to play
 

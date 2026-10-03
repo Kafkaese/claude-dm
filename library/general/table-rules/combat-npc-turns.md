@@ -1,0 +1,22 @@
+# Playing NPC Turns
+
+How to play a non-player creature's turn: its spells, tactics, sight and morale. The **combat runner** plays most NPC turns with its own prompt; read this when you play one yourself (a boss or story NPC marked `dm_plays` / `--main-dm`). Narrating it follows `combat.md`, "Narration".
+
+## Spells and abilities
+**NPC spells and SLAs always go through `cast` / `sla`,** with the effect in the same command (`--area "cone 15" --toward C4 --save ref --dmg 1d4 --half`, `--target C --save will`, `--target b1 --heal 1d8+3` for cure spells, or `--light-at D4` for light and darkness spells). A targeted spell given no effect only spends the slot, and the script says so. Rays and touch spells: `cast`, then an `attack … --touch` in the same `do` call. **Conditions** go in the same command: `--cond asleep --cond-rounds 5` lands on every target that fails its save (or on the target when there's no save), and a PC's pending save carries it until the player rolls. Use the script's condition names (helpless, asleep, stunned, dazed, shaken, frightened, entangled, …); an unknown name is tracked by name only, and the script says so. The player's log only says "casts a spell"; whether the PC identifies it is a Spellcraft matter.
+
+## Tactics
+- **Enemies act by their nature and knowledge,** not by what you know as DM. A goblin doesn't know the wizard is out of spells. Intelligent enemies do use tactics: focus fire, flanking, retreating, surrendering, fleeing.
+- **Use the tactical options** (`combat_options`; they come with every combat step). They start with **turn plans** ranked by rough expected value: the damage a plan deals (sneak attack, spells and abilities with effect data included), the support it gives (flanking for an ally, buffs, heals), the AoOs it risks and what the creature takes next round where it ends up. Below that, per target: the squares that threaten it and the d20 roll needed there (flanking, cover, light included), what provokes, charge lanes, ranged positions and retreat squares; `--area "burst 20" --range 100` adds the best placements of an area effect. The numbers do the arithmetic; you decide what this creature, with its nature and knowledge, would actually do (a cowardly kobold takes the safest square, a berserker charges, a caster opens with its best spell).
+- **Personality and morale in numbers:** a profile's or encounter's `tactics` adds weights to the turn plans (a coward prefers ranged and retreats when bloodied, a berserker never defends). Broken morale shows in the plans' header. It still takes your judgment: the weights tilt the plans, they don't decide.
+- **What creatures know:** the plans and the sight report assume the opponents have normal vision until their darkvision or low-light vision shows (they hit something only those senses could see). Play the creature with that knowledge (house rule: `library/pf1e/house-rules/vision-and-light.md`).
+- **Spells and abilities resolve from the profile.** Each spell's effect lives once in the library (`library/<system>/spells/<name>.md`, worked out at the caster's level when it joins the fight), so `cast`/`sla` fill in the area, save, damage, healing, buff and condition; special abilities (bardic performance, channel energy, breath weapons) are `combat.py ability`. Sneak attack is added to NPC attacks automatically; for a PC, the script reminds when it applies.
+- **Play every creature by what it can see** (the `sight` report in each step):
+  - Creatures with darkvision fight from the dark, and go for the enemy's light: snuff the torch, sunder the lantern, grab the sunrod, cast *darkness*.
+  - Creatures without darkvision stay in the light or bring their own, and don't wander blindly into darkness they can't see in.
+  - **An enemy out of sight hasn't vanished.** Unless a creature is afraid or its nature says hide, it goes after an enemy it lost sight of: to where it was last seen, close enough to see it, or with light. Holding back or going on the defensive with nothing threatening it is a wasted turn (the turn plans say so).
+  - Allies act on what the PC says aloud ("Get him!") when it fits them.
+  - Hiders move to squares where they're unseen.
+  - Creatures with light sensitivity avoid bright light.
+- **Morale:** most creatures flee or surrender when the fight is clearly lost. Use the morale entry in the stat block, if it has one.
+- **Report rolls truthfully** and apply the session-zero mercy policy only as agreed.

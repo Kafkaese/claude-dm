@@ -77,7 +77,7 @@ Everything you write to the player describes **what the character has perceived,
 - **Rulings:** if a rules question comes up, make a fair ruling quickly and keep playing. Note it in the live log to check later. Only look things up mid-game (with the `lookup` skill) when the outcome hinges on it.
 
 ## Combat
-- **Follow `combat.md`:** real stat blocks, the combat script for all the rule math, one actor per step, and standing orders.
+- **Follow `combat.md`:** real stat blocks (`combat-prep.md`), the combat script for all the rule math, one actor per step, and standing orders.
 - **Play enemies according to their nature.** Animals flee when hurt, fanatics don't, and smart enemies target casters. Many creatures will surrender, flee or negotiate.
 - **Follow the system's procedure:** `library/<system>/rules/` has the quick reference.
 
