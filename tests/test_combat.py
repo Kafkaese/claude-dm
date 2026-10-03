@@ -109,6 +109,7 @@ class Attacks(CampaignCase):
         self.run_cmd("next")                                   # g2 (D2): 10 ft away
         self.assertIn("out of g2's melee reach", self.fail_cmd("attack", "g2", "C", "--with", "spear"))
         self.assertIn("--as charge", self.fail_cmd("attack", "g2", "C", "--with", "spear", "--charge"))
+        self.run_cmd("wield", "g2", "shortbow", "--drop", "spear", "--out-of-turn")
         self.run_cmd("attack", "g2", "C", "--with", "shortbow")          # ranged is fine
 
     def test_minimum_damage_is_one_nonlethal(self) -> None:
@@ -480,6 +481,7 @@ class SneakAttack(CampaignCase):
 
     def test_ranged_beyond_30_ft(self) -> None:
         self.run_cmd("move", "r1", "J2", "--out-of-turn")
+        self.run_cmd("wield", "r1", "sling", "--out-of-turn")
         out = self.run_cmd("attack", "r1", "C", "--with", "sling")
         self.assertIn("more than 30 ft away", out)
 
@@ -1060,3 +1062,75 @@ class Immunity(CampaignCase):
     def test_plans_skip_immune_targets(self) -> None:
         self.run_cmd("cast", "w1", "daze", "--target", "g1")
         self.assertNotIn("daze on g1", self.run_cmd("options", "w1"))
+
+
+GUARD = dict(GOBLIN, attacks={"rapier": {"bonus": 5, "damage": "1d6+1", "type": "melee"},
+                              "composite longbow": {"bonus": 5, "damage": "1d8", "type": "ranged", "range": 110}},
+             wielding=["composite longbow"])
+
+
+class Weapons(CampaignCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.new(blank="12x6")
+        self.add("g1", "Guard", "B2", GUARD, init=20)
+        self.add("C", "Corin", "C2", dict(PC_PROFILE, weapons={"rapier": {"type": "melee"}, "shortbow": {"type": "ranged", "hands": 2}}),
+                 side="pc", init=10)
+        self.run_cmd("next")
+
+    def test_attacks_need_the_weapon_in_hand(self) -> None:
+        self.assertIn("isn't holding its rapier", self.fail_cmd("attack", "g1", "C", "--with", "rapier"))
+        self.assertIn("needs 1 free hand(s)", self.fail_cmd("wield", "g1", "rapier"))      # the bow takes both
+        out = self.run_cmd("wield", "g1", "rapier", "--drop", "composite longbow")
+        self.assertIn("drops its composite longbow (on the ground at B2)", out)
+        self.assertIn("(a move action)", out)
+        self.run_cmd("attack", "g1", "C", "--with", "rapier")
+        self.assertIn("lies on the ground", self.fail_cmd("wield", "g1", "composite longbow", "--drop", "rapier", "--out-of-turn"))
+
+    def test_draw_rides_on_a_move_with_bab_1(self) -> None:
+        self.run_cmd("wield", "g1", "rapier", "--drop", "composite longbow")
+        out = self.run_cmd("move", "g1", "B4")                     # the same move action carries the movement
+        self.assertIn("standard", out.splitlines()[-1])
+        self.run_cmd("attack", "g1", "C", "--with", "rapier", "--override")
+
+    def test_only_melee_in_hand_threatens(self) -> None:
+        import combat
+        st = self.state()
+        g, c = combat.token(st, "g1"), combat.token(st, "C")
+        self.assertFalse(combat.threatens(g, c))                  # bow in hand: no AoOs
+        self.run_cmd("wield", "g1", "rapier", "--drop", "composite longbow", "--out-of-turn")
+        st = self.state()
+        self.assertTrue(combat.threatens(combat.token(st, "g1"), combat.token(st, "C")))
+
+    def test_disarm_drops_it_and_pickup_provokes(self) -> None:
+        self.run_cmd("wield", "g1", "rapier", "--drop", "composite longbow", "--out-of-turn")
+        self.run_cmd("next")                                      # Corin's turn
+        out = self.run_cmd("maneuver", "C", "g1", "disarm", "--total", "40", "--override")
+        self.assertIn("drops rapier", out)
+        self.assertEqual(self.tok("g1")["wielding"], [])
+        self.assertIn("rapier", [g["item"] for g in self.state()["ground"]])
+        self.run_cmd("next")
+        self.assertIn("isn't holding", self.fail_cmd("attack", "g1", "C", "--with", "rapier"))
+        out = self.run_cmd("pickup", "g1", "rapier")
+        self.assertIn("holds it ready", out)
+
+    def test_pc_weapons_are_tracked(self) -> None:
+        self.run_cmd("next")                                      # Corin, holding his rapier
+        self.assertIn("isn't holding the shortbow", self.fail_cmd("attack", "C", "g1", "--total", "15", "--name", "shortbow"))
+        self.run_cmd("attack", "C", "g1", "--total", "15", "--damage", "3", "--name", "rapier")
+
+    def test_unarmed_threatens_only_with_the_feat(self) -> None:
+        import combat
+        monk = dict(GOBLIN, attacks={"unarmed strike": {"bonus": 3, "damage": "1d6", "type": "melee"},
+                                     "sling": {"bonus": 3, "damage": "1d4", "type": "ranged", "range": 50}})
+        self.add("m1", "Monk", "A2", monk, side="ally", init=1)                                   # next to g1
+        self.add("m2", "Monk2", "A3", dict(monk, feats=["Improved Unarmed Strike"]), side="ally", init=1)   # next to g1 too
+        st = self.state()
+        g1 = combat.token(st, "g1")
+        self.assertEqual(combat.feet_between(combat.token(st, "m1"), g1), 5)
+        self.assertFalse(combat.threatens(combat.token(st, "m1"), g1))    # untrained unarmed strike: no threat
+        self.assertTrue(combat.threatens(combat.token(st, "m2"), g1))
+
+    def test_plans_draw_the_weapon(self) -> None:
+        out = self.run_cmd("options", "g1").split("Details:")[0]
+        self.assertIn("draw rapier (dropping its composite longbow), attack C", out)

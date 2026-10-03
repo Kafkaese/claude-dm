@@ -77,6 +77,11 @@ Play
                                   modifiers applied; attacker-side ones are listed as reminders). Without
                                   --damage a hit waits for the player's damage roll:
   damage ATT N [--nonlethal]      the player's damage for that hit (DR, minimum damage, the log line)
+  wield TOKEN WEAPON [--drop W | --sheathe W]
+                                  draw a weapon (a move action; with BAB +1 it rides on a move action spent
+                                  on movement; Quick Draw: free). Attacks need the weapon in hand; only
+                                  melee weapons in hand (or natural attacks) threaten
+  pickup TOKEN ITEM               pick up an item from the ground next to it (a move action, provokes)
   briefing TOKEN [--round N]      the tactical options and turn plans an NPC's step was given (DM only)
        ammunition: an attack with "ammo": N (creatures) or the PC profile's "ammo" map counts shots and
        throws, reports what's left and refuses an empty one (--override if it found more)
@@ -393,7 +398,9 @@ def threatens(a: Token, t: Token) -> bool:
         return False
     if (a["side"] in FRIENDLY) == (t["side"] in FRIENDLY):
         return False
-    reach = a.get("reach", 5)
+    reach = threat_reach(a)   # only with a melee weapon in hand, natural attacks, or trained unarmed strikes
+    if reach is None:
+        return False
     for p in cells(a):
         for q in cells(t):
             dx, dy = abs(p[0] - q[0]), abs(p[1] - q[1])
@@ -750,6 +757,10 @@ def _attack(args: Args, st: State) -> str:
     # (label, bonus, damage expr, crit, mult, kind, weapon dict)
     entries: list[tuple[str | None, int | None, str | None, int, int, str, dict[str, Any] | None]] = []
     if args.total is not None:
+        held = next((n for n in weapons(a) if args.name and n.lower() == args.name.lower()), None)
+        if held and not at_hand(a, held) and not args.aoo:
+            raise CombatError(f"{a['name']} isn't holding the {held} (in hand: {', '.join(wielding(a)) or 'nothing'}): "
+                              f"`wield {a['token']} \"{held}\"` first (a move action; with BAB +1 it rides on a move)")
         entries.append((args.name, None, None, 20, 2, "ranged" if args.ranged else "melee", None))
     elif args.roll:
         m = re.match(r"^\s*1?d20\s*([+-]\s*\d+)?\s*$", args.roll)
@@ -766,6 +777,10 @@ def _attack(args: Args, st: State) -> str:
                 known = ", ".join((prof.get("attacks") or {}).keys()) or "none"
                 raise CombatError(f"{a['token']} has no attack '{n}' (profile attacks: {known}); "
                                   f"or pass --roll/--dmg")
+            if key and not at_hand(a, key):
+                raise CombatError(f"{a['token']} isn't holding its {key} (in hand: {', '.join(wielding(a)) or 'nothing'}): "
+                                  f"draw it first, `wield {a['token']} \"{key}\"` (a move action; with BAB +1 it rides on "
+                                  f"a move; --drop the other weapon if its hands are full)")
             bonuses = w["bonus"] if isinstance(w["bonus"], list) else [w["bonus"]]
             if not (args.full and not prof.get("full_attack")):
                 bonuses = bonuses[:1]
@@ -1165,6 +1180,9 @@ def cmd_add(args: Args, st: State) -> str:
         if cost(st, cx, cy) is None or occupied(st, c, cx, cy):
             raise CombatError(f"{fmt_pos(cx, cy)} is blocked or occupied")
     st["tokens"].append(c)
+    c["wielding"] = default_wielding(c)   # what it holds when the fight starts
+    if getattr(args, "wielding", None):
+        c["wielding"] = [find_weapon(c, n.strip()) for n in args.wielding.split(",") if n.strip()]
     if not prof:
         notes.append("no combat profile: pass --roll/--dmg on attacks")
     return f"Added {args.token} ({args.name}) at {fmt_pos(x, y)}, init {init:g}" + (
@@ -1183,10 +1201,10 @@ def cmd_endturn(args: Args, st: State) -> str:
     return f"{c['name']}'s turn is over; the interface plays the next step"
 
 
-ACTOR_ARG = {"ability": "token", "maneuver": "attacker", "attack": "attacker", "move": "token", "cast": "token", "sla": "token", "provoke": "token", "area": "frm"}
+ACTOR_ARG = {"wield": "token", "pickup": "token", "ability": "token", "maneuver": "attacker", "attack": "attacker", "move": "token", "cast": "token", "sla": "token", "provoke": "token", "area": "frm"}
 
 
-UNDOABLE = ("attack", "damage", "maneuver", "move", "save", "stabilize", "act", "provoke", "endturn", "ability")
+UNDOABLE = ("wield", "pickup", "attack", "damage", "maneuver", "move", "save", "stabilize", "act", "provoke", "endturn", "ability")
 READ_ONLY = ("show", "dist", "threat", "events", "sight", "actions", "options", "spells", "ask", "briefing")
 
 
@@ -1493,7 +1511,7 @@ def provoke_aoos(st: State, c: Token, no_aoo: bool = False, reason: str = 'provo
             out.append(f"  {label(o)} could take an AoO (skipped: --no-aoo)")
             continue
         melee = [(k, v) for k, v in ((o.get("profile") or {}).get("attacks") or {}).items()
-                 if v.get("type", "melee") == "melee"]
+                 if v.get("type", "melee") == "melee" and at_hand(o, k)]
         if not melee:
             out.append(f"  {label(o)} may take an AoO on {c['token']}: no melee attack in its profile, "
                        f"resolve with `attack {o['token']} {c['token']} --roll … --dmg … --aoo`")
@@ -2142,6 +2160,11 @@ def cmd_move(args: Args, st: State) -> str:
             if need > 2:
                 raise CombatError(f"{chain} ft in one go is more than a double move ({2 * speed} ft); a run is `--as run`")
             extra = need - c.get("chain_moves", 0)
+            ta = turn_actions(c)
+            if extra > 0 and ta.get("combinable") and not ta.get("combined"):
+                ta["combined"] = True   # it drew or sheathed with that move action: the movement rides on it
+                ta["move"][ta["move"].index(next(m for m in ta["move"] if m.startswith(("draw", "sheathe"))))] += " + movement"
+                extra -= 1
             if extra > 0:
                 spend_moves(st, c, extra, "movement")
             c["chain_feet"], c["chain_moves"] = chain, max(need, c.get("chain_moves", 0))
@@ -2475,11 +2498,214 @@ def spend_moves(st: State, c: Token, n: int, what: str) -> None:
         raise
 
 
+# ---------- weapons in hand ----------
+# What a creature holds decides what it can attack with and whether it threatens (CRB pg. 180-182,
+# Table 8-2; library/pf1e/rules/actions-in-combat.md). Natural attacks and unarmed strikes are always
+# at hand; manufactured weapons have to be drawn (a move action; with BAB +1 or more it rides along
+# with a move action spent on movement; Quick Draw: free) and take one or two hands. A creature only
+# threatens with something it can make a melee attack with: a bow in hand gives no attacks of opportunity.
+
+NATURAL_HINTS = ("bite", "claw", "slam", "gore", "tail", "tentacle", "sting", "talon", "wing", "hoof", "pincer",
+                 "horn", "hoove", "tusk", "rake", "touch")
+TWO_HANDED_HINTS = ("bow", "crossbow", "great", "halberd", "glaive", "guisarme", "lance", "longspear", "quarterstaff",
+                    "ranseur", "scythe", "pike", "bardiche", "staff")
+
+
+def weapon_kind(name: str, w: dict[str, Any]) -> str:
+    """'natural', 'unarmed' or 'weapon'."""
+    n = name.lower()
+    if "unarmed" in n:
+        return "unarmed"
+    if w.get("natural") or (w.get("natural") is None and any(h in n for h in NATURAL_HINTS)):
+        return "natural"
+    return "weapon"
+
+
+def weapons(c: Token) -> dict[str, dict[str, Any]]:
+    """The creature's attacks with their kind, type and hands: {name: {kind, type, hands, reach}}.
+    Creatures: the profile's attacks; PCs: the sheet's optional `weapons` map."""
+    prof = c.get("profile") or {}
+    src = prof.get("attacks") if prof.get("kind") != "pc" else prof.get("weapons")
+    out = {}
+    for name, w in (src or {}).items():
+        kind = weapon_kind(name, w)
+        n = name.lower()
+        default = 0 if kind != "weapon" else (2 if any(h in n for h in TWO_HANDED_HINTS) or n == "spear" else 1)
+        out[name] = {"kind": kind, "type": w.get("type", "melee"), "hands": w.get("hands", default), "reach": w.get("reach")}
+    return out
+
+
+def tracks_weapons(c: Token) -> bool:
+    """Whether the script keeps track of what this creature holds (it has manufactured weapons)."""
+    return any(w["kind"] == "weapon" for w in weapons(c).values())
+
+
+def wielding(c: Token) -> list[str]:
+    """What the creature holds, ready to attack with (set when it joins the fight)."""
+    if "wielding" not in c:
+        c["wielding"] = default_wielding(c)
+    return c["wielding"]
+
+
+def default_wielding(c: Token) -> list[str]:
+    """At the start of a fight: the profile's `wielding`, else its first manufactured weapon."""
+    prof = c.get("profile") or {}
+    ws = weapons(c)
+    if prof.get("wielding"):
+        return [n for n in prof["wielding"] if n in ws]
+    first = next((n for n, w in ws.items() if w["kind"] == "weapon"), None)
+    return [first] if first else []
+
+
+def at_hand(c: Token, name: str) -> bool:
+    """Whether the creature can attack with that attack right now (natural, unarmed, or held)."""
+    w = weapons(c).get(name)
+    return w is None or w["kind"] != "weapon" or name in wielding(c)
+
+
+def free_hands(c: Token) -> int:
+    ws = weapons(c)
+    return max(0, 2 - sum(ws.get(n, {}).get("hands", 1) for n in wielding(c)))
+
+
+def threat_reach(c: Token) -> int | None:
+    """How far the creature threatens with what it has at hand, or None if it threatens nothing
+    (only ranged weapons in hand, or unarmed without Improved Unarmed Strike)."""
+    if not tracks_weapons(c):
+        return c.get("reach", 5)
+    reaches = []
+    for n, w in weapons(c).items():
+        if w["type"] != "melee":
+            continue
+        if w["kind"] == "natural" or (w["kind"] == "weapon" and n in wielding(c)) or \
+                (w["kind"] == "unarmed" and "improved unarmed strike" in _feats(c)):
+            reaches.append(w["reach"] or c.get("reach", 5))
+    return max(reaches) if reaches else None
+
+
+def drop_item(st: State, c: Token, name: str, at: Square | None = None, why: str = "drops") -> str:
+    """The creature lets go of a held weapon: it lies on the ground (its square, or `at`)."""
+    if name in wielding(c):
+        c["wielding"].remove(name)
+    sq = at or (c["x"], c["y"])
+    st.setdefault("ground", []).append({"item": name, "owner": c["token"], "at": list(sq)})
+    if not c.get("hidden"):
+        event(st, f"{who(c)} {why} {'their' if c['side'] == 'pc' else 'its'} {name}")
+    return f"{c['token']} {why} its {name} (on the ground at {fmt_pos(*sq)})"
+
+
+def find_weapon(c: Token, name: str) -> str:
+    """A weapon of the creature by name (exact, then unique prefix or part).
+
+    Raises:
+        CombatError: no such weapon (the message lists them).
+    """
+    ws = [n for n, w in weapons(c).items() if w["kind"] == "weapon"]
+    key = name.lower()
+    for test in (lambda n: n.lower() == key, lambda n: n.lower().startswith(key), lambda n: key in n.lower()):
+        hits = [n for n in ws if test(n)]
+        if len(hits) == 1:
+            return hits[0]
+    raise CombatError(f"{c['token']} has no weapon {name!r} (its weapons: {', '.join(ws) or 'none tracked'})")
+
+
+def hand_action(st: State, c: Token, what: str, args: Args) -> str:
+    """Charge a draw or sheathe: free with Quick Draw (draw only); with BAB +1 or more it combines with
+    a move action spent on movement this turn (before or after); otherwise a move action."""
+    if getattr(args, "out_of_turn", False) or getattr(args, "override", False) or st.get("turn") != c["token"]:
+        return "not charged"
+    if what.startswith("draw") and "quick draw" in _feats(c):
+        return "free (Quick Draw)"
+    a = turn_actions(c)
+    bab = (c.get("profile") or {}).get("bab", 1)
+    if bab >= 1 and "movement" in a["move"] and not a.get("combined"):
+        a["combined"] = True
+        return "combined with its move"
+    spend(st, c, "move", what)
+    if bab >= 1:
+        a["combinable"] = True   # a move it makes later this turn rides on this move action
+    return "a move action"
+
+
+def cmd_wield(args: Args, st: State) -> str:
+    """Draw a weapon (and drop or sheathe what's in the way first)."""
+    c = token(st, args.token)
+    name = find_weapon(c, args.weapon)
+    out = []
+    if name in wielding(c):
+        return f"{c['token']} already holds its {name}"
+    if any(g["item"] == name and g["owner"] == c["token"] for g in st.get("ground", [])):
+        raise CombatError(f"{c['token']}'s {name} lies on the ground: `pickup {c['token']} \"{name}\"` (a move action, provokes)")
+    if args.drop:
+        out.append(drop_item(st, c, find_weapon(c, args.drop)) + " (a free action)")
+    if args.sheathe:
+        other = find_weapon(c, args.sheathe)
+        if other in wielding(c):
+            cost = hand_action(st, c, f"sheathe {other}", args)
+            c["wielding"].remove(other)
+            out.append(f"{c['token']} sheathes its {other} ({cost})")
+    need = weapons(c)[name]["hands"]
+    if need > free_hands(c):
+        held = ", ".join(wielding(c))
+        raise CombatError(f"{c['token']} needs {need} free hand(s) for its {name} but holds {held}: add --drop {wielding(c)[0]!r} "
+                          f"(free, it falls to the ground) or --sheathe (a move action)")
+    cost = hand_action(st, c, f"draw {name}", args)
+    c["wielding"].append(name)
+    if not c.get("hidden"):
+        event(st, f"{who(c)} draws {'their' if c['side'] == 'pc' else 'its'} {name}")
+    out.append(f"{c['token']} draws its {name} ({cost}); in hand: {', '.join(wielding(c))}")
+    return "\n".join(out)
+
+
+def cmd_pickup(args: Args, st: State) -> str:
+    """Pick up an item from the ground (its square or next to it): a move action that provokes."""
+    c = token(st, args.token)
+    ground = st.get("ground", [])
+    here = [g for g in ground if args.item.lower() in g["item"].lower()
+            and max(abs(g["at"][0] - c["x"]), abs(g["at"][1] - c["y"])) <= 1]
+    if not here:
+        raise CombatError(f"no {args.item!r} on the ground in or next to {c['token']}'s square"
+                          + (f" (on the ground: {', '.join(g['item'] + ' at ' + fmt_pos(*g['at']) for g in ground)})" if ground else ""))
+    g = here[0]
+    out = []
+    if st.get("turn") == c["token"] and not (args.out_of_turn or args.override):
+        spend(st, c, "move", f"pick up {g['item']}")
+        lines, _ = provoke_aoos(st, c, reason=f"picking up {g['item']}")
+        out += lines
+        if c["hp"] <= 0:
+            return "\n".join(out)
+    ground.remove(g)
+    ws = weapons(c)
+    if g["item"] in ws and ws[g["item"]]["hands"] <= free_hands(c):
+        c["wielding"].append(g["item"])
+        out.insert(0, f"{c['token']} picks up the {g['item']} and holds it ready; in hand: {', '.join(wielding(c))}")
+    else:
+        c.setdefault("carrying", []).append(g["item"])
+        out.insert(0, f"{c['token']} picks up the {g['item']} (carried, not ready: no free hand or not its weapon)")
+    if not c.get("hidden"):
+        event(st, f"{who(c)} picks up the {g['item']}")
+    return "\n".join(out)
+
+
 # ---------- tactical options ----------
 # `options g1`: the geometry of a creature's turn, so the DM decides tactics without counting
 # squares: where it can reach, where it threatens and flanks its targets, what it needs on the
 # d20 from there (the same modifiers attack_mods applies), what provokes, charge lanes, ranged
 # positions, area placements and retreat squares. DM only.
+
+@contextlib.contextmanager
+def _holding(c: Token, names: list[str] | None) -> Any:
+    """Temporarily imagine the creature holding these weapons (None: as it is), for planning a draw."""
+    if names is None:
+        yield c
+        return
+    old = list(wielding(c))
+    c["wielding"] = list(names)
+    try:
+        yield c
+    finally:
+        c["wielding"] = old
+
 
 @contextlib.contextmanager
 def _placed(c: Token, sq: Square) -> Any:
@@ -2842,10 +3068,16 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
             best: tuple[float, Any] | None = None
             for sq, feet in one.items():
                 step = sq == start or (feet == 5 and R.sq_dist(start, sq) == 1)
-                ws = [x for x in _weapons(prof, kind, step) if ammo_left(c, x[0]) != 0]
-                if not ws:
-                    break
-                with _placed(c, sq):
+                ws = [x for x in _weapons(prof, kind, step) if ammo_left(c, x[0]) != 0 and at_hand(c, x[0])]
+                draw = ""
+                if not ws:   # nothing of this kind in hand: draw one (the move action: no full attack this turn)
+                    ws = [x for x in _weapons(prof, kind, False) if ammo_left(c, x[0]) != 0][:1]
+                    if not ws:
+                        break
+                    need = weapons(c).get(ws[0][0], {}).get("hands", 1)
+                    drop = f" (dropping its {', '.join(wielding(c))})" if need > free_hands(c) and wielding(c) else ""
+                    draw = f"draw {ws[0][0]}{drop}, "
+                with _placed(c, sq), _holding(c, [ws[0][0]] if draw else None):
                     if kind == "melee" and not threatens(c, t):
                         continue
                     ev, notes = _attack_ev(st, c, t, ws, kind)
@@ -2863,7 +3095,7 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                     shoot_threat = _threatened_by(st, c) if kind == "ranged" else []
                 provoked = sorted(set(([] if step else provokers(sq)) + shoot_threat))
                 full = step and len(ws) > 1
-                label_ = (f"{where(sq, feet)}{'full attack' if full else 'attack'} {t['token']} "
+                label_ = (f"{where(sq, feet)}{draw}{'full attack' if full else 'attack'} {t['token']} "
                           f"({'/'.join(n for n, _w, _b in ws[:3])}{'…' if len(ws) > 3 else ''}: hits on {', '.join(notes[:3])})"
                           + (" [can't see it: guess its square]" if unseen else ""))
                 extra = f"gives {', '.join(gifted)} flanking" if gifted else ""
@@ -2882,15 +3114,20 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
         memo2: dict[Square, list[str]] = {}
         for t in [o for o in attackable if o["token"] not in attacked][:3]:
             spots = []
+            melee_held = [n for n, _w, _b in melee_ws if at_hand(c, n)]
+            imagined = None if melee_held else [melee_ws[0][0]]   # it would draw its melee weapon on the way
             for q, feet in two.items():
-                with _placed(c, q):
+                with _placed(c, q), _holding(c, imagined):
                     if threatens(c, t):
                         spots.append(q)
             if not spots:   # too far even so: as close as it gets
                 spots = [min(two, key=lambda q: (min(R.sq_dist(q, cc) for cc in cells(t)), two[q]))]
+            spots = [q for q in spots if q != start] or spots
+            if spots == [start]:
+                continue
             prov_of = {q: path_provokers(st, c, routes2.get(q, [start, q]), memo2) for q in spots}
             q = min(spots, key=lambda q: (_aoo_risk(st, c, prov_of[q]), _incoming(st, c, q, memo), two[q]))
-            with _placed(c, q):
+            with _placed(c, q), _holding(c, imagined):
                 reach_next = threatens(c, t)
                 ev_next, _n = _attack_ev(st, c, t, melee_ws, "melee")
                 hidden = c.get("hidden") and all(V.hidden_from(st, c, V.presumed(f, c)) for f in foes)
@@ -2898,7 +3135,8 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
             if move_only and q not in one:
                 continue
             add("melee", 0.5 * ev_next if reach_next else 0.0, 0, q, prov_of[q],
-                f"{how} to {fmt_pos(*q)}, closing on {t['token']}" + (" (stays hidden)" if hidden else ""),
+                f"{how} to {fmt_pos(*q)}" + (f", drawing its {imagined[0]}" if imagined else "") + f", closing on {t['token']}"
+                + (" (stays hidden)" if hidden else ""),
                 f"(next round: full attack ~{ev_next:.1f}, counted at half)" if reach_next else "(still out of reach)")
 
     # --- spells, spell-like abilities and special abilities with effect data ---
@@ -3652,12 +3890,33 @@ def _maneuver_effect(args: Args, st: State, a: Token, t: Token, kind: str, ok: b
     their = "their" if t["side"] == "pc" else "its"
     item = args.item or (f"{their} weapon" if kind in ("disarm", "sunder") else "an item")
     if kind == "disarm":
+        held_t = [n for n in wielding(t)]
         if ok:
-            R.add_condition(st, t, "disarmed")
-            where = " (it lands 15 ft away)" if "greater disarm" in _feats(a) else ""
-            return f"{who(t)} drops {item}{where}" + (" and whatever else it holds" if margin >= 10 else "")
+            if not held_t:
+                return f"{who(t)} holds nothing to drop"
+            if args.item:
+                try:
+                    chosen = [find_weapon(t, args.item)]
+                except CombatError:
+                    chosen = held_t[:1]
+            else:
+                chosen = held_t[:1]
+            drops = held_t if margin >= 10 else chosen   # 10+ over its CMD: both hands
+            unarmed = not any(n in wielding(a) for n in weapons(a))
+            far = "greater disarm" in _feats(a)
+            for n in drops:
+                if unarmed and not far and free_hands(a) > 0 and n == drops[0]:   # disarmed with bare hands: it can grab it
+                    t["wielding"].remove(n)
+                    a.setdefault("carrying", []).append(n)
+                    dm.append(f"{a['token']} grabs the {n} (carried)")
+                else:
+                    dm.append(drop_item(st, t, n, why="is disarmed of"))
+            where = " (it lands 15 ft away)" if far else ""
+            return f"{who(t)} drops {' and '.join(drops)}{where}"
         if margin <= -10:
-            R.add_condition(st, a, "disarmed")
+            own = next((n for n in wielding(a)), None)
+            if own:
+                dm.append(drop_item(st, a, own, why="fumbles and drops"))
             return f"{who(a)} fumbles and drops {'their' if a['side'] == 'pc' else 'its'} own weapon"
         return ""
     if kind == "steal":
@@ -3965,6 +4224,7 @@ def plan_encounter(campaign: str, enc: dict[str, Any], inits: dict[str, int] | N
         extra += ["--cr", c["cr"]] if c.get("cr") else []
         extra += ["--main-dm"] if c.get("dm_plays") else []
         extra += ["--tactics", json.dumps(c["tactics"])] if c.get("tactics") else []
+        extra += ["--wielding", ",".join(c["wielding"])] if c.get("wielding") else []
         for k in range(n):
             tok = f"{c['token']}{k + 1}" if n > 1 or not c["token"][-1:].isdigit() else c["token"]
             if n > 1 and len(c["token"]) != 1:
@@ -4462,6 +4722,7 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--dr", type=int, help="hardness or damage reduction")
     a.add_argument("--con", type=int, help="Constitution score (PCs/allies): dead at -Con HP")
     a.add_argument("--main-dm", action="store_true", help="the main DM plays its turns (a boss, a story NPC), not the combat runner")
+    a.add_argument("--wielding", help="what it holds at the start, comma-separated (default: the profile's wielding, else its first weapon)")
     a.add_argument("--tactics", help='JSON: preference weights and morale for the turn plans, e.g. \'{"weights": {"ranged": 2}}\'')
     at = sub.add_parser("attack"); at.add_argument("attacker"); at.add_argument("target")
     at.add_argument("--roll"); at.add_argument("--dmg"); at.add_argument("--crit", type=int, default=20)
@@ -4478,6 +4739,10 @@ def main(argv: list[str] | None = None) -> int:
     lg = sub.add_parser("log"); lg.add_argument("text")
     ak = sub.add_parser("ask"); ak.add_argument("question", nargs="?"); ak.add_argument("--clear", action="store_true")
     bf = sub.add_parser("briefing"); bf.add_argument("token"); bf.add_argument("--round", type=int)
+    wl = sub.add_parser("wield"); wl.add_argument("token"); wl.add_argument("weapon")
+    wl.add_argument("--drop", help="drop this weapon first (free; it falls to the ground)")
+    wl.add_argument("--sheathe", help="sheathe this weapon first (a move action, or rides on a move with BAB +1)")
+    pu = sub.add_parser("pickup"); pu.add_argument("token"); pu.add_argument("item")
     dg = sub.add_parser("damage"); dg.add_argument("token"); dg.add_argument("amount", type=int)
     dg.add_argument("--nonlethal", action="store_true")
     ev = sub.add_parser("events"); ev.add_argument("--all", action="store_true")
@@ -4587,9 +4852,9 @@ def main(argv: list[str] | None = None) -> int:
     for nm in ("cast", "sla"):
         sub.choices[nm].add_argument("--time", choices=["standard", "full", "round", "swift", "immediate"],
                                      help="casting time (default standard; quickened = swift)")
-    for sp in (at, m, mn, ar, ab, sub.choices["cast"], sub.choices["sla"]):
+    for sp in (at, m, mn, ar, ab, wl, pu, sub.choices["cast"], sub.choices["sla"]):
         sp.add_argument("--override", action="store_true", help="don't charge an action (a feat or ability changes the economy)")
-    for sp in (at, m, pv, ar, mn, ab, sub.choices["cast"], sub.choices["sla"]):
+    for sp in (at, m, pv, ar, mn, ab, wl, pu, sub.choices["cast"], sub.choices["sla"]):
         sp.add_argument("--out-of-turn", action="store_true",
                         help="the actor isn't the current one: a readied or immediate action, forced movement, setup")
     args = p.parse_args(argv)
@@ -4601,7 +4866,7 @@ def main(argv: list[str] | None = None) -> int:
                 "threat": cmd_threat, "hp": cmd_hp, "cond": cmd_cond, "init": cmd_init,
                 "reveal": cmd_flag, "hide": cmd_flag, "remove": cmd_flag, "end": cmd_end,
                 "attack": cmd_attack, "log": cmd_log, "events": cmd_events,
-                "ask": cmd_ask, "briefing": cmd_briefing, "damage": cmd_damage, "stabilize": cmd_stabilize, "save": cmd_save, "area": cmd_area,
+                "ask": cmd_ask, "wield": cmd_wield, "pickup": cmd_pickup, "briefing": cmd_briefing, "damage": cmd_damage, "stabilize": cmd_stabilize, "save": cmd_save, "area": cmd_area,
                 "order": cmd_order, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
                 "provoke": cmd_provoke, "endturn": cmd_endturn, "maneuver": cmd_maneuver,
                 "light": cmd_light, "sight": cmd_sight, "act": cmd_act, "surprise": cmd_surprise, "ability": cmd_ability,

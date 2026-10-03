@@ -182,16 +182,28 @@ TOOLS: list[Tool] = [
           "hidden": B("the PC hasn't noticed it"), "hp": I("override HP"), "cr": S("CR for XP, e.g. 1/3"),
           "size": I("squares per side"), "reach": I("reach in ft"), "speed": I("speed in ft"),
           "main_dm": B("you (the main DM) play its turns, not the combat runner: a boss or story NPC"),
+          "wielding": S("what it holds at the start, comma-separated (default: the profile's, else its first weapon)"),
           "tactics": S('JSON: preference weights and morale for its turn plans, e.g. {"weights": {"ranged": 2}, "morale": {"hp": 0.5, "weights": {"retreat": 5}}}')},
          ["token", "name", "pos"],
          lambda a: ["add", a["token"], a["name"], "--pos", a["pos"]] + flags(a, {
              "ref": "--ref", "init": "--init", "side": "--side", "hidden": "--hidden", "hp": "--hp", "cr": "--cr",
-             "size": "--size", "reach": "--reach", "speed": "--speed", "main_dm": "--main-dm", "tactics": "--tactics"})),
+             "size": "--size", "reach": "--reach", "speed": "--speed", "main_dm": "--main-dm", "tactics": "--tactics", "wielding": "--wielding"})),
     Tool("combat_move", "Move a token along the cheapest legal path. NPC attacks of opportunity are rolled; a PC's chance opens a question.",
          {"token": S(TOK), "to": S(SQ), "step": B("a 5-foot step (no AoO)"), "no_aoo": B("don't roll NPC AoOs (deliberate exception)"),
           "as": S("movement as part of this full-round action", ["charge", "withdraw", "run"]), "out_of_turn": OOT, "override": B("don't charge move actions")},
          ["token", "to"], lambda a: ["move", a["token"], a["to"]] + flags(a, {"step": "--step", "no_aoo": "--no-aoo", "as": "--as",
                                                                                "out_of_turn": "--out-of-turn", "override": "--override"})),
+    Tool("combat_wield", "Draw a weapon (attacks need the weapon in hand): a move action; with BAB +1 it rides on a move action "
+         "spent on movement this turn; Quick Draw: free. drop: let go of what's in the way first (free, it falls to the ground); "
+         "sheathe: put it away (a move action). Only a melee weapon in hand (or natural attacks) threatens.",
+         {"token": S(TOK), "weapon": S("the weapon to draw"), "drop": S("drop this one first"), "sheathe": S("sheathe this one first"),
+          "out_of_turn": OOT, "override": B("not charged (e.g. at setup)")},
+         ["token", "weapon"], lambda a: ["wield", a["token"], a["weapon"]] + flags(a, {"drop": "--drop", "sheathe": "--sheathe",
+                                                                                       "out_of_turn": "--out-of-turn", "override": "--override"})),
+    Tool("combat_pickup", "Pick up an item from the ground in or next to the creature's square (a dropped or disarmed weapon): "
+         "a move action that provokes attacks of opportunity. It's held ready if a hand is free.",
+         {"token": S(TOK), "item": S("the item"), "out_of_turn": OOT},
+         ["token", "item"], lambda a: ["pickup", a["token"], a["item"]] + flags(a, {"out_of_turn": "--out-of-turn"})),
     Tool("combat_damage", "The player's damage roll for the hit their last attack scored (combat_attack with `total` and no `damage`). "
          "Applies DR, minimum damage and the log line.",
          {"token": S("the PC's token"), "amount": I("the player's damage total"), "nonlethal": B("nonlethal damage")},

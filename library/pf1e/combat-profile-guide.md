@@ -51,6 +51,7 @@ Each distinct attack gets an entry in `attacks`. The **name** is the weapon or n
 | **Melee** sap +3 (1d6+1 nonlethal) | `"nonlethal": true` |
 | **Ranged** shortbow +4 (1d6/×3) | `"shortbow": {"bonus": 4, "damage": "1d6", "type": "ranged", "mult": 3, "range": 60}` |
 | **Ranged** javelin +4 (1d6+3) | `"type": "ranged", "thrown": true, "range": 30` |
+| **Melee** rapier; **Ranged** composite longbow, holding the bow when the fight starts | `"wielding": ["composite longbow"]` (default: its first weapon). Attacks need the weapon in hand; drawing another is `wield`. Two-handed weapons and bows take both hands (`"hands": 2`, guessed from the name if left out); natural attacks (bite, claw, slam…) are always at hand (`"natural": true` where the name doesn't say). `"bab"`: drawing rides on a move with +1 or more (default) |
 | **Gear** 20 arrows; 4 javelins | `"ammo": 20` on the bow, `"ammo": 4` on the javelin. The script counts shots and throws and refuses an empty one (a thrown weapon has to be picked up: a move action that provokes). Leave it out to not track it |
 | longspear (reach) | `"reach": 10` on that attack |
 
@@ -133,7 +134,7 @@ Morale breaks at or below `hp` of its maximum HP, or when `allies_down` of its s
 - `senses` (`{}` = normal vision) and `perception`
 - `feats` (Combat Reflexes, Blind-Fight, Precise Shot, Improved maneuvers; `[]` if none)
 
-Optional: `max_dex`, `reach`, `uncanny_dodge`, `sneak_attack` (the script reminds when it applies), `ammo` (by attack name, e.g. `{"shortbow": 20, "javelin": 3}`: counted on attacks with that name; update the sheet after the fight), `cmd_vs`, DR, resistances and immunities. Attacks, spells, saves and CMB aren't needed, because the player rolls them. `combat.py add` refuses a PC without a passing block. The DM fills it from the sheet and asks the player for anything missing.
+Optional: `weapons` and `wielding` (what the PC carries and holds, so the script enforces drawing and knows when they threaten: `{"rapier": {"type": "melee"}, "shortbow": {"type": "ranged", "hands": 2}}`), `bab`, `max_dex`, `reach`, `uncanny_dodge`, `sneak_attack` (the script reminds when it applies), `ammo` (by attack name, e.g. `{"shortbow": 20, "javelin": 3}`: counted on attacks with that name; update the sheet after the fight), `cmd_vs`, DR, resistances and immunities. Attacks, spells, saves and CMB aren't needed, because the player rolls them. `combat.py add` refuses a PC without a passing block. The DM fills it from the sheet and asks the player for anything missing.
 
 ## A complete example
 ```combat-profile

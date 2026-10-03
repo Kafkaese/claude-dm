@@ -996,6 +996,10 @@ def _step_context(st: dict[str, Any], c: dict[str, Any]) -> str:
     lines = [f"Its attacks (combat_attack `with`): {', '.join(opts) or 'none in its profile'}"
              + (f"; full attack: {', '.join(prof['full_attack'])}" if prof.get("full_attack") else "")
              + f". Speed {c.get('speed') or 30} ft, reach {c.get('reach', 5)} ft."]
+    if cm.tracks_weapons(c):
+        lines.append(f"In hand: {', '.join(cm.wielding(c)) or 'nothing'}. Attacking with another weapon needs combat_wield "
+                     f"first (a move action; with BAB +1 it rides on a move; drop what's in the way for free). Only a melee "
+                     f"weapon in hand (or natural attacks) threatens.")
     spells = []
     for sc in prof.get("spellcasting") or []:
         for lvl, names in (sc.get("spells") or {}).items():

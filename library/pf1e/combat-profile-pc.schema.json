@@ -194,6 +194,15 @@
       },
       "description": "Feats, at least the ones the script uses: Combat Reflexes, Blind-Fight, Precise Shot, Improved <maneuver>. Listing all is fine; [] if none."
     },
+    "weapons": {
+      "type": "object",
+      "description": "The PC's weapons, so the script knows what's in hand (attacks need it; only melee weapons in hand threaten): {\"rapier\": {\"type\": \"melee\"}, \"shortbow\": {\"type\": \"ranged\", \"hands\": 2}}. Leave out to not track it.",
+      "additionalProperties": {"type": "object", "additionalProperties": false, "properties": {
+        "type": {"enum": ["melee", "ranged"]}, "hands": {"type": "integer", "minimum": 0, "maximum": 2},
+        "natural": {"type": "boolean"}, "reach": {"type": "integer"}}}
+    },
+    "wielding": {"type": "array", "items": {"type": "string"}, "description": "what the PC holds when a fight starts (default: the first weapon)"},
+    "bab": {"type": "integer", "description": "base attack bonus: with +1 or more, drawing a weapon rides on a move action"},
     "caster_level": {
       "type": "integer",
       "minimum": 1,

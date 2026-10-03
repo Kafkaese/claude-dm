@@ -467,6 +467,7 @@ class TalkingOutOfTurn(CampaignCase):
         self.add("g1", "Gob", "F2", GOBLIN, init=20)
         self.add("g2", "Gob2", "H2", GOBLIN, init=10)
         self.run_cmd("next")                                    # g1's turn
+        self.run_cmd("wield", "g1", "shortbow", "--drop", "spear", "--out-of-turn")
         self.run_cmd("attack", "g1", "C", "--with", "shortbow")
         line = E.turn_line(self.state())
         self.assertIn("NOT the player's turn: Gob has just taken its turn; next up: Gob2", line)

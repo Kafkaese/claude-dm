@@ -37,6 +37,7 @@
         "init": {"anyOf": [{"type": "integer"}, {"enum": ["roll"]}], "description": "Default 'roll' (d20 + the profile's init)."},
         "hp": {"type": "integer", "minimum": 1, "description": "Override (e.g. already wounded)."},
         "cr": {"type": "string", "description": "CR for the XP summary, e.g. 1/3."},
+        "wielding": {"type": "array", "items": {"type": "string"}, "description": "What it holds when the fight starts (an ambusher's bow), over its stat block's default."},
         "tactics": {"type": "object", "description": "This fight's personality and morale for the combatant, over its stat block's: {\"weights\": {…}, \"morale\": {…}} (see the system's combat-profile schema)."},
         "dm_plays": {"type": "boolean", "description": "The main DM plays its turns (a boss, a story NPC with plans and dialogue). Default: the combat runner plays them."}
       }}},
