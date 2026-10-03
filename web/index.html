@@ -16,6 +16,8 @@
   --map-hatch: #B89B6E; --map-difficult: #DCCDAE; --map-water: #8DB4D6; --map-wave: #D2E3F1;
   --map-trees: #A9C79A; --map-tree: #5E8E52; --map-door: #8C5E32; --map-pit: #1B1A1E;
   --map-bridge: #C29A68; --map-plank: #8E6436; --map-hover: #A0552A;
+  --map-brush: #C9D6A6; --map-tuft: #7E9A55; --map-thicket: #9DB57E; --map-thicket-tuft: #4F6E37;
+  --map-stone: #8C877D; --map-stone-edge: #6B675F; --map-deep: #5A86B0; --map-fence: #8C5E32; --map-wood: #A87A4A;
   --serif: 'Literata', Georgia, serif; --sans: 'IBM Plex Sans', system-ui, sans-serif; --mono: 'IBM Plex Mono', ui-monospace, monospace;
 }
 @media (prefers-color-scheme: dark) {
@@ -27,6 +29,8 @@
     --map-hatch: #957A4F; --map-difficult: #BDAC89; --map-water: #6F97BA; --map-wave: #A9C4DB;
     --map-trees: #8EAE7E; --map-tree: #4B7442; --map-door: #7A5028; --map-pit: #0E0E10;
     --map-bridge: #A8835A; --map-plank: #7A5530; --map-hover: #E8B283;
+    --map-brush: #A9B888; --map-tuft: #637E42; --map-thicket: #7F9763; --map-thicket-tuft: #3D5629;
+    --map-stone: #6E6A62; --map-stone-edge: #55524B; --map-deep: #476F96; --map-fence: #7A5028; --map-wood: #8E6436;
   }
 }
 * { box-sizing: border-box; }
@@ -422,6 +426,13 @@ const TOKEN_COLOR = side => side === "pc" ? "#3A6CC8" : side === "ally" ? "#4294
 let mapData = null;
 const coord = (x, y) => String.fromCharCode(65 + x) + (y + 1);
 
+function canopy(px, py) {   // a tree seen from above: one crown, a little off-centre
+  return `<circle cx="${px + 20}" cy="${py + 19}" r="13" fill="var(--map-tree)" opacity="0.9"/><circle cx="${px + 15}" cy="${py + 15}" r="5" fill="var(--map-trees)" opacity="0.6"/>`;
+}
+function tufts(px, py, color, n) {   // grass and brush: short strokes, the same pattern in every square
+  const spots = [[8, 12], [26, 9], [16, 26], [31, 29], [9, 33], [22, 18]];
+  return spots.slice(0, n).map(([x, y]) => `<path d="M${px + x - 4} ${py + y + 4} l4 -8 l4 8" fill="none" stroke="${color}" stroke-width="1.6"/>`).join("");
+}
 function terrainShape(ch, px, py) {
   const r = (fill, extra = "") => `<rect x="${px}" y="${py}" width="${CELL}" height="${CELL}" fill="${fill}" ${extra}/>`;
   switch (ch) {
@@ -429,8 +440,14 @@ function terrainShape(ch, px, py) {
     case "_": return r("var(--map-pit)");
     case "^": return r("url(#p-hatch)");
     case "~": return r("url(#p-water)");
-    case "T": return r("var(--map-trees)") +
-      `<circle cx="${px + 13}" cy="${py + 14}" r="8" fill="var(--map-tree)"/><circle cx="${px + 27}" cy="${py + 24}" r="9" fill="var(--map-tree)"/><circle cx="${px + 13}" cy="${py + 30}" r="5" fill="var(--map-tree)"/>`;
+    case "T": return r("var(--map-floor)") + canopy(px, py);
+    case '"': return r("var(--map-brush)") + tufts(px, py, "var(--map-tuft)", 3);
+    case "&": return r("var(--map-thicket)") + tufts(px, py, "var(--map-thicket-tuft)", 6);
+    case "Y": return r("var(--map-brush)") + tufts(px, py, "var(--map-tuft)", 2) + canopy(px, py);
+    case "O": return r("var(--map-floor)") + `<circle cx="${px + CELL / 2}" cy="${py + CELL / 2}" r="${CELL / 2 - 3}" fill="var(--map-stone)" stroke="var(--map-stone-edge)" stroke-width="2"/>`;
+    case "-": return r("var(--map-floor)") + `<rect x="${px + 4}" y="${py + 4}" width="${CELL - 8}" height="${CELL - 8}" rx="3" fill="var(--map-fence)"/><path d="M${px + 4} ${py + CELL / 2} h${CELL - 8}" stroke="var(--map-wood)" stroke-width="2"/>`;
+    case "m": return r("var(--map-floor)") + `<rect x="${px + 7}" y="${py + 9}" width="${CELL - 14}" height="${CELL - 18}" rx="3" fill="var(--map-wood)"/>`;
+    case "W": return r("url(#p-deep)");
     case "+": return r("var(--map-floor)") + `<rect x="${px + 6}" y="${py + CELL / 2 - 5}" width="${CELL - 12}" height="10" rx="2" fill="var(--map-door)"/>`;
     case "=": return r("url(#p-bridge)");
     default: return r("var(--map-floor)");
@@ -499,6 +516,7 @@ function renderMap(m) {
   s += `<defs>
     <pattern id="p-hatch" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="10" height="10" fill="var(--map-difficult)"/><rect width="3" height="10" fill="var(--map-hatch)"/></pattern>
     <pattern id="p-water" width="20" height="12" patternUnits="userSpaceOnUse"><rect width="20" height="12" fill="var(--map-water)"/><path d="M0 8 q5 -5 10 0 t10 0" fill="none" stroke="var(--map-wave)" stroke-width="1.5"/></pattern>
+    <pattern id="p-deep" width="20" height="12" patternUnits="userSpaceOnUse"><rect width="20" height="12" fill="var(--map-deep)"/><path d="M0 8 q5 -5 10 0 t10 0" fill="none" stroke="var(--map-water)" stroke-width="1.5"/></pattern>
     <pattern id="p-magic" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)"><rect width="2" height="8" fill="rgba(150,110,210,0.55)"/></pattern>
     <radialGradient id="g-flame"><stop offset="0" stop-color="#FFF4C2"/><stop offset="0.55" stop-color="#F6B532"/><stop offset="1" stop-color="#D9661E"/></radialGradient>
     <pattern id="p-bridge" width="40" height="10" patternUnits="userSpaceOnUse"><rect width="40" height="10" fill="var(--map-bridge)"/><rect y="8" width="40" height="2" fill="var(--map-plank)"/></pattern>

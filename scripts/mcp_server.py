@@ -146,7 +146,18 @@ def _light(a: Args) -> list[str]:
 
 
 TOOLS: list[Tool] = [
-    Tool("combat_new", "Start an encounter from a map file or a blank grid, with its ambient light.",
+    Tool("combat_map", "Generate a battle map that fits the scene (for a fight without a prepared map), save it, and with start=true "
+         "begin the encounter on it, light sources included. Returns the map, where the party plausibly is, ambush spots "
+         "(cover/concealment near their path, for creatures lying in wait) and the lights. Then add the combatants.",
+         {"template": S("the scene", ["forest-road", "forest", "clearing", "field", "river", "village", "tavern", "cave",
+                                      "ruins", "camp", "swamp"]),
+          "size": S('"WxH", at most 26 wide (default per template)'), "seed": I("reproduce a map"),
+          "density": S("vegetation (forest table)", ["sparse", "medium", "dense"]),
+          "time": S("outdoor light (default day; camp: night)", ["day", "dusk", "night", "inside"]),
+          "name": S("file name (default template-seed)"), "start": B("begin the encounter on it"), "force": B("replace an existing file/encounter")},
+         ["template"], lambda a: ["map", a["template"]] + flags(a, {"size": "--size", "seed": "--seed", "density": "--density",
+                                                                    "time": "--time", "name": "--name", "start": "--start", "force": "--force"})),
+    Tool("combat_new", "Start an encounter from a map file (prepared, or from combat_map). A blank grid only for a truly featureless place.",
          {"map": S("map file, e.g. campaigns/<c>/dm/combat/maps/cave.txt"), "blank": S('blank grid "WxH", e.g. "10x8"'),
           "light": S("ambient light", ["dark", "dim", "normal", "bright"]), "force": B("replace an active encounter")},
          [], lambda a: ["new"] + ([a["map"]] if a.get("map") else []) + flags(a, {"blank": "--blank", "light": "--light", "force": "--force"})),

@@ -281,8 +281,9 @@ def has_line(st: State, a: Token, t: Token) -> bool:
 
 
 def concealment(st: State, viewer: Token, target: Token) -> tuple[int, str]:
-    """Miss chance (0, 20, 50) the lighting gives `target` against `viewer`, judged from the target's
-    best-lit square, and why. No line of sight at all also counts as 50 (the DM handles total cover)."""
+    """Miss chance (0, 20, 30, 50) `target` has against `viewer`, and why: the lighting (judged from the
+    target's best-lit square) or the undergrowth it stands in, whichever is higher (they don't stack).
+    No line of sight at all also counts as 50 (the DM handles total cover)."""
     if not has_line(st, viewer, target):
         return 50, "no line of sight"
     best, how = -1, ""
@@ -290,9 +291,9 @@ def concealment(st: State, viewer: Token, target: Token) -> tuple[int, str]:
         lvl, h = seen_level(st, viewer, q)
         if lvl > best:
             best, how = lvl, h
-    if best >= NORMAL:
-        return 0, how
-    return (20, "dim light") if best == DIM else (50, "darkness")
+    light = (0, how) if best >= NORMAL else (20, "dim light") if best == DIM else (50, "darkness")
+    leaves = R.terrain_concealment(st, target)   # undergrowth hides it from any eyes (doesn't stack with light)
+    return (leaves, "undergrowth") if leaves > light[0] else light
 
 
 def can_see(st: State, viewer: Token, target: Token) -> bool:
@@ -341,7 +342,7 @@ def sight_report(st: State, c: Token, fmt_pos: Any, speed_squares: int) -> str:
                 if (x, y) == here or R.sq_dist(here, (x, y)) > speed_squares:
                     continue
                 probe = dict(c, x=x, y=y)
-                if any(R.blocks_line(st, cx, cy) or st["grid"][cy][cx] == "_" for cx, cy in R.cells(probe)):
+                if any(R.blocks_line(st, cx, cy) or st["grid"][cy][cx] in "_W" for cx, cy in R.cells(probe)):
                     continue
                 if any(o is not c and not o.get("removed") and set(R.cells(o)) & set(R.cells(probe)) for o in st["tokens"]):
                     continue

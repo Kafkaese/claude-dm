@@ -126,10 +126,21 @@ Play
   do "CMD" ["CMD" ...]            run several commands in one call, e.g.
                                   do "move g1 D4" "hp V -6" "next" "show"
 
-Map files: one line per row, one character per square, no spaces between squares.
-  .  floor      #  wall (blocks)     +  door        ^  difficult (rubble, brush)
-  ~  water (difficult)  T  trees (difficult)  _  pit / chasm (blocks)  (space) outside (blocks)
+Map files: one line per row, one character per square, no spaces between squares (or generate one:
+`map TEMPLATE`, see below). Lines starting with // are notes.
+  .  floor/ground   #  wall (blocks)   +  door   =  bridge   ^  difficult (dense rubble, cave floor: 2)
+  ~  shallow water/bog (2)   W  deep water (swim)   _  pit / chasm   (space) outside (blocks)
+  T  tree (partial cover +2 AC to whoever stands in it)   O  boulder / massive tree / pillar (blocks)
+  "  undergrowth, tall grass (2, 20% concealment)   &  heavy undergrowth (4, 30% concealment)
+  Y  tree in undergrowth (2, partial cover + 20%)   -  low wall / fence / log (3, cover within 30 ft)
+  m  furniture (3)
 Columns are lettered A-Z (max 26 wide), rows numbered from 1.
+  map TEMPLATE [--size 24x14] [--seed N] [--density sparse|medium|dense] [--time day|dusk|night]
+       [--name NAME] [--start] [--force]
+                                  generate a battle map that fits the scene, save it to dm/combat/maps/, and
+                                  with --start begin the encounter on it. Templates: forest-road, forest,
+                                  clearing, field, river, village, tavern, cave, ruins, camp, swamp. Prints
+                                  where the party is, ambush spots (cover/concealment) and light sources
 Tokens: a PC uses the first letter of its name (Corin -> C); others lowercase + digit (g1, s1).
 
 The combat log (events) is what the player sees about attacks, damage and conditions. The web
@@ -160,10 +171,15 @@ Square = R.Square  # (x, y) grid coordinates, 0-based
 Args = argparse.Namespace
 
 PROJECT = Path(__file__).resolve().parents[1]
+# Map characters: (name, movement cost in squares; None = impassable). What else they do (cover,
+# concealment, blocking sight) is in combat_rules.TERRAIN_FX / LINE_BLOCKERS; the rulings are in
+# library/pf1e/house-rules/terrain.md.
 TERRAIN = {
     ".": ("floor", 1), "+": ("door", 1), "=": ("bridge", 1),
-    "^": ("difficult", 2), "~": ("water", 2), "T": ("trees", 2),
-    "#": ("wall", None), "_": ("pit", None), " ": ("outside", None),
+    "^": ("difficult", 2), "~": ("shallow water", 2), "T": ("tree", 1),
+    '"': ("undergrowth", 2), "&": ("heavy undergrowth", 4), "Y": ("tree in undergrowth", 2),
+    "-": ("low wall", 3), "m": ("furniture", 3),
+    "#": ("wall", None), "O": ("boulder", None), "_": ("pit", None), "W": ("deep water", None), " ": ("outside", None),
 }
 XP_BY_CR = {"1/8": 50, "1/6": 65, "1/4": 100, "1/3": 135, "1/2": 200, "1": 400, "2": 600,
             "3": 800, "4": 1200, "5": 1600, "6": 2400, "7": 3200, "8": 4800, "9": 6400,
@@ -357,7 +373,7 @@ def path_route_parity(st: State, mover: Token, dest: Square) -> tuple[int, list[
                     continue  # can't cut a wall's corner; past a creature's corner is fine (CRB p. 192)
                 mult = step_cost(nx, ny)
                 if diag:
-                    squares, npar = (3 if mult > 1 else (1 if parity == 0 else 2)), 1 - parity
+                    squares, npar = (mult + mult // 2 if mult > 1 else (1 if parity == 0 else 2)), 1 - parity   # costly terrain: x1.5 on a diagonal
                 else:
                     squares, npar = mult, parity
                 nf = feet + 5 * squares
@@ -490,7 +506,10 @@ def render(st: State, dm: bool = False) -> str:
 
 # ---------- map data for the web interface ----------
 
-TERRAIN_NAMES = {"#": "wall", "+": "door", "^": "difficult", "~": "water", "T": "trees", "_": "pit", "=": "bridge"}
+TERRAIN_NAMES = {"#": "wall", "+": "door", "^": "difficult", "~": "shallow water", "T": "tree (partial cover)",
+                 '"': "undergrowth (concealment)", "&": "heavy undergrowth (concealment)", "Y": "tree in undergrowth",
+                 "-": "low wall / fence (cover)", "m": "furniture", "O": "boulder / massive tree", "W": "deep water",
+                 "_": "pit", "=": "bridge"}
 
 
 def movement_line(st: State) -> dict[str, Any] | None:
@@ -705,6 +724,9 @@ def attack_mods(st: State, a: Token, t: Token, kind: str, touch: bool = False, c
     elif kind == "ranged" and R.soft_cover(st, a, t):
         ac += 4
         notes.append("soft cover")
+    elif R.partial_cover(st, t):   # standing in a tree's square (CRB pg. 425)
+        ac += 2
+        notes.append("partial cover (tree)")
     miss = max((R.cond_effects(x).get("concealment", 0) for x in R.conditions(t)), default=0)
     lmiss, lwhy = V.concealment(st, a, t)   # lighting, from the attacker's eyes (doesn't stack)
     if lmiss > miss:
@@ -1018,6 +1040,42 @@ def cmd_new(args: Args) -> str:
     st = fresh_state(args.mapfile, args.blank, args.light)
     save(args.campaign, st)
     return render(st, dm=True)
+
+
+def cmd_map(args: Args) -> str:
+    """Generate a battle map from a template (scripts/mapgen.py), save it to dm/combat/maps/, and with
+    --start begin the encounter on it (its light sources included). Prints the map and where the
+    party is, the ambush spots and the lights, for placing the tokens."""
+    import mapgen
+    try:
+        m = mapgen.generate(args.template, args.size, args.seed, args.density, args.time)
+    except mapgen.MapError as e:
+        raise CombatError(str(e))
+    name = re.sub(r"[^a-z0-9-]+", "-", (args.name or f"{args.template}-{m['seed']}").lower()).strip("-")
+    path = PROJECT / "campaigns" / args.campaign / "dm" / "combat" / "maps" / f"{name}.txt"
+    if path.exists() and not args.force:
+        raise CombatError(f"{path.relative_to(PROJECT)} exists: give another --name, or --force")
+    if args.start and state_path(args.campaign).exists() and not args.force:
+        raise CombatError("an encounter is already active; 'end' it first or pass --force")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(mapgen.to_file(m), encoding="utf-8")
+    out = [f"Map {path.relative_to(PROJECT)} ({args.template}, seed {m['seed']}): " + " ".join(m["notes"])]
+    if args.start:
+        st = fresh_state(str(path), None, None)
+        for li in m["lights"]:
+            add_light(st, li["kind"], mapgen.fmt(li["at"]), None)
+        save(args.campaign, st)
+        undo_path(args.campaign).unlink(missing_ok=True)
+        out.append(render(st, dm=True))
+    else:
+        out.append("\n".join(m["grid"]))
+        out.append(f"ambient {m['ambient']}" + (f"; lights: " + ", ".join(f"{li['kind']} at {mapgen.fmt(li['at'])}" for li in m["lights"])
+                                                  if m["lights"] else ""))
+        out.append(f"Start it: `new {path.relative_to(PROJECT)}`" + (" (then add the lights)" if m["lights"] else ""))
+    out.append("Party (where the PCs plausibly are): " + " ".join(mapgen.fmt(q) for q in m["party"]))
+    out.append("Ambush spots (cover or concealment near their path): "
+               + (", ".join(f"{mapgen.fmt(q)} ({why})" for q, why in m["ambush"]) or "none: use the terrain as it is"))
+    return "\n".join(out)
 
 
 def cmd_add(args: Args, st: State) -> str:
@@ -2391,7 +2449,7 @@ def reach_map(st: State, c: Token, max_feet: int, routes: dict[Square, list[Squa
                 if diag and any(cost(st, cx, cy) is None for q in ((x + dx, y), (x, y + dy)) for cx, cy in cells(c, q)):
                     continue   # a wall's corner blocks a diagonal; a creature's doesn't (CRB p. 192)
                 mult = max(cost(st, cx, cy) or 1 for cx, cy in cells(c, (nx, ny)))
-                squares, npar = ((3 if mult > 1 else (1 if parity == 0 else 2)), 1 - parity) if diag else (mult, parity)
+                squares, npar = ((mult + mult // 2 if mult > 1 else (1 if parity == 0 else 2)), 1 - parity) if diag else (mult, parity)
                 nf = feet + 5 * squares
                 if nf > max_feet or nf >= best.get(((nx, ny), npar), 10 ** 9):
                     continue
@@ -4387,6 +4445,10 @@ def main(argv: list[str] | None = None) -> int:
     mn.add_argument("--damage", type=int, help="damage (PC)"); mn.add_argument("--nonlethal", action="store_true")
     mn.add_argument("--reverse", action="store_true", help="escape: become the grappler instead")
     mn.add_argument("--reach", type=int, help="reach of the weapon used, if longer (whip, reach weapon)")
+    mp = sub.add_parser("map"); mp.add_argument("template"); mp.add_argument("--size"); mp.add_argument("--seed", type=int)
+    mp.add_argument("--density", default="medium", choices=["sparse", "medium", "dense"])
+    mp.add_argument("--time", choices=["day", "dusk", "night", "inside"]); mp.add_argument("--name")
+    mp.add_argument("--start", action="store_true", help="begin the encounter on it"); mp.add_argument("--force", action="store_true")
     en = sub.add_parser("encounter"); en.add_argument("action", choices=["list", "check"])
     en.add_argument("names", nargs="*", help="check: encounter names or files (default: all)")
     su = sub.add_parser("setup"); su.add_argument("name", help="encounter name (dm/combat/encounters/<name>.md) or file")
@@ -4455,6 +4517,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "encounter":
             print(cmd_encounter(args))
+            return 0
+        if args.command == "map":
+            print(cmd_map(args))
             return 0
         if args.command == "setup":
             print(cmd_setup(args))

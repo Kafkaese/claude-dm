@@ -601,11 +601,54 @@ def center(c: Token) -> tuple[float, float]:
     return (c["x"] + c["size"] / 2, c["y"] + c["size"] / 2)
 
 
+# Terrain that does more than slow movement (house rule: library/pf1e/house-rules/terrain.md; CRB
+# Environment chapter, library/pf1e/rules/terrain.md). Movement costs live in combat.py's TERRAIN.
+LINE_BLOCKERS = "# O"          # walls, outside, massive trees / boulders / pillars
+TERRAIN_FX: dict[str, dict[str, int]] = {
+    "T": {"partial_cover": 1},                     # a tree in the square: +2 AC to whoever stands in it
+    "Y": {"partial_cover": 1, "concealment": 20},  # a tree in light undergrowth
+    '"': {"concealment": 20},                      # light undergrowth, tall grass, crops
+    "&": {"concealment": 30},                      # heavy undergrowth
+    "-": {"low_obstacle": 1},                      # low wall, fence, fallen log, crates: cover within 30 ft
+}
+
+
 def blocks_line(st: State, x: int, y: int) -> bool:
-    """Whether the square blocks line of effect (a wall, outside the map, or off the grid)."""
+    """Whether the square blocks line of effect (a wall, a massive tree or boulder, outside the map, or off the grid)."""
     if not (0 <= x < st["w"] and 0 <= y < st["h"]):
         return True
-    return st["grid"][y][x] in "# "
+    return st["grid"][y][x] in LINE_BLOCKERS
+
+
+def terrain_at(st: State, x: int, y: int) -> dict[str, int]:
+    """The terrain effects of a square (concealment, partial cover, low obstacle), or {}."""
+    if not (0 <= x < st["w"] and 0 <= y < st["h"]):
+        return {}
+    return TERRAIN_FX.get(st["grid"][y][x], {})
+
+
+def terrain_concealment(st: State, t: Token) -> int:
+    """Concealment (miss chance %) from the vegetation the creature stands in: its whole space has to
+    be inside it (the weakest square counts). Darkvision doesn't see through leaves."""
+    return min(terrain_at(st, x, y).get("concealment", 0) for x, y in cells(t))
+
+
+def partial_cover(st: State, t: Token) -> bool:
+    """Whether the creature stands in a tree's square (partial cover: +2 AC, +1 Reflex)."""
+    return any(terrain_at(st, x, y).get("partial_cover") for x, y in cells(t))
+
+
+def low_obstacle_cover(st: State, a: Token, t: Token) -> bool:
+    """Cover from a low obstacle (low wall, fence, log) between them: only for a target within 30 ft
+    (6 squares) of the obstacle, and not if the attacker is closer to it than the target (CRB pg. 195)."""
+    for cell in segment_cells(center(a), center(t)):
+        if cell in cells(a) or cell in cells(t) or not terrain_at(st, *cell).get("low_obstacle"):
+            continue
+        dt = min(sq_dist(cell, q) for q in cells(t))
+        da = min(sq_dist(cell, q) for q in cells(a))
+        if dt <= 6 and da >= dt:
+            return True
+    return False
 
 
 def segment_cells(p: tuple[float, float], q: tuple[float, float], step: float = 0.05) -> list[Square]:
@@ -628,8 +671,11 @@ def corners(c: Token) -> list[tuple[int, int]]:
 
 
 def cover(st: State, a: Token, t: Token) -> bool:
-    """PF1e cover from walls: pick the attacker's best corner; if any line from it to a corner
-    of the target's space passes through a blocking square, the target has cover (+4 AC)."""
+    """PF1e cover from walls and low obstacles: pick the attacker's best corner; if any line from it
+    to a corner of the target's space passes through a blocking square, the target has cover (+4 AC).
+    A low obstacle (wall, fence, log) between them also gives cover, within its 30 ft."""
+    if low_obstacle_cover(st, a, t):
+        return True
     a_cells, t_cells = set(cells(a)), set(cells(t))
     best_blocked = None
     for pa in corners(a):

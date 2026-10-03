@@ -899,3 +899,78 @@ class PlayerCasting(CampaignCase):
         import combat_rules as R
         self.assertTrue(R.has(self.tok("g1"), "dazed"))
         self.assertIn("give the DC", self.fail_cmd("cast", "C", "daze", "--target", "g1", "--no-provoke", "--override"))
+
+
+class Terrain(CampaignCase):
+    def test_tree_gives_partial_cover(self) -> None:
+        self.new(map_text="........\n....T...\n........\n")
+        self.add("g1", "Gob", "A2", GOBLIN, init=20)
+        self.add("C", "Corin", "E2", PC_PROFILE, side="pc", init=10)
+        self.run_cmd("next")
+        import combat
+        st = self.state()
+        c = combat.token(st, "C")
+        c["acted"] = True
+        _, ac, notes, _, _ = combat.attack_mods(st, combat.token(st, "g1"), c, "ranged")
+        self.assertEqual(ac, 16 + 2)
+        self.assertIn("partial cover (tree)", notes)
+
+    def test_undergrowth_conceals_and_lets_hide(self) -> None:
+        self.new(map_text='........\n....".&.\n........\n')
+        self.add("C", "Corin", "A2", PC_PROFILE, side="pc", init=20)
+        self.add("g1", "Gob", "E2", GOBLIN, init=10)
+        self.add("g2", "Gob2", "G2", GOBLIN, init=5)
+        import combat, vision as V
+        st = self.state()
+        c, g1, g2 = (combat.token(st, t) for t in ("C", "g1", "g2"))
+        self.assertEqual(V.concealment(st, c, g1), (20, "undergrowth"))
+        self.assertEqual(V.concealment(st, c, g2)[0], 30)
+        self.assertTrue(V.hidden_from(st, g1, c))           # concealment: it may use Stealth
+        self.run_cmd("next")
+        self.assertIn("C moves A2 → A3: 5 ft", self.run_cmd("move", "C", "A3"))
+
+    def test_movement_costs(self) -> None:
+        self.new(map_text='.&.\n...\n')
+        self.add("C", "Corin", "A1", PC_PROFILE, side="pc", init=20)
+        self.add("g1", "Gob", "C2", GOBLIN, init=10)
+        import combat
+        st = self.state()
+        self.assertEqual(combat.path_route(st, combat.token(st, "C"), (1, 0))[0], 20)   # heavy undergrowth: 4 squares
+
+    def test_low_wall_cover_and_boulder_blocks(self) -> None:
+        self.new(map_text="............\n.....-......\n............\n.....O......\n")
+        self.add("C", "Corin", "A2", PC_PROFILE, side="pc", init=20)
+        self.add("g1", "Gob", "H2", GOBLIN, init=10)       # 2 squares behind the low wall
+        self.add("g2", "Gob2", "G4", GOBLIN, init=5)       # behind the boulder
+        import combat, combat_rules as R
+        st = self.state()
+        c, g1, g2 = (combat.token(st, t) for t in ("C", "g1", "g2"))
+        self.assertTrue(R.cover(st, c, g1))
+        self.assertTrue(R.low_obstacle_cover(st, c, g1))
+        self.assertFalse(R.low_obstacle_cover(st, g1, c))   # the attacker is closer to the wall than its target
+        self.assertTrue(R.blocks_line(st, 5, 3))
+
+
+class MapGenerator(CampaignCase):
+    def test_every_template_makes_a_valid_map(self) -> None:
+        import combat, mapgen
+        for t in mapgen.TEMPLATES:
+            for seed in (1, 2, 3):
+                m = mapgen.generate(t, seed=seed)
+                self.assertEqual(m, mapgen.generate(t, seed=seed), t)     # reproducible
+                chars = {ch for row in m["grid"] for ch in row}
+                self.assertLessEqual(chars, set(combat.TERRAIN), t)
+                self.assertTrue(all(len(r) == len(m["grid"][0]) <= 26 for r in m["grid"]), t)
+                for x, y in m["party"] + [q for q, _ in m["ambush"]]:
+                    self.assertIsNotNone(combat.TERRAIN[m["grid"][y][x]][1], f"{t} {seed}: {x},{y} impassable")
+        self.assertTrue(mapgen.generate("forest-road", seed=4)["ambush"])
+
+    def test_map_command_starts_the_fight(self) -> None:
+        out = self.run_cmd("map", "camp", "--seed", "5", "--start")
+        self.assertIn("Ambush spots", out)
+        st = self.state()
+        self.assertEqual(st["light"]["ambient"], "dark")
+        self.assertTrue(st["light"]["sources"])                # the campfire
+        self.assertTrue((self.dir / "dm/combat/maps/camp-5.txt").exists())
+        self.assertIn("exists", self.fail_cmd("map", "camp", "--seed", "5"))
+        self.assertIn("no template", self.fail_cmd("map", "spaceship"))
