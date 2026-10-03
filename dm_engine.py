@@ -1026,12 +1026,12 @@ def _step_context(st: dict[str, Any], c: dict[str, Any]) -> str:
 
 
 def _visible_prompt(c: dict[str, Any], started: str, pc_after: bool, next_name: str | None = None) -> str:
-    """The instruction for one visible non-PC actor's step. It names who acts next, because the DM
-    otherwise tends to hand the turn to the player ("Your turn") after every enemy."""
-    end = ("The player's turn comes right after this one: end with one short line saying so." if pc_after else
-           f"It is NOT the player's turn after this: next up is {next_name or 'another creature'}. Don't write "
-           f"'your turn', don't ask what they do, and don't narrate {next_name or 'the next creature'}'s turn; "
-           f"the player presses Next to continue.")
+    """The instruction for one visible non-PC actor's step. Whose turn comes next is the interface's
+    to announce (it knows when the actor is really done, e.g. after a follow-up move), so the narration
+    never hands the turn to the player."""
+    end = (f"Don't say whose turn comes next, don't write 'your turn' and don't ask the player what they do: the "
+           f"interface announces the next turn itself" + ("" if pc_after else f" (it's {next_name or 'another creature'}'s, not the player's)")
+           + ". Don't narrate anyone else's turn.")
     return (f"[Combat step, sent by the interface (not the player). The turn pointer is on {c['token']} "
             f"({c['name']}); `next` already ran:\n{started}\n{c.get('_ctx', '')}{c.get('_sight', '')}\n"
             f"Resolve ONLY {c['name']}'s turn: choose its actions from its tactics and the situation, and "
@@ -1112,7 +1112,7 @@ def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool], runn
         if not found:
             return "over"
         c = found[0]
-        if acted and c["side"] != "pc":
+        if acted and c["side"] != "pc" and cm.can_act(c):   # one that can't act (dying, helpless) needs no Next press
             # The next visible actor gets its own step. Hidden actors in between are only resolved
             # now if the PC comes next (so the pointer can rest on the PC); otherwise they open the
             # next step, and one that reveals itself is then the only actor shown in it.
@@ -1199,7 +1199,7 @@ Narration rules (strict):
 - Highlight names the characters know: people in **bold**, places in ***bold italic***, spells and items in *italic*.
 - A first use of a special ability, a reveal, or a turning point gets 2-4 vivid sentences; otherwise one line per action.
 - A hidden creature that stays unnoticed: reply only "…".
-- Follow the message's last line about whose turn comes next exactly; never write "your turn" unless it says so.
+- Never write "your turn", never say whose turn comes next and never ask the player what they do: the interface announces the next turn.
 - Respect the table's lines and veils below."""
 
 

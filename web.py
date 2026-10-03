@@ -261,8 +261,10 @@ class Hub:
 
         result = run_combat_step(self.eng, camp, send, runner=self._get_runner(camp))
         self.refresh_combat()
-        if result == "pc-quiet":
-            self.system("Your turn.")
+        if result in ("pc", "pc-quiet"):   # announced here, once the NPCs are really done (follow-up moves included)
+            st = combat_state(camp) or {}
+            pc = next((t for t in st.get("tokens", []) if t["token"] == st.get("turn")), None)
+            self.system(f"Your turn{', ' + pc['name'] if pc else ''}.")
 
     def _exchange(self, text: str) -> bool:
         """Send one message and wait for the reply; restart (resuming) if the process died.

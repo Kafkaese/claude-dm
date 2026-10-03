@@ -88,8 +88,8 @@ class Stepping(CampaignCase):
         prompts: list[str] = []
         self.step()                                       # onto Corin
         E.run_combat_step(self.engine, self.slug, lambda p: prompts.append(p) or True)
-        self.assertIn("It is NOT the player's turn after this: next up is Gob2", prompts[0])   # g1, then (h1), g2
-        self.assertIn("Don't write 'your turn'", prompts[0])
+        self.assertIn("it's Gob2's, not the player's", prompts[0])   # g1, then (h1), g2
+        self.assertIn("don't write 'your turn'", prompts[0])
 
     def test_endturn_flag(self) -> None:
         self.step()
@@ -428,3 +428,33 @@ class FightOver(CampaignCase):
         self.assertFalse(E.combat_state(self.slug))                    # ended and archived
         self.assertTrue(sent and sent[0].startswith("[The fight is over"))
         self.assertIn("XP", sent[0])
+
+
+class AnnounceTurn(CampaignCase):
+    def test_follow_up_comes_before_the_players_turn(self) -> None:
+        """The last NPC before the PC kills its target and gets a follow-up: no step message asks for
+        'your turn', and the hub announces the PC's turn only after the follow-up."""
+        import web
+        self.new(blank="12x6")
+        self.add("C", "Corin", "J5", PC_PROFILE, side="pc", init=5)
+        self.add("g1", "Gob", "B2", GOBLIN, init=20)
+        self.add("a1", "Ally", "C2", GOBLIN, side="ally", init=10)
+        self.run_cmd("hp", "a1", "-100")                        # out of the way: only g1 acts before Corin
+        self.add("a2", "Ally2", "C3", GOBLIN, side="ally", init=1)
+        hub = web.Hub(self.slug)
+        hub.engine = E.Engine(lambda ev: None)
+        hub.engine.combat_engaged = True
+        order: list[str] = []
+
+        def exchange(prompt: str) -> bool:
+            order.append(prompt[:40])
+            self.assertNotIn("say so", prompt)
+            if "pointer is on g1" in prompt:
+                self.run_cmd("attack", "g1", "a2", "--roll", "1d20+99", "--dmg", "99")
+            return True
+        hub._exchange = exchange                                 # type: ignore[method-assign]
+        hub._get_runner = lambda camp: None                      # type: ignore[method-assign]  # never a real process
+        hub.system = lambda text: order.append("SYSTEM " + text)   # type: ignore[method-assign]
+        hub._step()
+        self.assertTrue(order[-1].startswith("SYSTEM Your turn, Corin"), order)
+        self.assertTrue(any(o.startswith("[Combat step continued") for o in order[:-1]))
