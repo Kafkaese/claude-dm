@@ -363,6 +363,7 @@ def main() -> None:
     maps.prime()
     term = Terminal(spinner, maps)
     dm = Engine(term.on_event, model=args.model, effort=args.effort, debug=args.debug, record_session=True)
+    dm.campaign = campaign   # the campaign lock (CLAUDE_DM_CAMPAIGN): other campaigns' folders are off limits
     term.engine = dm
     dm.start(resume=resume)
 
@@ -432,6 +433,11 @@ def main() -> None:
         detect = False   # follow /start-session and /new-campaign to the campaign they're about
         words = text.split()
         if words[0] == "/start-session" and len(words) > 1 and is_campaign(words[1]):
+            if dm.campaign != words[1] and (dm.campaign or dm.session_id):   # another campaign: a fresh, locked conversation
+                print(f"{DIM}(a new conversation for {words[1]}){RESET}")
+            if dm.campaign != words[1]:
+                dm.campaign = words[1]
+                dm.new_session()
             maps.campaign = words[1]
         elif words[0] in ("/start-session", "/new-campaign"):
             maps.campaign, detect = None, True

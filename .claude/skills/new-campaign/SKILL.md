@@ -22,7 +22,7 @@ Follow [interview.md](interview.md).
 When the interview is done, show a compact summary of all choices. Ask for corrections before you create any files.
 
 ## Step 2: Create the folder
-1. Pick a kebab-case slug. If there's no name yet, propose three. Never overwrite an existing campaign folder.
+1. Pick a kebab-case slug. If `$ARGUMENTS` starts with `slug=<slug>` (the web interface chose it, and the session is locked to that folder), use exactly that slug. Otherwise, if there's no name yet, propose three. Never overwrite an existing campaign folder.
 2. Run `cp -R campaigns/_template campaigns/<slug>`.
 3. Write the player-facing basics yourself. They came from the interview, so they're no spoilers:
    - `players/session-zero.md`: every choice the table agreed on, including "Published adventures"

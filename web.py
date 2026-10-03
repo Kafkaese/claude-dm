@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """web.py: Claude DM in the browser (local only).
 
-  python3 web.py                  start a new session and open the browser
-  python3 web.py --resume         continue the last session (its chat history is shown)
-  python3 web.py --resume ID      continue a specific session
+  python3 web.py                  open the browser on the campaign picker (continue, new session, new campaign)
+  python3 web.py --campaign SLUG  skip the picker: continue that campaign's last conversation
+  python3 web.py --resume [ID]    skip the picker: continue the last (or a given) conversation
   python3 web.py --effort high    think harder (slower); default is medium
-  python3 web.py --port 8765 --no-browser --campaign <slug> --model <alias> --debug
+  python3 web.py --port 8765 --no-browser --model <alias> --debug
 
 Serves web/index.html on http://127.0.0.1:<port>. Only the DM's words reach the page;
 tool calls stay hidden. During a fight, a side panel shows the map, initiative and the
 combat log. Type :effort low|medium|high or :debug in the chat to change settings; switch
 campaigns from the settings menu (it can end the running session first).
+
+The DM process is locked to one campaign (CLAUDE_DM_CAMPAIGN): the campaign_lock hook and the
+game tools refuse every other campaign's folder, so nothing crosses over between campaigns.
 """
 from __future__ import annotations
 
@@ -25,8 +28,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from typing import Any
 
-from dm_engine import (EFFORTS, REPO, CombatRunner, Engine, with_recap, active_campaign, campaign_for_session, campaign_title, is_campaign, remember_campaign, combat_snapshot, combat_state,
-                       is_go_signal, list_campaigns, run_combat_step, step_due,
+from dm_engine import (EFFORTS, REPO, CombatRunner, Engine, with_recap, campaign_for_session, campaign_title, is_campaign, remember_campaign, combat_snapshot, combat_state,
+                       is_go_signal, list_campaigns, run_combat_step, slugify, step_due,
                        last_combat_events, last_session, load_history, map_png_path)
 
 WEB = REPO / "web"
@@ -37,10 +40,9 @@ class Hub:
 
     def __init__(self, campaign_arg: str | None) -> None:
         """Args:
-            campaign_arg: the --campaign option, or None to use the most recently played campaign.
+            campaign_arg: the campaign in play, or None: the page opens the campaign picker.
         """
         self.campaign_arg = campaign_arg
-        self.detect_campaign = False   # a /start-session without a slug or /new-campaign: pin what it touched
         self.runner: CombatRunner | None = None   # plays the NPC steps in its own small context
         self.runner_model: str | None = None
         self.runner_effort = "low"
@@ -83,15 +85,15 @@ class Hub:
                 q.put(ev)
 
     def campaign(self) -> str | None:
-        """The campaign in play."""
-        return active_campaign(self.campaign_arg)
+        """The campaign in play (None until one is chosen in the picker)."""
+        return self.campaign_arg
 
     def hello(self) -> dict[str, Any]:
         """The first event a browser gets: title, chat history, busy state, status, settings and the fight."""
         camp = self.campaign()
         with self.lock:
             self.shown_campaign = camp
-            return {"type": "hello", "title": campaign_title(camp), "campaign": camp,
+            return {"type": "hello", "title": campaign_title(camp), "campaign": camp, "picker": camp is None,
                     "session": self.engine.session_id if self.engine else None,
                     "history": list(self.history), "busy": bool(self.engine and self.engine.busy),
                     "status": self.status, "status_since": self.status_since,
@@ -172,10 +174,14 @@ class Hub:
             return 400, "empty"
         if text.startswith(":"):
             return self.command(text)
+        if not self.campaign():
+            return 409, "Choose a campaign first."
+        parts = text.split()
+        if parts[0] == "/new-campaign" or (parts[0] == "/start-session" and len(parts) > 1 and parts[1] != self.campaign()):
+            return 409, "Use the campaign menu (the gear) to start or switch campaigns."
         with self.lock:
             if self.busy():
                 return 409, "The DM is still busy."
-            self.follow_command(text)
             self.history.append({"role": "player", "text": text})
             self.turn_dm = None
             self.publish({"type": "player", "text": text})
@@ -190,19 +196,8 @@ class Hub:
         """Whether a turn (or a campaign switch) is running."""
         return self.eng.busy or bool(self.worker and self.worker.is_alive())
 
-    def follow_command(self, text: str) -> None:
-        """Point the page at the campaign a typed /start-session or /new-campaign is about."""
-        parts = text.split()
-        if parts[0] == "/start-session" and len(parts) > 1 and is_campaign(parts[1]):
-            self.campaign_arg = parts[1]
-        elif parts[0] in ("/start-session", "/new-campaign"):
-            self.campaign_arg, self.detect_campaign = None, True   # pinned after the reply (see _pin_campaign)
-
     def _pin_campaign(self) -> None:
-        """After a reply: fix the campaign this session plays and record it for --resume, so a test
-        campaign touched later (or elsewhere) can't take over the page."""
-        if self.detect_campaign:
-            self.campaign_arg, self.detect_campaign = active_campaign(None), False
+        """After a reply: record which campaign this conversation plays (for continuing it later)."""
         remember_campaign(self.engine.session_id if self.engine else None, self.campaign_arg)
 
     def _run_turn(self, text: str) -> None:
@@ -277,40 +272,70 @@ class Hub:
             self.turn_dm = None
         return ok
 
-    def switch(self, slug: str, end_current: bool) -> tuple[int, str]:
-        """Switch to another campaign: optionally end the running session, then start a fresh
-        conversation and run /start-session for the new campaign. Returns (HTTP status, message)."""
-        if not any(c["slug"] == slug for c in list_campaigns()):
+    def open_campaign(self, slug: str, mode: str, end_current: bool = False, name: str = "", pitch: str = "") -> tuple[int, str]:
+        """Start playing a campaign (from the picker or the menu). mode: "continue" (resume its last
+        conversation), "fresh" (a new conversation, /start-session), or "new" (create it: /new-campaign,
+        with `name` and an optional `pitch`). The DM process is restarted locked to that campaign.
+        Returns (HTTP status, message)."""
+        if mode == "new":
+            slug = slugify(name)
+            if not slug:
+                return 400, "Give the campaign a name."
+            if (REPO / "campaigns" / slug).exists():
+                return 409, f"A campaign folder '{slug}' already exists: pick another name."
+        elif mode not in ("continue", "fresh") or not is_campaign(slug):
             return 404, "No such campaign."
         with self.lock:
             if self.busy():
                 return 409, "The DM is still busy."
             self.publish({"type": "busy", "busy": True})
-            self.worker = threading.Thread(target=self._run_switch, args=(slug, end_current), daemon=True)
+            self.worker = threading.Thread(target=self._run_open, args=(slug, mode, end_current, name, pitch), daemon=True)
             self.worker.start()
         return 202, "ok"
 
-    def _run_switch(self, slug: str, end_current: bool) -> None:
-        """Worker thread for switch()."""
+    def switch(self, slug: str, end_current: bool) -> tuple[int, str]:
+        """The settings menu's switch: a fresh session of another campaign."""
+        return self.open_campaign(slug, "fresh", end_current)
+
+    def _run_open(self, slug: str, mode: str, end_current: bool, name: str, pitch: str) -> None:
+        """Worker thread for open_campaign()."""
         old = self.campaign()
-        if end_current and old and self.history:
-            self.system(f"Ending the session of {campaign_title(old)} before switching…")
+        if end_current and old and self.history and self.eng.alive():
+            self.system(f"Ending the session of {campaign_title(old)} first…")
             self._exchange(f"[The player is switching to another campaign. If a session of {old} is in progress "
                            f"in this conversation, run /end-session for it now. If not, reply only: "
                            f"\"No session in progress.\"]")
-        self.eng.new_session()
         if self.runner:
             self.runner.stop()
             self.runner = None
+        resume = None
+        if mode == "continue":
+            resume = next((c["session"] for c in list_campaigns() if c["slug"] == slug), None)
+            if not resume:
+                mode = "fresh"   # nothing to continue: start its next session
+        self.eng.stop()
+        self.eng.campaign = slug   # the lock: hooks and game tools refuse every other campaign
+        self.eng.combat_engaged = False
         with self.lock:
             self.campaign_arg = slug
-            self.history, self.turn_dm = [], None
-            self.combat = {"active": False}   # a fresh conversation: nothing shown until the DM engages
+            self.history = load_history(resume) if resume else []
+            self.turn_dm, self.log_mark = None, 0
+            self.combat = {"active": False}   # nothing shown until the DM engages (or resumes) a fight
+        if resume:
+            self.eng.start(resume=resume)
+        else:
+            self.eng.new_session()
+        with self.lock:
             self.publish(self.hello())
-            text = f"/start-session {slug}"
+        if resume:
+            self._pin_campaign()
+            self.system(f"Continuing {campaign_title(slug)}. Say what you do, or \"recap\" for a reminder.")
+            self.publish({"type": "busy", "busy": False})
+            return
+        text = (f"/new-campaign slug={slug} {pitch or name}".strip() if mode == "new" else f"/start-session {slug}")
+        with self.lock:
             self.history.append({"role": "player", "text": text})
             self.publish({"type": "player", "text": text})
-            self.publish({"type": "busy", "busy": True})
         self._run_turn(text)
 
     def system(self, text: str) -> None:
@@ -399,9 +424,9 @@ def make_handler(hub: Hub) -> type[BaseHTTPRequestHandler]:
             return self._send(404, "{}")
 
         def do_POST(self) -> None:
-            """Accept a player message at /send, or a campaign switch at /switch."""
+            """Accept a player message at /send, a campaign switch at /switch, or the picker's choice at /open."""
             path = urlparse(self.path).path
-            if path not in ("/send", "/switch"):
+            if path not in ("/send", "/switch", "/open"):
                 return self._send(404, "{}")
             length = int(self.headers.get("Content-Length") or 0)
             try:
@@ -410,6 +435,10 @@ def make_handler(hub: Hub) -> type[BaseHTTPRequestHandler]:
                 return self._send(400, json.dumps({"error": "bad json"}))
             if path == "/switch":
                 code, msg = hub.switch(str(body.get("campaign", "")), bool(body.get("end_current", True)))
+            elif path == "/open":
+                code, msg = hub.open_campaign(str(body.get("campaign", "")), str(body.get("mode", "continue")),
+                                              bool(body.get("end_current", False)), str(body.get("name", "")),
+                                              str(body.get("pitch", "")))
             else:
                 code, msg = hub.send(body.get("text", ""))
             return self._send(code, json.dumps({"message": msg}))
@@ -452,22 +481,32 @@ def main() -> None:
     ap.add_argument("--effort", default="medium", choices=EFFORTS)
     ap.add_argument("--runner-model", help="model for the combat runner (NPC turns); default: the DM's model")
     ap.add_argument("--runner-effort", default="low", choices=EFFORTS, help="thinking effort for NPC turns (default low)")
-    ap.add_argument("--campaign", help="campaign slug (default: the most recently played)")
+    ap.add_argument("--campaign", help="skip the picker: continue this campaign")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
 
     resume = last_session() if args.resume == "last" else args.resume
-    hub = Hub(args.campaign)
-    if resume:
-        hub.history = load_history(resume)
-        hub.campaign_arg = args.campaign or campaign_for_session(resume, hub.history)
+    hub = Hub(None)
     engine = Engine(hub.on_event, model=args.model, effort=args.effort, debug=args.debug, record_session=True)
     hub.engine = engine
     hub.runner_model, hub.runner_effort = args.runner_model or args.model, args.runner_effort
-    engine.start(resume=resume)
     hub.combat = {"active": False}   # shown once the DM engages combat in this session (Hub.fight)
+    # No campaign yet: the page opens the picker, and the DM process starts once one is chosen,
+    # locked to it. --resume / --campaign choose up front.
+    if resume:
+        history = load_history(resume)
+        camp = campaign_for_session(resume, history)
+        if not camp:
+            raise SystemExit(f"Don't know which campaign session {resume} plays; start without --resume and pick it.")
+        hub.campaign_arg, hub.history = camp, history
+        engine.campaign = camp
+        engine.start(resume=resume)
+    elif args.campaign:
+        if not is_campaign(args.campaign):
+            raise SystemExit(f"No campaign '{args.campaign}'.")
+        hub.open_campaign(args.campaign, "continue")
 
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(hub))
     server.daemon_threads = True

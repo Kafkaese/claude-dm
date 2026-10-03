@@ -314,8 +314,11 @@ class Engine:
                     "--system-prompt", self.system_prompt or RUNNER_PROMPT, "--no-session-persistence"]
             resume = None
         else:
+            lock = (f"\n- THIS CONVERSATION PLAYS ONLY THE CAMPAIGN '{self.campaign}' (campaigns/{self.campaign}/). Other "
+                    f"campaigns' folders are blocked for you and your subagents; never look into them. Give file "
+                    f"searches a path (campaigns/{self.campaign}/… or library/…).") if self.campaign else ""
             cmd += ["--tools", DM_TOOLS, "--allowedTools", *ALLOWED_TOOLS,
-                    "--append-system-prompt", WRAPPER_PROMPT]
+                    "--append-system-prompt", WRAPPER_PROMPT + lock]
         if self.model:
             cmd += ["--model", self.model]
         if self.effort:
@@ -423,7 +426,7 @@ class Engine:
             return
         tools = list(tel["tools"].values())
         rec = {"ts": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(tel["start"])),
-               "session": self.telemetry_session or self.session_id, "campaign": active_campaign(),
+               "session": self.telemetry_session or self.session_id, "campaign": self.campaign or active_campaign(),
                "kind": ("runner:" if self.role == "runner" else "") + tel["kind"],
                "seconds": round(time.time() - tel["start"], 1), "effort": self.effort,
                "chars_in": tel["chars_in"], "chars_out": tel["chars_out"],
@@ -647,12 +650,46 @@ def active_campaign(explicit: str | None = None) -> str | None:
     return best
 
 
-def list_campaigns() -> list[dict[str, str]]:
-    """All playable campaigns (folders with a campaign.md, not _template) as {slug, title}."""
+def list_campaigns() -> list[dict[str, Any]]:
+    """All playable campaigns (folders with a campaign.md, not _template), most recently played first:
+    {slug, title, status, sessions_played, last_played (YYYY-MM-DD HH:MM or None), session (the
+    conversation to continue, or None)}."""
     root = REPO / "campaigns"
-    return [{"slug": d.name, "title": campaign_title(d.name)}
-            for d in sorted(root.iterdir())
-            if d.is_dir() and not d.name.startswith("_") and (d / "campaign.md").exists()]
+    latest = campaign_sessions()
+    out = []
+    for d in sorted(root.iterdir()):
+        if not (d.is_dir() and is_campaign(d.name)):
+            continue
+        text = (d / "campaign.md").read_text(encoding="utf-8")
+        status = re.search(r"\*\*Status:\*\*\s*([^\n]+)", text)
+        played = re.search(r"\*\*Sessions played:\*\*\s*(\d+)", text)
+        sid, when = latest.get(d.name, (None, None))
+        out.append({"slug": d.name, "title": campaign_title(d.name),
+                    "status": status.group(1).strip() if status else "", "sessions_played": int(played.group(1)) if played else 0,
+                    "last_played": when, "session": sid if sid and transcript_path(sid).exists() else None})
+    out.sort(key=lambda c: c["last_played"] or "", reverse=True)
+    return out
+
+
+def campaign_sessions() -> dict[str, tuple[str, str]]:
+    """For each campaign, its most recent conversation: {slug: (session id, when)}, from
+    .play/sessions.log (the order) and .play/session-campaigns.json (which campaign each one plays)."""
+    try:
+        owner = json.loads(SESSION_CAMPAIGNS.read_text()) if SESSION_CAMPAIGNS.exists() else {}
+    except ValueError:
+        owner = {}
+    log = STATE / "sessions.log"
+    out: dict[str, tuple[str, str]] = {}
+    for line in (log.read_text().splitlines() if log.exists() else []):
+        parts = line.split()
+        if len(parts) >= 3 and owner.get(parts[2]):
+            out[owner[parts[2]]] = (parts[2], f"{parts[0]} {parts[1]}")
+    return out
+
+
+def slugify(name: str) -> str:
+    """A campaign folder name from a title: 'The Rose & Thorn' → 'the-rose-thorn'."""
+    return re.sub(r"[^a-z0-9]+", "-", name.lower().replace("'", "")).strip("-")[:40]
 
 
 def campaign_title(camp: str | None) -> str:

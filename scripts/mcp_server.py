@@ -386,10 +386,13 @@ class Server:
     """The tool dispatcher, with the remembered campaign."""
 
     def __init__(self) -> None:
-        self.campaign: str | None = os.environ.get("CLAUDE_DM_CAMPAIGN") or None   # set by the interface
+        self.locked: str | None = os.environ.get("CLAUDE_DM_CAMPAIGN") or None   # set by the interface
+        self.campaign: str | None = self.locked
 
     def _campaign(self, a: Args) -> str:
         camp = a.pop("campaign", None) or self.campaign
+        if self.locked and camp != self.locked:
+            raise ToolError(f"this session plays only the campaign '{self.locked}': no tools for '{camp}'")
         if not camp:
             raise ToolError("no campaign yet: pass campaign=<slug> (once; it's remembered)")
         if not (combat.PROJECT / "campaigns" / camp).is_dir():

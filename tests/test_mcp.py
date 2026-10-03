@@ -71,3 +71,17 @@ class Calls(CampaignCase):
         ok, text = self.call("dice_roll", campaign=self.slug, rolls=["Test: 1d20+5"])
         self.assertTrue(ok)
         self.assertIn("Test: 1d20+5 →", text)
+
+
+class CampaignLock(CampaignCase):
+    def test_locked_server_refuses_other_campaigns(self) -> None:
+        import os
+        import mcp_server as M
+        os.environ["CLAUDE_DM_CAMPAIGN"] = self.slug
+        try:
+            srv = M.Server()
+        finally:
+            del os.environ["CLAUDE_DM_CAMPAIGN"]
+        self.assertEqual(srv._campaign({}), self.slug)
+        with self.assertRaises(M.ToolError):
+            srv._campaign({"campaign": "some-other-campaign"})

@@ -150,6 +150,26 @@ body.combat #divider { display: block; }
 #log { display: flex; flex-direction: column; gap: 4px; flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-right: 6px; }
 
 .drawer-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); display: none; }
+.picker { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 20; }
+.picker[hidden] { display: none; }
+.pcard { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; width: min(560px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 22px 24px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 12px 36px rgba(0,0,0,.2); }
+.phead { display: flex; justify-content: space-between; align-items: center; }
+.phead h2 { font-family: var(--serif); font-size: 21px; margin: 0; }
+.plist { display: flex; flex-direction: column; gap: 10px; }
+.pitem { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pitem.current { border-color: var(--accent); }
+.pitem .ptitle { font-weight: 600; }
+.pmuted { color: var(--muted); font-size: 13px; margin: 0; }
+.pbtns { display: flex; gap: 8px; }
+.pbtn { border: 1px solid var(--field-border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 7px 12px; font: inherit; font-size: 14px; cursor: pointer; }
+.pbtn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.pbtn:disabled { opacity: .5; cursor: default; }
+.pnew { border-top: 1px solid var(--border); padding-top: 12px; }
+.pnew summary { cursor: pointer; font-weight: 600; }
+.pnew label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); margin-top: 10px; }
+.pnew input, .pnew textarea { font: inherit; font-size: 15px; color: var(--text); background: var(--bg); border: 1px solid var(--field-border); border-radius: 8px; padding: 8px 10px; resize: vertical; }
+.prow { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; gap: 8px; }
+.picker .check { display: flex; gap: 8px; align-items: center; font-size: 13px; }
 .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100%); background: var(--surface); border-left: 1px solid var(--border); padding: 24px 28px; overflow-y: auto; transform: translateX(100%); transition: transform .25s; }
 body.drawer-open .drawer { transform: none; }
 body.drawer-open .drawer-backdrop { display: block; }
@@ -187,11 +207,7 @@ body.drawer-open .drawer-backdrop { display: block; }
     </button>
   </nav>
   <div class="menu" id="menu" role="dialog" aria-label="Settings">
-    <label>Campaign
-      <select id="camp-select"></select>
-    </label>
-    <label class="check"><input type="checkbox" id="camp-end" checked> End the current session first</label>
-    <button type="button" id="camp-switch" disabled>Switch campaign</button>
+    <button type="button" id="camp-open">Campaigns…</button>
     <hr>
     <label>Thinking effort
       <select id="effort"><option>low</option><option>medium</option><option>high</option><option>xhigh</option><option>max</option></select>
@@ -234,6 +250,23 @@ body.drawer-open .drawer-backdrop { display: block; }
   </aside>
 </div>
 
+<div class="picker" id="picker" role="dialog" aria-modal="true" aria-labelledby="picker-title" hidden>
+  <div class="pcard">
+    <div class="phead">
+      <h2 id="picker-title">Choose a campaign</h2>
+      <button class="iconbtn" type="button" id="picker-close" aria-label="Close" hidden>✕</button>
+    </div>
+    <label class="check" id="picker-end-row" hidden><input type="checkbox" id="picker-end" checked> End the current session first (the DM wraps it up; this can take a few minutes)</label>
+    <div id="picker-list" class="plist"><p class="pmuted">Loading…</p></div>
+    <details class="pnew" id="picker-new">
+      <summary>Start a new campaign</summary>
+      <label>Name <input type="text" id="new-name" maxlength="60" placeholder="e.g. The Salt Road" autocomplete="off"></label>
+      <label>Pitch (optional) <textarea id="new-pitch" rows="2" placeholder="a sentence or two: setting, tone, the kind of game"></textarea></label>
+      <div class="prow"><span class="pmuted" id="new-slug"></span><button type="button" class="pbtn primary" id="new-create" disabled>Create</button></div>
+    </details>
+    <p class="pmuted" id="picker-error" role="alert"></p>
+  </div>
+</div>
 <div class="drawer-backdrop" id="backdrop"></div>
 <div class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
   <div class="dhead"><h2 id="drawer-title">Character</h2><button class="iconbtn" type="button" id="drawer-close" aria-label="Close"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
@@ -698,7 +731,8 @@ function handle(ev) {
       chat.innerHTML = ""; current = null;
       setTitle(ev.title); currentCampaign = ev.campaign;
       ev.history.forEach(renderItem);
-      if (!ev.history.length) add("system", "New session. Type <strong>/start-session &lt;campaign&gt;</strong> or <strong>/new-campaign</strong> to begin.");
+      if (ev.picker) openPicker(false);
+      else closePicker();
       setBusy(ev.busy); setStatus(ev.status, ev.status_since); setCombat(ev.combat);
       setSettings(ev.effort, ev.debug);
       scroller.scrollTop = scroller.scrollHeight;
@@ -767,31 +801,59 @@ function toggleMenu(open) { menu.classList.toggle("open", open); settingsBtn.set
 settingsBtn.addEventListener("click", () => {
   const open = !menu.classList.contains("open");
   toggleMenu(open);
-  if (open) loadCampaigns();
 });
 
-// ---------- campaign switching ----------
-const campSelect = document.getElementById("camp-select"), campSwitch = document.getElementById("camp-switch");
-async function loadCampaigns() {
+// ---------- campaign picker ----------
+const picker = document.getElementById("picker"), pickerList = document.getElementById("picker-list");
+const newName = document.getElementById("new-name"), newCreate = document.getElementById("new-create");
+let pickerCanClose = false;
+function fmtWhen(w) { return w ? `last played ${w.slice(0, 10)}` : "not played here yet"; }
+async function openPicker(canClose) {
+  pickerCanClose = canClose;
+  document.getElementById("picker-close").hidden = !canClose;
+  document.getElementById("picker-end-row").hidden = !currentCampaign;
+  document.getElementById("picker-error").textContent = "";
+  picker.hidden = false;
   const r = await fetch("/campaigns");
-  if (!r.ok) return;
+  if (!r.ok) { pickerList.innerHTML = '<p class="pmuted">Couldn\'t load the campaigns.</p>'; return; }
   const data = await r.json();
-  campSelect.innerHTML = data.campaigns.map(c =>
-    `<option value="${esc(c.slug)}"${c.slug === data.current ? " selected" : ""}>${esc(c.title)}</option>`).join("");
-  currentCampaign = data.current;
-  updateSwitch();
+  if (!data.campaigns.length) {
+    pickerList.innerHTML = '<p class="pmuted">No campaigns yet: start one below.</p>';
+    document.getElementById("picker-new").open = true;
+    return;
+  }
+  pickerList.innerHTML = data.campaigns.map(c => {
+    const cur = c.slug === data.current;
+    const meta = [c.status, `${c.sessions_played} session${c.sessions_played === 1 ? "" : "s"} played`, fmtWhen(c.last_played)].filter(Boolean).join(" · ");
+    const cont = c.session && !cur ? `<button type="button" class="pbtn primary" data-open="${esc(c.slug)}" data-mode="continue">Continue</button>` : "";
+    const fresh = `<button type="button" class="pbtn${c.session ? "" : " primary"}" data-open="${esc(c.slug)}" data-mode="fresh">${c.sessions_played || c.session ? "Next session" : "Start"}</button>`;
+    return `<div class="pitem${cur ? " current" : ""}"><div><div class="ptitle">${esc(c.title)}${cur ? " (playing)" : ""}</div><p class="pmuted">${esc(meta)}</p></div>` +
+           `<div class="pbtns">${cont}${fresh}</div></div>`;
+  }).join("");
 }
-function updateSwitch() { campSwitch.disabled = busy || !campSelect.value || campSelect.value === currentCampaign; }
-campSelect.addEventListener("change", updateSwitch);
-campSwitch.addEventListener("click", async () => {
-  const target = campSelect.options[campSelect.selectedIndex].text;
-  const endFirst = document.getElementById("camp-end").checked;
-  if (!confirm(`Switch to ${target}?` + (endFirst ? " The DM wraps up the current session first (this can take a few minutes)." : " The current session is not ended."))) return;
-  toggleMenu(false);
-  const r = await fetch("/switch", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ campaign: campSelect.value, end_current: endFirst }) });
-  if (r.status === 409) add("system", "The DM is still busy. Try switching again when the reply is done.");
+function closePicker() { picker.hidden = true; }
+async function openCampaign(body) {
+  if (busy) { document.getElementById("picker-error").textContent = "The DM is still busy: try again when the reply is done."; return; }
+  body.end_current = !document.getElementById("picker-end-row").hidden && document.getElementById("picker-end").checked;
+  const r = await fetch("/open", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  if (r.status === 202) { closePicker(); return; }
+  const data = await r.json().catch(() => ({}));
+  document.getElementById("picker-error").textContent = data.message || "That didn't work.";
+}
+pickerList.addEventListener("click", e => {
+  const b = e.target.closest("[data-open]");
+  if (b) openCampaign({ campaign: b.dataset.open, mode: b.dataset.mode });
 });
+newName.addEventListener("input", () => {
+  const slug = newName.value.toLowerCase().replace(/'/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
+  document.getElementById("new-slug").textContent = slug ? `folder: campaigns/${slug}` : "";
+  newCreate.disabled = !slug;
+});
+newCreate.addEventListener("click", () => openCampaign({ mode: "new", name: newName.value.trim(), pitch: document.getElementById("new-pitch").value.trim() }));
+document.getElementById("picker-close").addEventListener("click", closePicker);
+document.addEventListener("keydown", e => { if (e.key === "Escape" && pickerCanClose) closePicker(); });
+document.getElementById("camp-open").addEventListener("click", () => { toggleMenu(false); openPicker(true); });
+
 function setSettings(effort, debug) {
   if (effort) document.getElementById("effort").value = effort;
   document.getElementById("debug-btn").textContent = `Debug: ${debug ? "on" : "off"}`;

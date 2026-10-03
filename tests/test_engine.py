@@ -167,16 +167,19 @@ class CampaignTracking(CampaignCase):
         hist = [{"role": "player", "text": f"/start-session {real}"}, {"role": "dm", "text": "Welcome back."}]
         self.assertEqual(E.campaign_for_session("unknown", hist), real)
 
-    def test_web_hub_pins_the_campaign(self) -> None:
+    def test_web_hub_needs_a_chosen_campaign(self) -> None:
         import web
         real = next(p.name for p in (E.REPO / "campaigns").iterdir() if E.is_campaign(p.name))
         hub = web.Hub(None)
-        hub.engine = type("FakeEngine", (), {"session_id": "sid-3"})()
-        hub.follow_command(f"/start-session {real}")
-        hub._pin_campaign()
-        self.run_cmd("new", "--blank", "5x5")                 # a test campaign gets touched afterwards…
-        self.assertEqual(hub.campaign(), real)                # …and the page stays with the real one
-        self.assertEqual(E.campaign_for_session("sid-3"), real)
+        hub.engine = E.Engine(lambda ev: None)
+        self.assertTrue(hub.hello()["picker"])
+        self.assertEqual(hub.send("I look around")[0], 409)            # nothing before a campaign is chosen
+        self.assertEqual(hub.open_campaign(real, "new", name=real)[0], 409)   # that folder exists
+        self.assertEqual(hub.open_campaign("no-such-campaign", "continue")[0], 404)
+        hub.campaign_arg = real
+        self.assertFalse(hub.hello()["picker"])
+        self.assertEqual(hub.send("/new-campaign")[0], 409)            # switching goes through the picker
+        self.assertEqual(hub.send("/start-session some-other")[0], 409)
 
 
 class CombatVisibility(CampaignCase):
