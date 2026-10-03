@@ -1180,3 +1180,30 @@ class TurnMarks(CampaignCase):
         self.run_cmd("attack", "g1", "h1", "--with", "spear", "--override")   # a hidden one: not drawn
         self.assertTrue(self.tok("h1")["hidden"])
         self.assertIsNone(self.marks())
+
+
+class NoIdleTurns(CampaignCase):
+    """Vantry R4: the fight is all but won; the last guard is in melee with a hurt ally."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write("spells/cure-light-wounds.md", '```spell-effect\n{"target": "one", "range": "touch", "heal": "1d8+{min(cl,5)}"}\n```\n')
+        cleric = dict(GOBLIN, speed=20, attacks={"fire bolt": {"bonus": 1, "damage": "1d6", "type": "ranged", "range": 30, "touch": True}},
+                      spellcasting=[{"class": "cleric", "cl": 1, "type": "prepared", "dc_base": 13, "concentration": 4,
+                                     "slots": {"1": 1}, "spells": {"1": ["cure light wounds"]}}])
+        guard = dict(GOBLIN, attacks={"rapier": {"bonus": 5, "damage": "1d6+1", "type": "melee"}})
+        self.new(blank="16x10")
+        self.add("s1", "Selvana", "M4", cleric, side="ally", init=20)
+        self.add("b1", "Brenna", "F7", dict(GOBLIN, max_hp=13, hp=6), "ally", 10)
+        self.add("k1", "Kovan", "L5", GOBLIN, side="ally", init=9)
+        self.add("C", "Ilvan", "C6", PC_PROFILE, side="pc", init=8)
+        self.add("g1", "Guard", "G6", guard, init=5)
+        self.run_cmd("next")
+
+    def test_no_total_defense_when_safe_and_winning(self) -> None:
+        plans = self.run_cmd("options", "s1").split("Details:")[0]
+        first = plans.split("  1. ", 1)[1].splitlines()[0]
+        self.assertNotIn("total defense", first)
+        self.assertNotIn("withdraw", first)
+        self.assertIn("a wasted turn", plans)                    # holding back is marked as such
+        self.assertIn("toward b1", plans)                        # get to the hurt ally to heal her next round

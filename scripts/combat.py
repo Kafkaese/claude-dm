@@ -2973,19 +2973,31 @@ def _weapons(prof: dict[str, Any], kind: str, full: bool) -> list[tuple[str, dic
 PC_GUESS = 3.0   # a PC's expected damage per round when its profile lists no attacks (hits half the time for ~6)
 
 
+def _can_go_after(st: State, f: Token, o: Token) -> bool:
+    """Whether foe `f` could attack `o` next round: reach it with a move, or see it to shoot."""
+    if feet_between(f, o) - (f.get("reach") or 5) <= (f.get("speed") or 30):
+        return True
+    return V.concealment(st, V.presumed(f, o), o)[0] < 50
+
+
 def _incoming(st: State, c: Token, sq: Square, memo: dict[Square, float]) -> float:
-    """Expected damage the enemies can deal `c` at sq next round (each enemy's best single attack,
-    if it can reach it or see it there)."""
+    """Expected damage the enemies can deal `c` at sq next round: each enemy's best single attack, if
+    it can reach it or see it there, shared out over everyone on c's side that enemy could go after
+    (one guard facing three of them hits c a third of the time)."""
     if sq in memo:
         return memo[sq]
     total = 0.0
+    friendly = c["side"] in FRIENDLY
+    side = [o for o in st["tokens"] if o is not c and not o.get("removed") and o["hp"] > 0
+            and (o["side"] in FRIENDLY) == friendly]
     with _placed(c, sq):
         for f in _foes(st, c):
             prof = f.get("profile") or {}
             best = 0.0
+            share = 1 / (1 + sum(1 for o in side if _can_go_after(st, f, o)))
             if not prof.get("attacks"):   # a PC sheet: guess, nearer is worse
                 near = feet_between(f, c) - 5 <= (f.get("speed") or 30)
-                total += PC_GUESS if near else (PC_GUESS / 2 if V.concealment(st, V.presumed(f, c), c)[0] < 50 else 0.0)
+                total += share * (PC_GUESS if near else (PC_GUESS / 2 if V.concealment(st, V.presumed(f, c), c)[0] < 50 else 0.0))
                 continue
             mel = _weapons(prof, "melee", False)
             if mel and feet_between(f, c) - (f.get("reach") or 5) <= (f.get("speed") or 30):
@@ -2996,7 +3008,7 @@ def _incoming(st: State, c: Token, sq: Square, memo: dict[Square, float]) -> flo
             if rng and V.concealment(st, V.presumed(f, c), c)[0] < 50:
                 ev, _ = _attack_ev(st, f, c, rng, "ranged")
                 best = max(best, ev)
-            total += best
+            total += share * best
     memo[sq] = total
     return total
 
@@ -3109,14 +3121,15 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
         two, routes2 = one, routes   # "advance" and "withdraw" become single moves
 
     def add(kind: str, deal: float, support: float, sq: Square, provoked: list[str], text: str,
-            extra: str = "", exposure: float = 1.0) -> None:
+            extra: str = "", exposure: float = 1.0, idle: float = 0.0) -> None:
         risk_aoo = _aoo_risk(st, c, provoked)
         risk_next = _incoming(st, c, sq, memo) * exposure
         w = weights.get(kind, 0.0)
-        score = deal + support - risk_aoo - 0.5 * risk_next + w
+        score = deal + support - risk_aoo - 0.5 * risk_next + w - idle
         parts = [f"deals ~{deal:.1f}" if deal else "", f"support ~{support:.1f}" if support else "",
                  f"AoO risk ~{risk_aoo:.1f} ({', '.join(provoked)})" if provoked else "",
-                 f"takes ~{risk_next:.1f} next round there", f"{kind} {w:+g}" if w else ""]
+                 f"takes ~{risk_next:.1f} next round there", f"{kind} {w:+g}" if w else "",
+                 f"a wasted turn −{idle:g}" if idle else ""]
         plans.append((score, f"[{score:+.1f}] {text}" + (f" {extra}" if extra else "") + " — " + ", ".join(p for p in parts if p)))
 
     def where(sq: Square, feet: int) -> str:
@@ -3300,7 +3313,22 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
             for o in sorted(wounded, key=lambda o: -heal_value(o))[:2]:
                 rng = max(data.get("range") or 0, 5)
                 spots = [q for q in one if 5 * min(R.sq_dist(q, cc) for cc in cells(o)) <= rng]
-                if not spots:
+                if not spots:   # out of reach this turn: get there now, heal next round
+                    if move_only or not (two and routes2):
+                        continue
+                    later = [q for q in two if 5 * min(R.sq_dist(q, cc) for cc in cells(o)) <= rng]
+                    if not later:
+                        later = [min(two, key=lambda q: (min(R.sq_dist(q, cc) for cc in cells(o)), two[q]))]
+                    q = min(later, key=lambda q: (_incoming(st, c, q, memo), two[q]))
+                    if q == start:
+                        continue
+                    prov = path_provokers(st, c, routes2.get(q, [start, q]), {})
+                    state_ = "dying" if o["hp"] < 0 else f"{o['hp']}/{o.get('max_hp')} HP"
+                    reached = 5 * min(R.sq_dist(q, cc) for cc in cells(o)) <= rng
+                    add("heal", 0, 0.5 * heal_value(o) if reached else 0.25 * heal_value(o), q, prov,
+                        f"{'move' if q in one else 'double move'} {two[q]} ft to {fmt_pos(*q)}, toward {o['token']} ({state_}) "
+                        f"to {label_.split(' ', 1)[0]} {label_.split(' ', 1)[1]} next round",
+                        "(counted at half)" if reached else "(still not there: counted at a quarter)")
                     continue
                 q = min(spots, key=lambda q: (len([] if q == start else provokers(q)), _incoming(st, c, q, memo), one[q]))
                 keep, prov, note = casting(q, lvl, conc, provokes)
@@ -3368,15 +3396,24 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                 f"{where(q, one.get(q, 0))}{text}{note}")
 
     # --- defense: total defense here or on the safest square in one move (+4 AC: ~20% fewer hits) ---
+    # Holding back is a wasted turn unless it's in danger, its morale broke, or it's afraid: total
+    # defense where no enemy can reach it defends against nothing.
+    danger = _incoming(st, c, start, memo) >= 0.25 * max(1, c["hp"]) or bool(_threatened_by(st, c))
+    holding_ok = danger or fear or "MORALE BREAKS" in wnote
+    IDLE = 1.5
+
+    def defend_idle(sq: Square) -> float:
+        return 0.0 if holding_ok and _incoming(st, c, sq, memo) > 0 else IDLE
+
     if move_only:
         add("defense", 0, 0, start, [], "stay where it is")
     elif not fear:
-        add("defense", 0, 0, start, [], "stay, total defense", exposure=0.8)
+        add("defense", 0, 0, start, [], "stay, total defense", exposure=0.8, idle=defend_idle(start))
     safest = min(one, key=lambda q: (_incoming(st, c, q, memo), one[q]))
     if safest != start:
         add("defense", 0, 0, safest, provokers(safest), f"{where(safest, one[safest])}"
             + ("to the safest square in one move" if move_only else "total defense (safest square in one move)"),
-            exposure=1.0 if move_only else 0.8)
+            exposure=1.0 if move_only else 0.8, idle=0.0 if move_only else defend_idle(safest))
     # --- retreat: withdraw (full-round double move; leaving the first square doesn't provoke) ---
     if fear and two and routes2 and foes:   # a run (×4 speed) would go further; the withdraw is the safe minimum
         head.append("  (it may also run: `move … --as run`, four times its speed, away from the source)")
@@ -3392,7 +3429,8 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
             if move_only:
                 prov = provokers(dest)
             add("retreat", 0, 0, dest, prov, (f"move {two[dest]} ft away to " if move_only else f"withdraw {two[dest]} ft to ")
-                + fmt_pos(*dest) + (" (out of their sight)" if out_of_sight else "") + ("" if move_only else " (full-round)"))
+                + fmt_pos(*dest) + (" (out of their sight)" if out_of_sight else "") + ("" if move_only else " (full-round)"),
+                idle=0.0 if holding_ok else IDLE)
     plans.sort(key=lambda p: -p[0])
     return head + [f"  {i + 1}. {text}" for i, (_s, text) in enumerate(plans[:limit])]
 
