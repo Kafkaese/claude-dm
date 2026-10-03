@@ -147,7 +147,8 @@ RECAP_PREFIX = "[Interface recap"
 
 
 COMPACT_PROMPT = ("/compact Keep what running this table needs: the campaign and session number, the current scene and "
-                  "situation, a fight in progress (round, whose turn; the combat tools have the details), what the player's "
+                  "situation, a fight in progress (round, whose turn; the combat tools have the details), of a finished fight only "
+                  "its outcome (who fell or fled, injuries, loot, prisoners), what the player's "
                   "character did and said recently and what they're trying to do, NPCs met and what was said, rulings, "
                   "corrections and table preferences from this conversation, open threads touched this session, and anything "
                   "promised to the player. Facts from dm/ files can be dropped: they're in the files (and dm/screen-digest.md).")
@@ -297,14 +298,17 @@ class Engine:
 
     QUIET_NOTICE = 60   # seconds without any event before the frontend hears "still waiting"
     last_event = 0.0
-    COMPACT_AT = 140_000   # context tokens per call above which the conversation gets compacted between turns
+    COMPACT_AT = 120_000   # context tokens per call above which the conversation gets compacted between turns
+    COMPACT_AFTER_FIGHT_AT = 100_000   # lower right after a fight: its tool calls and logs are dead weight then
     context_tokens = 0
 
-    def compact_if_large(self) -> bool:
-        """Between turns: if the conversation has grown past COMPACT_AT tokens of context, compact it
-        (`/compact`, keeping what the table needs). Every later call then reads far less. Returns
-        whether it compacted. Its text is never shown."""
-        if self.role != "dm" or self.context_tokens < self.COMPACT_AT or not self.alive() or self.busy:
+    def compact_if_large(self, after_fight: bool = False) -> bool:
+        """Between turns: if the conversation has grown past COMPACT_AT tokens of context (or
+        COMPACT_AFTER_FIGHT_AT when a fight just ended, a natural scene break), compact it (`/compact`,
+        keeping what the table needs). Every later call then reads far less. Returns whether it
+        compacted. Its text is never shown."""
+        limit = self.COMPACT_AFTER_FIGHT_AT if after_fight else self.COMPACT_AT
+        if self.role != "dm" or self.context_tokens < limit or not self.alive() or self.busy:
             return False
         self.emit(type="status", label="tidying the DM's notes")
         self.hold()

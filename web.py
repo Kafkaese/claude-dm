@@ -60,6 +60,7 @@ class Hub:
         self.worker: threading.Thread | None = None
         self.shown_campaign: str | None = None     # the campaign the page's title shows
         self.closing = False                       # /end-session asked the stars & wishes; the next message answers
+        self.fight_ended = False                   # a fight ended during this turn (compaction threshold)
 
     @property
     def eng(self) -> Engine:
@@ -163,6 +164,7 @@ class Hub:
                 final = last_combat_events(camp)
                 self.combat = {"active": False}
                 self.history.append({"role": "log", "title": "The fight is over", "events": final})
+                self.fight_ended = True   # a scene break: compact sooner after this turn
                 self.publish({"type": "combat", "active": False, "final_events": final})
 
     # --- player input ---
@@ -275,7 +277,7 @@ class Hub:
         if ok and self.eng.combat_engaged and step_due(self.campaign(), text):
             self._step()
         self.end_fight_if_over()
-        self.eng.compact_if_large()   # past ~140k tokens a call: compact between turns
+        self._compact()
         self._pin_campaign()
         self.refresh_campaign()
         self.publish({"type": "busy", "busy": False})
@@ -284,8 +286,13 @@ class Hub:
         """Worker thread for a go signal ("next", "end turn"): one engine-driven combat step."""
         self._step()
         self.end_fight_if_over()
-        self.eng.compact_if_large()   # past ~140k tokens a call: compact between turns
+        self._compact()
         self.publish({"type": "busy", "busy": False})
+
+    def _compact(self) -> None:
+        """Between turns: compact the conversation when it's large, sooner right after a fight."""
+        after_fight, self.fight_ended = self.fight_ended, False
+        self.eng.compact_if_large(after_fight)
 
     def _with_recap(self, text: str) -> str:
         """The player's message for the main DM, with what the combat runner played since its last

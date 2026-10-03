@@ -514,6 +514,25 @@ class Compaction(CampaignCase):
         self.assertIsNone(E.player_part(sent[0]))                    # never shown as the player's message
         self.assertEqual(E.exchange_kind(sent[0]), "command:compact")
 
+    def test_sooner_after_a_fight(self) -> None:
+        import web
+        eng = E.Engine(lambda ev: None)
+        eng.alive = lambda: True                                    # type: ignore[method-assign]
+        eng.send = lambda text: True                                # type: ignore[method-assign]
+        eng.context_tokens = 110_000
+        self.assertFalse(eng.compact_if_large())                    # below the general threshold
+        self.assertTrue(eng.compact_if_large(after_fight=True))     # a scene break: compact now
+        hub = web.Hub(self.slug)
+        hub.engine = eng
+        calls: list[bool] = []
+        eng.compact_if_large = lambda after_fight=False: calls.append(after_fight) or False   # type: ignore[method-assign]
+        hub.combat = {"active": True}
+        hub.fight = lambda: None                                    # type: ignore[method-assign]  # the fight just ended
+        hub.refresh_combat()
+        hub._compact()
+        hub._compact()
+        self.assertEqual(calls, [True, False])                      # only the turn the fight ended in
+
 
 class ClosingSession(CampaignCase):
     """/end-session: the interface asks the stars & wishes, the playing DM flushes its live log, and
