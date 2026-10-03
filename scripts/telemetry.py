@@ -7,7 +7,7 @@
   python3 scripts/telemetry.py --since 2026-10-01
   python3 scripts/telemetry.py --details       also print the raw error lines (may contain spoilers)
 
-The engine (web.py / play.py) writes one line per exchange: what kind it was (a player message,
+The engine (web.py) writes one line per exchange: what kind it was (a player message,
 an engine-driven combat step, a slash command), how long it took, the model turns, tokens and
 cost, and every tool call with its errors. This summary only prints aggregates, and masks token
 ids, squares and numbers in error messages, so it's spoiler-free unless --details is given.
@@ -104,7 +104,7 @@ def exchange_costs(recs: list[dict[str, Any]]) -> list[float]:
 def summarize(recs: list[dict[str, Any]], details: bool) -> str:
     """The report text."""
     if not recs:
-        return "No telemetry recorded yet (it's written by web.py / play.py)."
+        return "No telemetry recorded yet (it's written by web.py)."
     out = []
     sessions = {r.get("session") for r in recs}
     out.append(f"{len(recs)} exchanges, {len(sessions)} session(s), {recs[0]['ts']} → {recs[-1]['ts']}")

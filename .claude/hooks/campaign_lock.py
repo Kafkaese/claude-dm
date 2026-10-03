@@ -3,7 +3,7 @@
 tools and shell commands may only touch that campaign's folder, campaigns/_template and the
 shared library, never another campaign's files. Subagents inherit the lock.
 
-Without the variable (e.g. working on the repo in the Claude Code UI) nothing is checked.
+Without the variable (e.g. working on the repo itself) nothing is checked.
 A guard rail against crossing campaigns by mistake, not a sandbox: shell commands are checked by
 the paths they name. Exit code 2 blocks the call and tells Claude why.
 """

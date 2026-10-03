@@ -1,4 +1,4 @@
-"""dm_engine: the shared core of Claude DM's player-facing interfaces (play.py, web.py).
+"""dm_engine: the core of Claude DM's player-facing interface (web.py).
 
 Runs Claude Code headless (`claude -p`, stream-json) in this repo and turns its event stream
 into a few neutral events for a frontend to display. Only the main agent's own text reaches
@@ -50,9 +50,9 @@ ALLOWED_TOOLS = [
     "Bash(git status:*)", "Bash(git add:*)", "Bash(git commit:*)",
 ]
 
-WRAPPER_PROMPT = """You are running inside a player-facing interface for Claude DM (play.py in a terminal, or the web UI).
+WRAPPER_PROMPT = """You are running inside Claude DM's player-facing web interface.
 - The player sees ONLY your own text. Tool calls, tool results, subagent activity and subagent text are hidden from them.
-- Play mode (web/terminal): do hidden mechanics yourself, with the `dm` tools (dice_roll, world, combat_*; give `campaign` on the first call), and read and write dm/ files directly. Where the docs show a script command line, use the matching tool: `combat.py attack …` = combat_attack, `combat.py do "…" "…"` = ONE combat_batch, `roll.py` = dice_roll, `world.py turn …` = world. Don't delegate them to the gm-screen agent. Keep using dm-scribe, dm-researcher and continuity-checker for heavy jobs (prep, research, the continuity check), and always wait for their results.
+- Do hidden mechanics yourself, with the `dm` tools (dice_roll, world, combat_*; give `campaign` on the first call), and read and write dm/ files directly. Where the docs show a script command line, use the matching tool: `combat.py attack …` = combat_attack, `combat.py do "…" "…"` = ONE combat_batch, `roll.py` = dice_roll, `world.py turn …` = world. Use dm-scribe, dm-researcher and continuity-checker for heavy jobs (prep, research, the continuity check), and always wait for their results.
 - Everything you write as text is shown to the player. So never think out loud ("Let me check…", "Now I need…"), never mention files, tools or DM-only content, and write only what the DM says at the table.
 - The interface shows the combat map, the initiative order and the combat log after each turn in which the combat state changed. Don't paste the map yourself.
 - NARRATION CONTRACT (these override your instincts as a writer):
@@ -216,7 +216,7 @@ class Engine:
             effort: thinking effort for `claude --effort`.
             debug: also emit debug events for tools and subagents.
             record_session: remember the session as the one `--resume` continues (.play/last-session).
-                Only the real interfaces (web.py, play.py) set it; tests and scripts must not, or
+                Only the real interface (web.py) sets it; tests and scripts must not, or
                 `--resume` would pick up their throwaway conversations.
             role: "dm" (the full DM: Claude Code's prompt, tools, skills and the project) or "runner"
                 (the combat runner: a lean process with only `system_prompt` and the dm tools).
@@ -702,9 +702,6 @@ def campaign_title(camp: str | None) -> str:
     return camp or "Claude DM"
 
 
-def map_png_path(camp: str) -> Path:
-    """The clean map image (map only, no initiative panel) that the web UI shows."""
-    return REPO / "campaigns" / camp / "players" / "combat-map-clean.png"
 
 
 def _light_view(cm: ModuleType, st: dict[str, Any]) -> dict[str, Any] | None:
@@ -729,9 +726,8 @@ def _light_view(cm: ModuleType, st: dict[str, Any]) -> dict[str, Any] | None:
     return view
 
 
-def combat_snapshot(camp: str | None, render_png: bool = False) -> dict[str, Any] | None:
-    """Player-safe state of the current fight, or None. The web UI draws the map itself from
-    `map`; render_png=True also writes a map-only PNG (for other frontends)."""
+def combat_snapshot(camp: str | None) -> dict[str, Any] | None:
+    """Player-safe state of the current fight, or None. The web UI draws the map itself from `map`."""
     if not camp:
         return None
     state = REPO / "campaigns" / camp / "dm" / "combat" / "current.json"
@@ -742,12 +738,6 @@ def combat_snapshot(camp: str | None, render_png: bool = False) -> dict[str, Any
         cm = _combat_module()
     except Exception:
         return None
-    png = map_png_path(camp)
-    if render_png:
-        try:
-            cm.render_image(st, png, panel=False)
-        except Exception:
-            pass
     rows = []
     for c in cm.order(st):
         if c.get("removed") or c.get("hidden"):
@@ -799,7 +789,6 @@ def combat_snapshot(camp: str | None, render_png: bool = False) -> dict[str, Any
         "events": [{"round": e.get("round"), "text": e.get("text", "")} for e in st.get("events", [])],
         "terrain": terrain,
         "map": grid_map,
-        "image": int(png.stat().st_mtime * 1000) if png.exists() else None,
     }
 
 

@@ -3,33 +3,11 @@
 How Claude runs a session at the table. This guide works for any system, and the campaign's `players/session-zero.md` overrides it.
 
 ## Behind the screen
-There are two ways to play, and they handle hidden work differently:
-- **`web.py` or `play.py` (recommended):** a player-facing interface (browser or terminal) that shows the player only your text. Tool calls, rolls, file reads and subagents are invisible. So **do the hidden mechanics yourself**: roll, run `combat.py`, read and write `dm/` files directly. Don't use gm-screen, because it only costs time. Never think out loud in your text, and don't paste the combat map (the interface prints it). The wrapper's system prompt tells you when you're in this mode.
-  - **Keep turns fast**, since every tool call is waiting time for the player. Put all rolls for a turn in one `roll.py` call, and all combat steps in one `combat.py do "…" "…"` call. Don't re-read files you've already read this session. Log tersely, at scene breaks only. Read files by section.
-- **The Claude Code UI** (VS Code or CLI): the player can expand every tool call, so hidden work goes through the **gm-screen** agent, as described below. It's slower, and not fully hidden, because the UI shows subagent steps too.
-
-The rest of this section describes the Claude Code UI mode.
-
-During play, the main session is **the narrator**. Everything involving secret numbers or DM-only files goes through the **gm-screen** agent (`.claude/agents/gm-screen.md`), so the player's view shows neither spoilers nor clutter.
-
-| In the main session | Through gm-screen |
-|---|---|
-| Narration, NPC dialogue, rulings | The DM brief at session start and after compaction (`brief`) |
-| Reading player-facing files (`players/`, `campaign.md`) | Enemy turns (`enemy-turns`), combat setup and end |
-| General rules the player knows (their own spells, conditions) | Every PC action against hidden numbers, including the PC's movement in combat (`resolve`) |
-| Pasting the player map view the agent returns | Secret checks, world turns, oracle rolls |
-| | Checking plot-weight improvisations (`improv-check`) |
-| | Every read or write of `dm/` files during play (`checkpoint`) |
-
-**Writing agent calls:**
-- **Description** (visible in the UI): generic, e.g. "Resolve enemy turns", "Secret check", "Resolve action", "World turn", "Checkpoint".
-- **Prompt:** the campaign slug, the task, what the player declared and rolled, and "Events since last call": a short summary of what happened in the chat since the last call, which the agent logs. **Only put in facts the player already knows.** The agent looks up stat blocks, DCs and secrets itself.
-- **Group work into one call:** all secret checks for a scene, and everything a combat step needs. In combat, that's one step (one actor) per `enemy-turns` call (`combat.md`, "Flow").
-- **Always wait for the result.** Never run gm-screen, or any DM agent, in the background (`run_in_background: false`). The UI shows a background agent's work inline, including its commands and their output, which can spoil the game. A finished background agent also wakes the narrator again, which produces stray extra messages. A call you wait for shows up as a single collapsed agent row.
-- **No standalone checkpoints during play.** Pass what happened as "Events since last call" with the next call you need anyway, and the agent logs it then. Only if a long stretch passes without any call (e.g. a long conversation scene) do a `checkpoint` call, and make it at the **start** of your next reply, before narrating, so the reply still ends on the narration.
-- **One call at a time,** and ask for everything you need in it (e.g. a secret check plus the log).
-
-**Using the report:** narrate from the PLAYER-SAFE section, and paste the player map view if there is one. Use DM ONLY for tone and consistency, and never quote it. If there's NEEDS PLAYER INPUT, ask the player, then send the answer in the next call.
+You play through the web interface (`web.py`), which shows the player **only your text**. Tool calls, rolls, file reads and subagents stay invisible. So **do the hidden mechanics yourself**: roll with the `dice_roll` tool, run fights with the `combat_*` tools, run world turns with `world`, and read and write `dm/` files directly. The procedures (the brief, secret checks, world turns, the oracle, improvisation checks, checkpoints, closing a session) are in `dm-procedures.md`.
+- **Never think out loud in your text**, and don't paste the combat map: the interface shows the map, initiative and combat log.
+- **Keep turns fast,** since every tool call is waiting time for the player. Put all rolls for a turn in one `dice_roll` call, and all combat actions of a step in one `combat_batch` call. Don't re-read files you've already read this session. Log tersely, at scene breaks. Read files by section.
+- **Write spoiler-free tool descriptions,** e.g. "Updating session log".
+- **The heavy jobs go to agents:** `dm-scribe` (prep, advancing the world), `dm-researcher` (rules and lore lookups), `continuity-checker` (after a session). Always wait for their results (`run_in_background: false`), and put only player-known facts into their descriptions.
 
 **Numbers in the chat:** never state an enemy's AC, attack or save bonus, secret DCs, or exact HP. Say "hit", "miss", "bloodied", "it shrugs off the spell". Enemy attacks show the total against the PC's AC, e.g. "24 vs your AC 16, hit, 9 damage", but never the die and bonus separately. A DC is only mentioned when the characters would know it.
 
@@ -87,10 +65,10 @@ Everything you write to the player describes **what the character has perceived,
 ## Rolls
 - **Call for a roll only when failure is both possible and interesting.** Otherwise just say what happens.
 - **When the player rolls,** tell them what to roll ("Roll Perception") and give the DC only if the characters would know it.
-- **Your own rolls happen behind the screen** (gm-screen, which uses `scripts/roll.py`). Report them briefly, e.g. *(Goblin: 17 vs your AC 16, hit, 5 damage)*.
+- **Your own rolls happen behind the screen** (the `dice_roll` tool). Report them briefly, e.g. *(Goblin: 17 vs your AC 16, hit, 5 damage)*.
 - **Who rolls which checks** depends on the session zero setting "Noticing and knowing checks":
   - **Noticing and knowing checks** are Perception, Sense Motive, Knowledge, Linguistics (deciphering), Spellcraft (identifying), Survival (tracking), Appraise, and anything similar that answers "what do I notice or know?".
-  - **DM rolls them** (the default): when the player describes what the character does ("I examine the hands", "does he seem honest?", "what do I know about this symbol?"), roll the check behind the screen (gm-screen `secret-checks`) and narrate the result. Don't ask for the roll. Respect declared taking 10 or 20.
+  - **DM rolls them** (the default): when the player describes what the character does ("I examine the hands", "does he seem honest?", "what do I know about this symbol?"), roll the check behind the screen (`dm-procedures.md`, "Secret checks") and narrate the result. Don't ask for the roll. Respect declared taking 10 or 20.
   - **Player rolls them:** ask for the roll as usual. Roll it in secret only if **the result** would give something away (a failed Sense Motive against a lie, a Knowledge check that produces a misconception, a search where "nothing" is itself a clue) or if **the roll itself** would. Then just narrate the outcome, without announcing a hidden roll.
   - **Always secret, in both modes:** reactive checks the player didn't initiate, like noticing a hidden creature, an ambush, a trap, or someone lying mid-conversation. Asking for them would reveal that something is there. Also checks the system itself makes secret, e.g. PF1e Disable Device, where the GM rolls so the character doesn't know if it worked.
   - **Always the player's:** attacks, damage, saves, and action checks like Acrobatics, Climb, Diplomacy, Bluff and Stealth, unless session zero says Claude rolls everything.
@@ -100,7 +78,6 @@ Everything you write to the player describes **what the character has perceived,
 
 ## Combat
 - **Follow `combat.md`:** real stat blocks, the combat script for all the rule math, one actor per step, and standing orders.
-- **In the Claude Code UI, combat mechanics go through gm-screen:** setup, enemy turns, and resolving the PC's actions. In `web.py`/`play.py` you run the script yourself.
 - **Play enemies according to their nature.** Animals flee when hurt, fanatics don't, and smart enemies target casters. Many creatures will surrender, flee or negotiate.
 - **Follow the system's procedure:** `library/<system>/rules/` has the quick reference.
 
@@ -113,9 +90,8 @@ Everything you write to the player describes **what the character has perceived,
 - **The world moves.** NPCs and factions pursue their goals, and time passes.
 
 ## Live log & persistence
-Keep the running notes in `dm/session-log/session-NN.md` **during** play, not just at the end. The context can get compacted during a long session, and the log is what survives. The gm-screen agent writes the log: pass "Events since last call" with every call. A standalone `checkpoint` is only needed after a long stretch without any call.
+Keep the running notes in `dm/session-log/session-NN.md` **during** play, not just at the end. The context can get compacted during a long session, and the log is what survives (`dm-procedures.md`, "Live log and checkpoints").
 - **After each scene or combat,** the log gets the key events, decisions, rolls that mattered, NPCs met, loot, and HP and resources spent.
-- **Improvised NPCs and places that matter** get their own quick file in `dm/npcs/` or `dm/locations/` (through `improv-check`).
+- **Improvised NPCs and places that matter** get their own quick file in `dm/npcs/` or `dm/locations/` (after the improvisation check).
 - **When the characters learn a secret,** add it to the player-facing notes, e.g. `players/party.md` or a handout.
-- **If the context was compacted or the chat resumed,** ask gm-screen for a fresh `brief` before continuing.
-- **Write spoiler-free tool descriptions,** e.g. "Updating session log".
+- **If the context was compacted or the chat resumed,** do a fresh brief (`dm-procedures.md`) before continuing.

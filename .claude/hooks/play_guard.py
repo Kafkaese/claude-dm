@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse hook: during play (CLAUDE_DM_MODE=play, i.e. web.py / play.py), the DM never edits the
+"""PreToolUse hook: during play (CLAUDE_DM_MODE=play, i.e. the web interface), the DM never edits the
 combat state files or the game scripts by hand.
 
 Hand edits skip the combat log, the undo snapshot and the rule checks, and a script edit can't be

@@ -30,7 +30,7 @@ from typing import Any
 
 from dm_engine import (EFFORTS, REPO, CombatRunner, Engine, with_recap, campaign_for_session, campaign_title, is_campaign, remember_campaign, combat_snapshot, combat_state,
                        is_go_signal, list_campaigns, run_combat_step, slugify, step_due,
-                       last_combat_events, last_session, load_history, map_png_path)
+                       last_combat_events, last_session, load_history)
 
 WEB = REPO / "web"
 
@@ -401,7 +401,7 @@ def make_handler(hub: Hub) -> type[BaseHTTPRequestHandler]:
             self.wfile.write(data)
 
         def do_GET(self) -> None:
-            """Serve the page, /favicon.svg, /events, /map.png and /doc?name=…"""
+            """Serve the page, /favicon.svg, /events, /campaigns and /doc?name=…"""
             url = urlparse(self.path)
             if url.path in ("/", "/index.html"):
                 return self._send(200, (WEB / "index.html").read_bytes(), "text/html; charset=utf-8")
@@ -409,12 +409,6 @@ def make_handler(hub: Hub) -> type[BaseHTTPRequestHandler]:
                 return self._send(200, (WEB / "favicon.svg").read_bytes(), "image/svg+xml")
             if url.path == "/events":
                 return self._events()
-            if url.path == "/map.png":
-                camp = hub.campaign()
-                png = map_png_path(camp) if camp else None
-                if png and png.exists():
-                    return self._send(200, png.read_bytes(), "image/png")
-                return self._send(404, "{}")
             if url.path == "/campaigns":
                 return self._send(200, json.dumps({"current": hub.campaign(), "campaigns": list_campaigns()}))
             if url.path == "/doc":

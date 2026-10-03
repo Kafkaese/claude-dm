@@ -1,0 +1,49 @@
+# DM Procedures
+
+The hidden bookkeeping of a session: what the DM does behind the screen, with the game tools (`dice_roll`, `world`, `combat_*`) and the `dm/` files. The player sees only your narration (see "Behind the screen" in `running-the-game.md`), so none of this shows. Keep it fast: every tool call is waiting time for the player.
+
+## The digest: `dm/screen-digest.md`
+A cached summary of what you need on every turn, so you don't re-read session zero, the sheets and the prep. Write it during the **brief**. Rewrite it when settings change (a [bracketed] change, a level-up, new gear) and at **close-session**. Keep it **under about 80 lines**:
+- **Table settings:** lethality, the mercy policy and whether it's been used, dice and noticing-check conventions, effective APL, world pressure, event chance and session budget, branching budget, DM voice
+- **Lines and veils**
+- **PC quick stats:** HP, AC (touch / flat-footed), saves, init, secret-check modifiers (Perception, Sense Motive, Knowledges and so on), situational modifiers (e.g. +2 vs enchantment), notable abilities with uses left
+- **Now:** in-game time, location, current scene, active combat, interruptions this session, last random event
+- **Index:** where things are, as `file → section heading`: the current adventure's scenes, handouts, NPCs likely to appear, the prepared encounters
+
+**Read files by section, not whole:** find the heading (`grep -n '^#' <file>`, or the digest's index), then read with an offset and limit. Don't re-read what you already have in this conversation.
+
+## Brief (session start, or after the context was compacted)
+Read the files `/start-session` lists, write the digest, and get the picture straight before you narrate:
+- the current scene and exact situation
+- what's prepped for this session: the strong start, likely scenes, secrets and clues and where they are
+- the NPCs likely to appear: voice, wants, what they know, and what's locked vs. flexible
+- active threads and their next beats
+- clocks, scheduled events and reaction triggers that could fire soon
+- floating clues, the current awareness and heat levels
+- backstory hooks ready to use, and continuity notes from the last session
+
+## Secret checks
+Roll the checks for the PCs with `dice_roll` (`hidden: true`), using the modifiers from `players/characters/` (situational ones included), against the hidden DCs or opposed rolls. Narrate only what each character notices. A failure gives nothing, or the misleading result a failure produces. Checks the player initiated ("I examine the hands") get a roll marker if session zero has them on (`running-the-game.md`, "Rolls"); reactive and system-secret checks never do.
+
+## World turn
+At every transition, run the procedure in `living-world.md`: the `world` tool for the random-event part (transition class, settlement cooldown, session budget), plus scheduled events, clocks, reaction triggers and floating clues. Update `dm/world.md`, `dm/state.md` and the log header.
+
+## Oracle
+For a yes/no question the records don't answer: set the odds from the established facts, roll with `dice_roll` (`oracle`), and interpret the result consistently with the records (`continuity.md`).
+
+## Improvisation check
+Before saying anything with plot weight: run the protocol in `continuity.md`. Reuse existing elements, check the timeline, threads and NPC files, and adjust flexible facts if needed. Record it at once if you use it.
+
+## Live log and checkpoints
+- **Log as you go:** key events, decisions, rolls that mattered, NPCs met, loot, HP and resources spent, in the right sections of `dm/session-log/session-NN.md` (Log, New elements, Revealed, World turns, Combat). Tersely, at scene breaks.
+- **Checkpoint** at scene breaks (the end of a scene, combat or location; `continuity.md`): lock revealed facts, and update the threads, the timeline, `dm/world.md` and `dm/state.md`.
+
+## Close-session (from `/end-session`)
+- Refresh the digest for next time.
+- Complete the live log and its "Changes" section. Record the stars & wishes under their own heading, and check any quick "Rulings to check".
+- Do a final checkpoint.
+- Update `dm/characters/*` Observations (what the player enjoyed, their tactics, how hooks landed), `dm/campaign-plan.md` if the stars & wishes change how to run it, `dm/state.md` (last session, date, location, the exact current scene including a paused combat, PC status, open threads) and `dm/world.md`.
+- Work out the XP (defeated encounters by CR plus story awards, divided as session zero says) or the milestone. Tell the player the award and their status.
+
+## Combat end
+`combat_end` writes the XP summary, puts the PC's HP back on their sheet, appends the combat log to the session log and archives the fight. Then log the loot and the resources spent, and do a checkpoint.

@@ -14,7 +14,7 @@ Longer transitions are opportunities. When the player says "we go to A", don't j
 In every case, stop at the character's next decision (see "Player agency" in `running-the-game.md`). The world acts; the player decides how the character responds and how they approach the place.
 
 ## 2. The world turn
-During play, the gm-screen agent runs it (`world-turn`), so the checks and rolls stay hidden. Run it whenever one of these happens:
+Run it yourself, hidden (the `world` tool and `dm-procedures.md`, "World turn"), whenever one of these happens:
 - the PCs move somewhere, or rest
 - time passes: downtime, waiting, a time skip
 - the PCs do something notable (see section 3)

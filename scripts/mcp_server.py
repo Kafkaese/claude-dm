@@ -8,7 +8,7 @@ schema before anything runs; the scripts themselves stay the single source of tr
 builds the same argument list the command line would and calls the script's main()).
 
 Registered for Claude Code in .mcp.json (server name "dm", so the tools appear as
-mcp__dm__combat_attack etc.); web.py / play.py pass it with --mcp-config.
+mcp__dm__combat_attack etc.); web.py passes it with --mcp-config.
 
 The campaign: every tool takes an optional `campaign`. The server remembers the last one given,
 so it's only needed on the first call of a conversation (or when switching).
@@ -290,8 +290,6 @@ TOOLS: list[Tool] = [
     Tool("combat_undo", "Take back the last command if it was the player's own input (e.g. they correct a roll: "
          "forgot flanking), restoring HP, log and actions; then enter the corrected command. NPC rolls stand. "
          "Use this, never override, for corrections.", {}, [], lambda a: ["undo"]),
-    Tool("combat_next", "Advance the turn pointer (Claude Code UI / gm-screen only; in web/terminal play the interface does this).",
-         {}, [], lambda a: ["next"]),
     Tool("combat_endturn", "The player ended the PC's turn in other words, or together with their actions: the interface plays the next step.",
          {"token": S("the PC's token")}, ["token"], lambda a: ["endturn", a["token"]]),
     Tool("combat_ask", "Set (or clear) the open question that pauses auto-combat until the player answers.",

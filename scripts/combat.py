@@ -42,7 +42,7 @@ Play
   show [--dm]                     player view (paste verbatim) / DM view (never paste)
   next                            advance the turn pointer. Also: ends expiring conditions, applies
                                   ongoing damage, resets AoOs and movement, reminds of dying checks.
-                                  In web/terminal play (CLAUDE_DM_MODE=play) only the interface runs it.
+                                  In play (CLAUDE_DM_MODE=play) only the web interface runs it.
   endturn C                       the player ended the PC's turn (in words other than the go signal,
                                   or together with their actions): the interface plays the next step
   maneuver ATT TGT KIND [--total N] [--charge] [--grab] [--aoo] [--condition X] [--to SQ] [--item X]
@@ -112,7 +112,7 @@ Play
   ask "QUESTION"                  mark that the DM waits for a player decision mid-round (a reaction,
                                   an AoO, a stabilization check). Pauses auto-combat in the web UI;
                                   cleared by the next state-changing command (or: ask --clear)
-  events                          print combat log lines not shown yet (Claude Code UI mode)
+  events                          print combat log lines not shown yet
   hp TOKEN DELTA                  e.g. hp g2 -7, hp V +5
   cond TOKEN add NAME [--rounds N] [--atk N --ac N --save N --dmg N] [--ongoing "1d6"]
   cond TOKEN remove NAME          conditions and effects. Known conditions (shaken, prone, blinded,
@@ -125,8 +125,6 @@ Play
   end                             finish the encounter: summary + XP, archive the state
   do "CMD" ["CMD" ...]            run several commands in one call, e.g.
                                   do "move g1 D4" "hp V -6" "next" "show"
-  image [on|off]                  render the player view as players/combat-map.png (needs Pillow);
-                                  'on' re-renders after every change, for a live VS Code tab
 
 Map files: one line per row, one character per square, no spaces between squares.
   .  floor      #  wall (blocks)     +  door        ^  difficult (rubble, brush)
@@ -134,8 +132,8 @@ Map files: one line per row, one character per square, no spaces between squares
 Columns are lettered A-Z (max 26 wide), rows numbered from 1.
 Tokens: a PC uses the first letter of its name (Corin -> C); others lowercase + digit (g1, s1).
 
-The combat log (events) is what the player sees about attacks, damage and conditions. play.py prints
-new lines after every turn. The numbers shown: attack totals (against AC only for PCs and allies),
+The combat log (events) is what the player sees about attacks, damage and conditions. The web
+interface shows it next to the map. The numbers shown: attack totals (against AC only for PCs and allies),
 damage per hit (and what hardness/DR absorbed), PC/ally HP, enemy health in words.
 """
 from __future__ import annotations
@@ -490,80 +488,7 @@ def render(st: State, dm: bool = False) -> str:
     return "\n".join(out)
 
 
-# ---------- image ----------
-
-CELL, LABEL, PANEL = 56, 30, 360
-COLORS = {
-    "bg": (38, 38, 44), "floor": (236, 226, 203), "grid": (178, 165, 140),
-    "wall": (72, 72, 80), "wall_edge": (50, 50, 56), "pit": (14, 14, 18), "outside": (38, 38, 44),
-    "difficult": (214, 196, 160), "hatch": (150, 118, 78), "water": (112, 164, 206),
-    "wave": (170, 205, 232), "trees": (122, 160, 102), "tree": (70, 112, 64),
-    "door": (140, 94, 50), "bridge": (176, 134, 88), "plank": (140, 100, 60),
-    "pc": (58, 108, 200), "ally": (66, 148, 92), "enemy": (188, 58, 52), "fallen": (130, 130, 130),
-    "ring": (242, 190, 40), "text": (235, 235, 235), "dim": (160, 160, 168),
-}
-FONT_PATHS = ["/System/Library/Fonts/Supplemental/Arial Bold.ttf", "/System/Library/Fonts/Supplemental/Arial.ttf",
-              "/Library/Fonts/Arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "DejaVuSans.ttf"]
-
-
-def font(size: int) -> Any:
-    """A TrueType font at this size for the PNG renderer (falls back to Pillow's default font)."""
-    from PIL import ImageFont
-    for path in FONT_PATHS:
-        try:
-            return ImageFont.truetype(path, size)
-        except OSError:
-            continue
-    try:
-        return ImageFont.load_default(size=size)
-    except TypeError:
-        return ImageFont.load_default()
-
-
-def image_path(campaign: str) -> Path:
-    """Where the PNG player view is written (players/combat-map.png)."""
-    return PROJECT / "campaigns" / campaign / "players" / "combat-map.png"
-
-
-def draw_square(d: Any, ch: str, x0: int, y0: int) -> None:
-    """Draw one terrain square with its pattern onto a Pillow ImageDraw."""
-    c, x1, y1 = COLORS, x0 + CELL, y0 + CELL
-    base = {"#": "wall", "_": "pit", " ": "outside", "^": "difficult", "~": "water",
-            "T": "trees", "=": "bridge"}.get(ch, "floor")
-    d.rectangle([x0, y0, x1, y1], fill=c[base])
-    if ch == "^":
-        for k in range(-CELL, CELL, 12):
-            d.line([x0 + k, y1, x0 + k + CELL, y0], fill=c["hatch"], width=2)
-    elif ch == "~":
-        for k in range(10, CELL, 14):
-            d.arc([x0 + 6, y0 + k - 6, x0 + 26, y0 + k + 4], 200, 340, fill=c["wave"], width=2)
-            d.arc([x0 + 28, y0 + k - 6, x0 + 48, y0 + k + 4], 200, 340, fill=c["wave"], width=2)
-    elif ch == "T":
-        for cx, cy, r in ((18, 20, 11), (38, 34, 13), (20, 42, 8)):
-            d.ellipse([x0 + cx - r, y0 + cy - r, x0 + cx + r, y0 + cy + r], fill=c["tree"])
-    elif ch == "+":
-        d.rectangle([x0 + 6, y0 + CELL // 2 - 6, x1 - 6, y0 + CELL // 2 + 6], fill=c["door"])
-    elif ch == "=":
-        for k in range(0, CELL, 11):
-            d.line([x0, y0 + k, x1, y0 + k], fill=c["plank"], width=2)
-    elif ch == "#":
-        d.rectangle([x0, y0, x1, y1], outline=c["wall_edge"], width=2)
-    if base not in ("wall", "pit", "outside"):
-        d.rectangle([x0, y0, x1, y1], outline=c["grid"], width=1)
-
-
-_TILES: dict[str, Any] = {}
-
-
-def tile(ch: str) -> Any:
-    """One square as its own image, so patterns can't bleed into neighbours."""
-    if ch not in _TILES:
-        from PIL import Image, ImageDraw
-        im = Image.new("RGB", (CELL + 1, CELL + 1), COLORS["bg"])
-        draw_square(ImageDraw.Draw(im), ch, 0, 0)
-        _TILES[ch] = im
-    return _TILES[ch]
-
+# ---------- map data for the web interface ----------
 
 TERRAIN_NAMES = {"#": "wall", "+": "door", "^": "difficult", "~": "water", "T": "trees", "_": "pit", "=": "bridge"}
 
@@ -585,127 +510,6 @@ def movement_line(st: State) -> dict[str, Any] | None:
         return None
     t, path = pick
     return {"token": t["token"], "side": t["side"], "size": t.get("size", 1), "path": [list(p) for p in path]}
-
-
-def render_image(st: State, path: Path, panel: bool = True) -> Path:
-    """The player view as a PNG. panel=False draws only the map (transparent margins, no round
-    title, no initiative panel or legend), for interfaces that show those themselves."""
-    try:
-        from PIL import Image, ImageDraw
-    except ImportError:
-        raise CombatError("image rendering needs Pillow: python3 -m pip install --user pillow")
-    c = COLORS
-    map_w, map_h = st["w"] * CELL, st["h"] * CELL
-    shown = [t for t in order(st) if not t.get("removed") and not t.get("hidden")]
-    f_lab, f_tok, f_txt, f_head = font(15), font(20), font(16), font(22)
-    if not panel:
-        top = 30
-        img = Image.new("RGBA", (LABEL + map_w + 6, top + map_h + 6), (0, 0, 0, 0))
-    else:
-        top = 76
-        panel_h = 70 + 34 * len(shown) + 140
-        img = Image.new("RGB", (LABEL + map_w + 20 + PANEL, max(map_h + 20, panel_h) + 76), c["bg"])
-    d = ImageDraw.Draw(img)
-    if panel:
-        d.text((LABEL, 12), f"Round {st['round']}", font=f_head, fill=c["text"])
-    for i in range(st["w"]):
-        d.text((LABEL + i * CELL + CELL // 2, top - 12), chr(ord("A") + i), font=f_lab, fill=c["dim"], anchor="mm")
-    for j in range(st["h"]):
-        d.text((LABEL // 2, top + j * CELL + CELL // 2), str(j + 1), font=f_lab, fill=c["dim"], anchor="mm")
-    for j, row in enumerate(st["grid"]):
-        for i, ch in enumerate(row):
-            img.paste(tile(ch), (LABEL + i * CELL, top + j * CELL))
-    if V.has_lighting(st):   # light as the (first) PC sees it, like the web map
-        from PIL import Image, ImageDraw
-        pc = next((o for o in st["tokens"] if o["side"] == "pc" and not o.get("removed")), None)
-        view = V.player_view(st, pc)["squares"]
-        shade = Image.new("RGBA", img.size, (0, 0, 0, 0))
-        sd = ImageDraw.Draw(shade)
-        for j in range(st["h"]):
-            for i in range(st["w"]):
-                if st["grid"][j][i] in "# ":
-                    continue
-                q = view[j][i]
-                box_sq = [LABEL + i * CELL, top + j * CELL, LABEL + (i + 1) * CELL - 1, top + (j + 1) * CELL - 1]
-                if q["how"] in ("darkvision", "see in darkness", "blindsight"):
-                    sd.rectangle(box_sq, fill=(105, 108, 118, 140))
-                elif q["e"] == V.DARK:
-                    sd.rectangle(box_sq, fill=(6, 6, 14, 205))
-                elif q["e"] == V.DIM:
-                    sd.rectangle(box_sq, fill=(16, 20, 44, 100))
-                elif q["e"] == V.BRIGHT:
-                    sd.rectangle(box_sq, fill=(255, 226, 120, 34))
-                if q["magic"]:
-                    for k in range(-CELL, CELL, 10):
-                        sd.line([box_sq[0] + k, box_sq[3], box_sq[0] + k + CELL, box_sq[1]], fill=(150, 110, 210, 140), width=2)
-        for src in V.light_state(st).get("sources", []):
-            cs = V.source_cells(st, src)
-            if cs and not src.get("steps"):
-                cx, cy = LABEL + cs[0][0] * CELL + CELL - 10, top + cs[0][1] * CELL + 10
-                sd.ellipse([cx - 7, cy - 7, cx + 7, cy + 7], fill=(246, 181, 50, 255), outline=(122, 58, 18, 255))
-        img = Image.alpha_composite(img.convert("RGBA"), shade).convert("RGB")
-        d = ImageDraw.Draw(img)
-    mv = movement_line(st)
-    if mv:   # the last actor's movement, under the tokens
-        pts = [(LABEL + (x + mv["size"] / 2) * CELL, top + (y + mv["size"] / 2) * CELL) for x, y in mv["path"]]
-        col = c.get(mv["side"], (200, 200, 200))
-        d.line(pts, fill=(255, 255, 255), width=8, joint="curve")
-        d.line(pts, fill=col, width=4, joint="curve")
-        x0, y0 = pts[0]
-        d.ellipse([x0 - 6, y0 - 6, x0 + 6, y0 + 6], fill=col, outline=(255, 255, 255), width=2)
-    for t in shown:
-        x0, y0 = LABEL + t["x"] * CELL, top + t["y"] * CELL
-        span = t["size"] * CELL
-        box = [x0 + 6, y0 + 6, x0 + span - 6, y0 + span - 6]
-        fallen = t["hp"] <= 0 and t["side"] not in FRIENDLY
-        if t["token"] == st.get("turn"):
-            d.ellipse([box[0] - 4, box[1] - 4, box[2] + 4, box[3] + 4], outline=c["ring"], width=5)
-        d.ellipse(box, fill=c["fallen"] if fallen else c[t["side"]], outline=(255, 255, 255), width=3)
-        if fallen:
-            d.line([box[0] + 10, box[1] + 10, box[2] - 10, box[3] - 10], fill=(60, 60, 60), width=4)
-            d.line([box[0] + 10, box[3] - 10, box[2] - 10, box[1] + 10], fill=(60, 60, 60), width=4)
-        else:
-            d.text(((box[0] + box[2]) / 2, (box[1] + box[3]) / 2), t["token"], font=f_tok,
-                   fill=(255, 255, 255), anchor="mm")
-    if not panel:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        img.save(path)
-        return path
-    # initiative panel
-    px, py = LABEL + map_w + 20, top
-    d.text((px, 12), "Initiative", font=f_head, fill=c["text"])
-    for t in shown:
-        cur = t["token"] == st.get("turn")
-        if cur:
-            d.rounded_rectangle([px - 4, py - 2, px + PANEL - 16, py + 28], radius=6, fill=(62, 62, 72))
-            d.polygon([(px + 2, py + 6), (px + 2, py + 22), (px + 12, py + 14)], fill=c["ring"])
-        fallen = t["hp"] <= 0 and t["side"] not in FRIENDLY
-        d.ellipse([px + 18, py + 4, px + 38, py + 24], fill=c["fallen"] if fallen else c[t["side"]])
-        d.text((px + 46, py + 14), f"{t['token']}  {t['name']}"[:22], font=f_txt, fill=c["text"], anchor="lm")
-        hp = f"{t['hp']}/{t['max_hp']}" if t["side"] == "pc" else health(t)
-        d.text((px + 225, py + 14), f"{t['init']:g}", font=f_txt, fill=c["dim"], anchor="rm")
-        d.text((px + 237, py + 14), hp, font=f_txt, fill=c["text"], anchor="lm")
-        if t.get("conditions"):
-            py += 22
-            d.text((px + 46, py + 14), ", ".join(R.labels(t, st))[:34], font=f_lab, fill=c["ring"], anchor="lm")
-        py += 34
-    # terrain legend
-    used = {ch for row in st["grid"] for ch in row}
-    py += 16
-    for ch, name in TERRAIN_NAMES.items():
-        if ch in used:
-            img.paste(tile(ch).resize((22, 22)), (px + 18, py))
-            d.text((px + 48, py + 11), name, font=f_lab, fill=c["dim"], anchor="lm")
-            py += 28
-    path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(path)
-    return path
-
-
-def maybe_image(args: Args, st: State) -> None:
-    """Re-render the PNG if the table turned the image view on."""
-    if st.get("image"):
-        render_image(st, image_path(args.campaign))
 
 
 # ---------- combat log ----------
@@ -1309,7 +1113,7 @@ def cmd_add(args: Args, st: State) -> str:
 
 def cmd_endturn(args: Args, st: State) -> str:
     """Mark the PC's turn as over (the player ended it in words, or in the same message as their
-    actions). In web/terminal play the interface then plays the next step itself."""
+    actions). In play the interface then plays the next step itself."""
     c = token(st, args.token)
     if c["side"] != "pc":
         raise CombatError(f"{c['token']} isn't a PC: other actors' turns end with their step")
@@ -1323,7 +1127,7 @@ ACTOR_ARG = {"ability": "token", "maneuver": "attacker", "attack": "attacker", "
 
 
 UNDOABLE = ("attack", "damage", "maneuver", "move", "save", "stabilize", "act", "provoke", "endturn", "ability")
-READ_ONLY = ("show", "dist", "threat", "events", "image", "sight", "actions", "options", "spells", "ask", "briefing")
+READ_ONLY = ("show", "dist", "threat", "events", "sight", "actions", "options", "spells", "ask", "briefing")
 
 
 def undo_path(campaign: str) -> Path:
@@ -1383,7 +1187,7 @@ def check_actor(args: Args, st: State) -> None:
 
 
 def play_mode() -> bool:
-    """Whether the script runs under the player interface (web.py/play.py), which runs the turn order."""
+    """Whether the script runs under the player interface (web.py), which runs the turn order."""
     return os.environ.get("CLAUDE_DM_MODE") == "play"
 
 
@@ -4437,15 +4241,6 @@ def cmd_flag(args: Args, st: State) -> str:
     return f"{c['token']}: {args.command}"
 
 
-def cmd_image(args: Args, st: State) -> str:
-    """Render the PNG player view now, and optionally turn auto-rendering on or off."""
-    if args.mode:
-        st["image"] = args.mode == "on"
-    path = render_image(st, image_path(args.campaign))
-    rel = path.relative_to(PROJECT)
-    return f"Rendered {rel}" + (f" (auto-render {args.mode})" if args.mode else "")
-
-
 def cmd_end(args: Args, st: State) -> str:
     """End the encounter: summary and XP, PC HP back onto their sheets, the combat log into the session log,
     and archive the state.
@@ -4573,7 +4368,6 @@ def main(argv: list[str] | None = None) -> int:
             fp.add_argument("--force", action="store_true", help="hide even though a PC sees it clearly")
     sub.add_parser("end")
     sub.add_parser("endturn").add_argument("token")
-    im = sub.add_parser("image"); im.add_argument("mode", nargs="?", choices=["on", "off"])
     dp = sub.add_parser("do"); dp.add_argument("cmds", nargs="+")
     mn = sub.add_parser("maneuver"); mn.add_argument("attacker"); mn.add_argument("target")
     mn.add_argument("kind", choices=MANEUVERS)
@@ -4635,7 +4429,7 @@ def main(argv: list[str] | None = None) -> int:
     handlers = {"add": cmd_add, "next": cmd_next, "move": cmd_move, "dist": cmd_dist,
                 "threat": cmd_threat, "hp": cmd_hp, "cond": cmd_cond, "init": cmd_init,
                 "reveal": cmd_flag, "hide": cmd_flag, "remove": cmd_flag, "end": cmd_end,
-                "image": cmd_image, "attack": cmd_attack, "log": cmd_log, "events": cmd_events,
+                "attack": cmd_attack, "log": cmd_log, "events": cmd_events,
                 "ask": cmd_ask, "briefing": cmd_briefing, "damage": cmd_damage, "stabilize": cmd_stabilize, "save": cmd_save, "area": cmd_area,
                 "order": cmd_order, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
                 "provoke": cmd_provoke, "endturn": cmd_endturn, "maneuver": cmd_maneuver,
@@ -4667,7 +4461,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         st = load(args.campaign)
         if args.command == "next" and os.environ.get("CLAUDE_DM_MODE") == "play":
-            raise CombatError("you ARE in the player interface (web.py/play.py), and it advances the turns itself "
+            raise CombatError("you ARE in the player interface (web.py), and it advances the turns itself "
                               "when the player presses Next (or says 'next'). Don't run `next`: resolve only the actor "
                               "the current [Combat step] names, or, outside a step, tell the player whose turn it is "
                               "and stop")
@@ -4676,7 +4470,7 @@ def main(argv: list[str] | None = None) -> int:
             print(render(st, dm=args.dm))
             return 0
         before = json.dumps(st)   # for `undo` (the player's input only)
-        if args.command not in ("ask", "dist", "threat", "events", "image", "sight", "actions", "options"):
+        if args.command not in ("ask", "dist", "threat", "events", "sight", "actions", "options"):
             st.pop("awaiting", None)   # any real change answers an open question
         actor_tok = getattr(args, ACTOR_ARG.get(args.command, "") or "_", None)
         actor = next((t for t in st["tokens"] if t["token"] == actor_tok), None)
@@ -4698,8 +4492,6 @@ def main(argv: list[str] | None = None) -> int:
         if ended:
             result += "\n" + "\n".join(ended)
         if args.command != "end":
-            if args.command not in ("image", "dist", "threat"):
-                maybe_image(args, st)
             if args.command in UNDOABLE:
                 remember_undo(args, st, before)
             elif args.command not in READ_ONLY:   # anything else moves on: no undoing past it

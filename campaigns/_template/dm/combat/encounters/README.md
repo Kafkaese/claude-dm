@@ -1,6 +1,6 @@
 # Prepared encounters (DM ONLY)
 One file per fight, written during prep (by the scribe) so the fight can be set up in one call at the table:
-`python3 scripts/combat.py -c <campaign> setup <name> --init C=17` (in web/terminal play: the `combat_setup` tool).
+the `combat_setup` tool (on the command line, for testing: `python3 scripts/combat.py -c <campaign> setup <name> --init C=17`).
 
 Each file has DM notes in prose, plus one ` ```encounter ` JSON block. The format is `library/general/encounter.schema.json`. Check every file with `python3 scripts/combat.py -c <campaign> encounter check` until it reports OK; it validates the map, every combat profile, the squares and the light sources without creating anything.
 
@@ -30,5 +30,5 @@ Example (`dm/combat/encounters/ford-ambush.md`):
 - **Groups:** `count` with a one-letter `token` makes k1, k2, … and numbers the names.
 - **Lighting:** the ambient `light` (or the map file's `ambient:` line), `zones`, and `lights` (at a square or carried by a combatant).
 - **Tactics:** `"tactics": {"weights": {…}, "morale": {…}}` on a combatant gives it this fight's personality and morale as weights on its turn plans (format: the system's combat-profile guide, "Tactics"). Use it for every combatant whose prose tactics or morale differ from plain "fight to the best effect".
-- **Who plays whom:** in web/terminal play, the combat runner (a lean process) plays the NPCs' turns. Give a boss or a story NPC with plans and dialogue `"dm_plays": true`, so the main DM, who knows the campaign, plays it.
+- **Who plays whom:** the combat runner (a lean process) plays the NPCs' turns. Give a boss or a story NPC with plans and dialogue `"dm_plays": true`, so the main DM, who knows the campaign, plays it.
 - **Initiative:** NPCs roll from their profiles (or `"init": 15`); the PCs' rolls come from the player at setup.
