@@ -4299,6 +4299,19 @@ def cmd_flag(args: Args, st: State) -> str:
     return f"{c['token']}: {args.command}"
 
 
+def fight_over(st: State) -> str | None:
+    """Why the fight is over, or None: no enemy is still in it (hidden ones count as still there;
+    fled ones are removed), and no PC or ally is dying (they still roll to stabilize)."""
+    foes = [c for c in st["tokens"] if c["side"] not in FRIENDLY]
+    if not foes or any(in_fight(c) for c in foes):
+        return None
+    dying = [c["name"] for c in st["tokens"] if c["side"] in FRIENDLY and not c.get("removed")
+             and c["hp"] < 0 and not is_dead(c) and not R.has(c, "stable")]
+    if dying:
+        return None
+    return "no enemy is left standing"
+
+
 def cmd_end(args: Args, st: State) -> str:
     """End the encounter: summary and XP, PC HP back onto their sheets, the combat log into the session log,
     and archive the state.

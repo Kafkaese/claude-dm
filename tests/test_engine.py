@@ -392,3 +392,39 @@ class ResumeFight(CampaignCase):
         hub.resume_fight()                                     # …a continued one does
         self.assertTrue(hub.fight()["active"])
         self.assertIn("Press Next", hub.history[-1]["text"])
+
+
+class FightOver(CampaignCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.new(blank="8x6")
+        self.add("C", "Corin", "B2", dict(PC_PROFILE, con=12), side="pc", init=5)
+        self.add("g1", "Gob", "E2", GOBLIN, init=20)
+        self.add("h1", "Lurker", "G5", GOBLIN, "enemy", 15, "--hidden")
+
+    def test_over_only_when_no_enemy_stands_and_nobody_dies(self) -> None:
+        import combat
+        self.run_cmd("hp", "g1", "-20")
+        self.assertIsNone(combat.fight_over(self.state()))            # the hidden lurker is still there
+        self.run_cmd("remove", "h1")                                   # fled
+        self.assertEqual(combat.fight_over(self.state()), "no enemy is left standing")
+        self.run_cmd("hp", "C", "-32")                                 # Corin is dying (-2)
+        self.assertIsNone(combat.fight_over(self.state()))
+        self.run_cmd("cond", "C", "add", "stable")
+        self.assertIsNotNone(combat.fight_over(self.state()))
+
+    def test_web_hub_ends_the_fight(self) -> None:
+        import web
+        hub = web.Hub(self.slug)
+        hub.engine = E.Engine(lambda ev: None)
+        hub.engine.combat_engaged = True
+        sent: list[str] = []
+        hub._exchange = lambda text: sent.append(text) or True       # type: ignore[method-assign]
+        hub.end_fight_if_over()
+        self.assertEqual(sent, [])                                     # still enemies up
+        self.run_cmd("hp", "g1", "-20")
+        self.run_cmd("remove", "h1")
+        hub.end_fight_if_over()
+        self.assertFalse(E.combat_state(self.slug))                    # ended and archived
+        self.assertTrue(sent and sent[0].startswith("[The fight is over"))
+        self.assertIn("XP", sent[0])

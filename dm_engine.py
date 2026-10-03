@@ -83,6 +83,7 @@ WRAPPER_PROMPT = """You are running inside Claude DM's player-facing web interfa
   - To explain why an NPC did something, show its logged briefing: combat_info what=briefing token=… (round=N). Never move tokens back and forth to recreate an earlier position.
   - Corrections go through combat_undo (the player's last command) or the specific command (combat_hp, combat_condition). NEVER edit the combat state files or the scripts yourself: if you think the script is wrong, say so out of character and go on with its result, or ask the player how to rule.
   - Every action is charged to the actor's turn, and the tool results say what's left; actions without their own tool (draw a weapon, stand up, drink a potion) are combat_act. On the PC's turn, resolve what the player declares and say which actions remain, from that report. If the player corrects a roll they already gave (a forgotten modifier), call combat_undo and enter the corrected one: never `override` for that. `override` is only for a feat or ability that changes the rules (Spring Attack, Quick Draw). If the player ends the turn in other words or together with their actions, call combat_endturn.
+  - The interface ends a fight by itself once no enemy is left standing and nobody is dying, and tells you ("[The fight is over …]"): then narrate the aftermath. End it yourself with combat_end only when it ends otherwise (surrender, flight, parley).
   - When a tool result sets a question (an AoO, a save, a stabilization check) or the player must decide something mid-round, ask them (combat_ask for your own questions). A dying PC rolls their own stabilization checks; never play the fight forward without the player.
   - The interface shows the map, initiative and combat log with all the numbers. Narrate EVERY creature's turn in its own line or lines, matching the log. Never merge turns, skip a creature, or contradict a number.
 - Do lookups before you start writing to the player, so you never send the same text twice.
@@ -140,7 +141,7 @@ def is_combat_tool(name: str, inp: dict[str, Any]) -> bool:
     return name == "Bash" and "combat.py" in str(inp.get("command", "")) and " profile check" not in str(inp.get("command", ""))
 
 
-INTERFACE_PREFIXES = ("[Combat step", "[The player is switching to another campaign", "[Test setup")
+INTERFACE_PREFIXES = ("[Combat step", "[The player is switching to another campaign", "[Test setup", "[The fight is over")
 RECAP_PREFIX = "[Interface recap"
 
 
@@ -167,6 +168,8 @@ def exchange_kind(text: str) -> str:
         return "combat-hidden" if "hasn't noticed" in t[:400] else "combat-step"
     if t.startswith("[The player is switching"):
         return "switch"
+    if t.startswith("[The fight is over"):
+        return "combat-end"
     if t.startswith("/"):
         return "command:" + t.split()[0][1:]
     if t.lower().rstrip(".!") in ("next", "end turn"):
@@ -930,6 +933,31 @@ def log_briefing(camp: str, st: dict[str, Any], c: dict[str, Any]) -> None:
         pass
 
 
+def fight_over(camp: str | None) -> str | None:
+    """Why the campaign's fight is over (no enemy left standing, nobody dying), or None."""
+    st = combat_state(camp)
+    return _combat_module().fight_over(st) if st else None
+
+
+def end_fight(camp: str) -> str:
+    """Run `combat.py end` for the interface: XP, PC HP to the sheets, the log into the session log,
+    the state archived. Returns its report (DM only)."""
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_DM_MODE"}
+    r = subprocess.run([sys.executable, str(REPO / "scripts" / "combat.py"), "-c", camp, "end"],
+                       cwd=REPO, env=env, capture_output=True, text=True)
+    if r.returncode:
+        raise RuntimeError(r.stderr.strip() or "combat.py end failed")
+    return r.stdout.strip()
+
+
+def fight_over_prompt(why: str, report: str) -> str:
+    """The main DM's briefing when the interface ended a fight itself."""
+    return (f"[The fight is over ({why}), so the interface ended the encounter (combat_end already ran; don't run it "
+            f"again):\n{report}\nNarrate the aftermath briefly from the player's point of view, log the loot and "
+            f"consequences, and do the checkpoint (dm-procedures.md, \"Combat end\"). Then stop at the player's next "
+            f"decision.]")
+
+
 def _run_next(camp: str) -> str:
     """Run `combat.py next` for the interface (outside the DM's play-mode restriction)."""
     env = {k: v for k, v in os.environ.items() if k != "CLAUDE_DM_MODE"}
@@ -1076,7 +1104,7 @@ def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool], runn
     acted = False
     for _ in range(200):   # a safety net; a step never needs this many
         st = combat_state(camp)
-        if not st:
+        if not st or cm.fight_over(st):
             return "over"
         if st.get("awaiting"):
             return "ask"

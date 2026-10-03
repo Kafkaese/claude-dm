@@ -29,6 +29,7 @@ from urllib.parse import parse_qs, urlparse
 from typing import Any
 
 from dm_engine import (EFFORTS, REPO, CombatRunner, Engine, with_recap, campaign_for_session, campaign_title, is_campaign, remember_campaign, combat_snapshot, combat_state,
+                       end_fight, fight_over, fight_over_prompt,
                        is_go_signal, list_campaigns, run_combat_step, slugify, step_due,
                        last_combat_events, last_session, load_history)
 
@@ -208,6 +209,7 @@ class Hub:
         self.refresh_combat()
         if ok and self.eng.combat_engaged and step_due(self.campaign(), text):
             self._step()
+        self.end_fight_if_over()
         self._pin_campaign()
         self.refresh_campaign()
         self.publish({"type": "busy", "busy": False})
@@ -215,6 +217,7 @@ class Hub:
     def _run_step(self, text: str) -> None:
         """Worker thread for a go signal ("next", "end turn"): one engine-driven combat step."""
         self._step()
+        self.end_fight_if_over()
         self.publish({"type": "busy", "busy": False})
 
     def _with_recap(self, text: str) -> str:
@@ -338,6 +341,25 @@ class Hub:
             self.history.append({"role": "player", "text": text})
             self.publish({"type": "player", "text": text})
         self._run_turn(text)
+
+    def end_fight_if_over(self) -> None:
+        """After a turn or step: if no enemy is left standing and nobody is dying, end the encounter
+        (the interface runs combat_end) and let the main DM narrate the aftermath."""
+        camp = self.campaign()
+        why = fight_over(camp) if camp and self.eng.combat_engaged else None
+        if not why or not camp:
+            return
+        try:
+            report = end_fight(camp)
+        except RuntimeError as e:
+            self.system(f"The fight looks over, but ending it failed: {e}")
+            return
+        if self.runner:
+            self.runner.stop()
+            self.runner = None
+        self.refresh_combat()   # the panel closes with the "fight is over" card
+        self._exchange(fight_over_prompt(why, report))
+        self.refresh_combat()
 
     def resume_fight(self) -> None:
         """A continued conversation with a fight in progress: show the fight at once (this conversation

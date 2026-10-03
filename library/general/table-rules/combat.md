@@ -113,4 +113,4 @@ When a **unique, powerful or boss** enemy drops to 0 HP or below from the PC's a
 - **Apply the session-zero mercy policy and lethality openly,** as agreed.
 
 ## After combat
-`combat_end` writes the XP, puts the PC's HP back on their sheet, and appends the combat log to the session log. Then log the loot and consequences, do a checkpoint (`dm-procedures.md`, "Combat end"), and narrate the aftermath.
+**When no enemy is left standing and nobody is dying, the interface ends the fight itself** (hidden enemies still count) and sends you its report. Otherwise (a surrender, a flight, a parley), you end it with `combat_end`. Either way, `combat_end` writes the XP, puts the PC's HP back on their sheet, and appends the combat log to the session log. Then log the loot and consequences, do a checkpoint (`dm-procedures.md`, "Combat end"), and narrate the aftermath.
