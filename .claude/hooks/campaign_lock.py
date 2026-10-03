@@ -4,6 +4,11 @@ tools and shell commands may only touch that campaign's folder, campaigns/_templ
 shared library, never another campaign's files. Subagents inherit the lock.
 
 Without the variable (e.g. working on the repo itself) nothing is checked.
+It also keeps a playing DM out of the engine: the code (scripts/, tests/, dm_engine.py, web.py,
+web/) and the fight's state files (dm/combat/*.json). Running the scripts stays allowed; reading or
+grepping them doesn't. Debugging the engine mid-session costs tens of thousands of tokens per read
+and isn't the DM's job: the game tools are the interface to it.
+
 A guard rail against crossing campaigns by mistake, not a sandbox: shell commands are checked by
 the paths they name. Exit code 2 blocks the call and tells Claude why.
 """
@@ -17,6 +22,47 @@ CAMP = os.environ.get("CLAUDE_DM_CAMPAIGN", "").strip()
 REPO = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).resolve().parents[2]).resolve()
 ROOT = REPO / "campaigns"
 ALLOWED = {CAMP, "_template", "README.md"}
+ENGINE = ("scripts", "tests", "web", "dm_engine.py", "web.py")
+ENGINE_RE = re.compile(r"(?<![\w./-])(?:\./)?(?:scripts/|tests/|web/|dm_engine\.py|web\.py)"
+                       r"|\b(?:scripts|tests|web)\b(?=\s|$|[;|&)])"
+                       r"|dm/combat/[^\s'\"]*\.json")
+RUN_RE = re.compile(r"^\s*python3? (?:\./)?scripts/\w+\.py(?:\s|$)")
+ENGINE_WHY = ("The engine's code and the combat state files are off limits during play. Use the game "
+              "tools (combat_info: show_dm, events, sight, actions; combat_options; the tool descriptions). If a tool "
+              "refuses something and you don't see why, tell the player out of character and go on "
+              "with the script's result, or ask them how to rule. Don't retry the same call.")
+
+
+def block_engine() -> None:
+    print(f"Blocked: {ENGINE_WHY}", file=sys.stderr)
+    sys.exit(2)
+
+
+def check_engine(raw: str) -> None:
+    """A path the tool reads or searches: not the engine's code, not a fight's state file."""
+    if not raw:
+        return
+    p = Path(raw)
+    p = (p if p.is_absolute() else Path.cwd() / p).resolve()
+    try:
+        rel = p.relative_to(REPO)
+    except ValueError:
+        return
+    if rel.parts and rel.parts[0] in ENGINE:
+        block_engine()
+    if len(rel.parts) >= 4 and rel.parts[0] == "campaigns" and rel.parts[2:4] == ("dm", "combat") \
+            and rel.suffix == ".json":
+        block_engine()
+
+
+def check_engine_command(cmd: str) -> None:
+    """Shell commands may run the scripts (python3 scripts/x.py …), never read or search them."""
+    cmd = cmd.replace(f"{REPO}/", "")
+    for part in re.split(r"&&|\|\||;|\|", cmd):
+        if RUN_RE.match(part) and not ENGINE_RE.search(RUN_RE.sub("", part, count=1)):
+            continue
+        if ENGINE_RE.search(part):
+            block_engine()
 
 
 def block(why: str) -> None:
@@ -60,21 +106,27 @@ if CAMP:
     tool, inp = event.get("tool_name", ""), event.get("tool_input", {}) or {}
     if tool in ("Read", "Write", "Edit", "MultiEdit"):
         check_path(inp.get("file_path", ""), "file")
+        check_engine(inp.get("file_path", ""))
     elif tool == "NotebookEdit":
         check_path(inp.get("notebook_path", ""), "file")
     elif tool == "Glob":   # the pattern is relative to `path` (default: the repository)
         base = inp.get("path") or ""
         if base:
             check_path(base, "search")
+            check_engine(base)
         pattern = str(inp.get("pattern", ""))
         full = str(Path(base) / pattern) if base else pattern
+        check_engine_command(full)
         if (Path(base or ".").resolve() == REPO) and pattern.startswith("**"):
             block("A search over the whole repository reaches other campaigns.")
         if "campaigns" in full:
             check_command(full[full.index("campaigns"):])
     elif tool == "Grep":   # searches `path` (default: the whole repository)
         check_path(inp.get("path") or str(REPO), "search")
+        check_engine(inp.get("path") or "")
+        check_engine_command(str(inp.get("glob") or ""))
         if "campaigns" in str(inp.get("glob") or ""):
             check_command(str(inp["glob"]))
     elif tool == "Bash":
         check_command(str(inp.get("command", "")))
+        check_engine_command(str(inp.get("command", "")))

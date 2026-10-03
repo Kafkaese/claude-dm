@@ -85,3 +85,42 @@ class PlayGuard(unittest.TestCase):
         self.assertEqual(self.run_hook("/r/scripts/combat.py", True), 2)
         self.assertEqual(self.run_hook("/r/campaigns/x/dm/session-log/session-01.md", True), 0)
         self.assertEqual(self.run_hook("/r/scripts/combat.py", False), 0)
+
+
+class EngineOffLimits(unittest.TestCase):
+    """A DM locked to a campaign may run the scripts, but not read or search the engine's code or
+    the fight's state files; without the lock (working on the repo) nothing is blocked."""
+
+    def run_hook(self, tool: str, inp: dict, locked: bool = True) -> int:
+        import json as _json
+        import os as _os
+        import subprocess
+        env = {k: v for k, v in _os.environ.items() if k != "CLAUDE_DM_CAMPAIGN"}
+        env["CLAUDE_PROJECT_DIR"] = str(REPO)
+        if locked:
+            env["CLAUDE_DM_CAMPAIGN"] = "demo"
+        r = subprocess.run([sys.executable, str(REPO / ".claude/hooks/campaign_lock.py")], env=env, capture_output=True,
+                           text=True, cwd=REPO, input=_json.dumps({"tool_name": tool, "tool_input": inp}))
+        return r.returncode
+
+    def test_reads_and_searches(self) -> None:
+        self.assertEqual(self.run_hook("Read", {"file_path": str(REPO / "scripts/combat.py")}), 2)
+        self.assertEqual(self.run_hook("Read", {"file_path": "dm_engine.py"}), 2)
+        self.assertEqual(self.run_hook("Read", {"file_path": str(REPO / "campaigns/demo/dm/combat/current.json")}), 2)
+        self.assertEqual(self.run_hook("Read", {"file_path": str(REPO / "campaigns/demo/dm/combat/archive/1.json")}), 2)
+        self.assertEqual(self.run_hook("Grep", {"pattern": "surprise", "path": "scripts"}), 2)
+        self.assertEqual(self.run_hook("Glob", {"pattern": "scripts/*.py"}), 2)
+        self.assertEqual(self.run_hook("Read", {"file_path": str(REPO / "campaigns/demo/dm/combat/maps/a.txt")}), 0)
+        self.assertEqual(self.run_hook("Read", {"file_path": str(REPO / "library/pf1e/spells/README.md")}), 0)
+        self.assertEqual(self.run_hook("Read", {"file_path": str(REPO / "scripts/combat.py")}, locked=False), 0)
+
+    def test_shell(self) -> None:
+        bash = lambda c: self.run_hook("Bash", {"command": c})
+        self.assertEqual(bash("python3 scripts/world.py -c demo session"), 0)
+        self.assertEqual(bash(f"cd {REPO} && python3 scripts/roll.py 1d20 && cat campaigns/demo/dm/state.md"), 0)
+        self.assertEqual(bash("grep -n 'def cmd_act' -A 40 scripts/combat.py | head -60"), 2)
+        self.assertEqual(bash(f"sed -n '1,80p' {REPO}/scripts/combat_rules.py"), 2)
+        self.assertEqual(bash("python3 scripts/roll.py 1d20; cat web.py"), 2)
+        self.assertEqual(bash("cat campaigns/demo/dm/combat/current.json"), 2)
+        self.assertEqual(bash("python3 -c \"print(open('scripts/combat.py').read())\""), 2)
+        self.assertEqual(bash("grep -n Clocks campaigns/demo/dm/world.md"), 0)
