@@ -376,10 +376,12 @@ def make_handler(hub: Hub) -> type[BaseHTTPRequestHandler]:
             self.wfile.write(data)
 
         def do_GET(self) -> None:
-            """Serve the page, /events, /map.png and /doc?name=…"""
+            """Serve the page, /favicon.svg, /events, /map.png and /doc?name=…"""
             url = urlparse(self.path)
             if url.path in ("/", "/index.html"):
                 return self._send(200, (WEB / "index.html").read_bytes(), "text/html; charset=utf-8")
+            if url.path == "/favicon.svg":
+                return self._send(200, (WEB / "favicon.svg").read_bytes(), "image/svg+xml")
             if url.path == "/events":
                 return self._events()
             if url.path == "/map.png":
