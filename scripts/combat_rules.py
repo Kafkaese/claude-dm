@@ -318,6 +318,9 @@ def resolve_effect(raw: dict[str, Any], cl: int, system: str = "pf1e") -> dict[s
             out[k] = re.sub(r"\{([^}]*)\}", lambda m: str(eval_formula(m.group(1), values)), v)
     if isinstance(out.get("allies"), dict):
         out["allies"] = {k: eval_formula(v, values) if isinstance(v, str) else v for k, v in out["allies"].items()}
+    imm = out.get("immunity")
+    if isinstance(imm, dict) and isinstance(imm.get("rounds"), str) and not re.match(r"^\s*\d+d\d+", imm["rounds"]):
+        out["immunity"] = dict(imm, rounds=eval_formula(imm["rounds"], values))
     bonus = out.pop("dmg_bonus", None)
     if bonus and out.get("dmg"):
         out["dmg"] = f"{out['dmg']}{bonus:+d}"

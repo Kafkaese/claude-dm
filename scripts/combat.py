@@ -1581,15 +1581,48 @@ def _cast_common(st: State, c: Token, name: str, level: int, conc_bonus: int, ar
     return out, True
 
 
-def apply_effect_data(args: Args, data: dict[str, Any] | None, c: Token, st: State) -> None:
+def immunity_of(args: Args) -> dict[str, Any] | None:
+    """The immunity an effect leaves behind, as set by apply_effect_data: {name, from (caster token or
+    None for anyone's), rounds, after ("affected" or "targeted")}, or None."""
+    return getattr(args, "immunity", None)
+
+
+def is_immune(st: State, t: Token, imm: dict[str, Any] | None) -> bool:
+    """Whether `t` is still immune to that effect (from anyone, or from that caster)."""
+    if not imm:
+        return False
+    return any((x.get("immune") or {}).get("to") == imm["name"] and (x["immune"].get("from") in (None, imm["from"]))
+               for x in R.conditions(t))
+
+
+def grant_immunity(st: State, t: Token, imm: dict[str, Any] | None, affected: bool) -> list[str]:
+    """After the effect: `t` becomes immune to it for a while (daze: 1 minute, from anyone, once it was
+    dazed; a witch's slumber hex: a day, from that witch, once targeted). A tracked condition."""
+    if not imm or (imm["after"] == "affected" and not affected):
+        return []
+    who_from = "" if imm["from"] is None else f" from {token(st, imm['from'])['name']}"
+    cond = R.add_condition(st, t, f"immune to {imm['name']}{who_from}", rounds=rounds_of(imm["rounds"]))
+    cond["immune"] = {"to": imm["name"], "from": imm["from"]}
+    return [f"  {t['token']} is now immune to {imm['name']}{who_from} for {imm['rounds']} rounds"]
+
+
+def apply_effect_data(args: Args, data: dict[str, Any] | None, c: Token, st: State, name: str | None = None) -> None:
     """Fill in a spell's or ability's effect from the profile (area, save, DC, damage, healing,
-    condition), for whatever the command didn't give itself. Checks the aim and the range.
+    condition), for whatever the command didn't give itself. Checks the aim, the range, and that a
+    single target isn't immune to it (a refusal, before the slot or use is spent).
 
     Raises:
-        CombatError: if it needs an aim (--target, --toward, --at) or the target is out of range.
+        CombatError: if it needs an aim (--target, --toward, --at), the target is out of range, or immune.
     """
     if not data:
         return
+    spec = data.get("immunity")
+    if spec and name:
+        args.immunity = {"name": name.lower(), "from": c["token"] if spec.get("from") == "caster" else None,
+                         "rounds": spec.get("rounds", 10), "after": spec.get("after", "affected")}
+        if data.get("target") == "one" and args.target and is_immune(st, token(st, args.target), args.immunity):
+            raise CombatError(f"{args.target} is immune to {name} right now (it was {'affected' if args.immunity['after'] == 'affected' else 'targeted'} "
+                              f"recently): pick another target or action (nothing was spent)")
     if data.get("target") == "area" and not args.area:
         args.area = data.get("area")
         if data.get("center") == "self" and not args.at:
@@ -1767,7 +1800,7 @@ def cmd_ability(args: Args, st: State) -> str:
     ns = argparse.Namespace(command="sla", area=None, at=args.at, toward=args.toward, target=args.target, save=None,
                             dmg=None, half=False, heal=None, cond=None, cond_rounds=None, dc=None,
                             light_at=None, light_on=None, rounds=None)
-    apply_effect_data(ns, spec, c, st)
+    apply_effect_data(ns, spec, c, st, name)
     out += _spell_effect(ns, st, c, name, ns.dc)
     if not c.get("hidden"):
         event(st, f"{who(c)} uses {name}")
@@ -1795,7 +1828,7 @@ def cast_pc(args: Args, st: State, c: Token) -> str:
     if data and is_buff(data):
         effect = apply_buff(st, c, data, args.spell, args.target)
     else:
-        apply_effect_data(args, data, c, st)
+        apply_effect_data(args, data, c, st, args.spell)
         if args.save and args.dc is None:
             raise CombatError(f"{args.spell} allows a save: give the DC from {c['name']}'s sheet (--dc N)")
         effect = _spell_effect(args, st, c, args.spell, args.dc) + effect_notes(data)
@@ -1841,7 +1874,7 @@ def cmd_cast(args: Args, st: State) -> str:
     if data and is_buff(data):
         buff_targets(st, c, data, args.target)   # before the slot is spent: a missing target fails cleanly
     else:
-        apply_effect_data(args, data, c, st)   # before the slot is spent: a missing aim fails cleanly
+        apply_effect_data(args, data, c, st, args.spell)   # before the slot is spent: a missing aim fails cleanly
     key = sc["class"].lower()
     left_note = ""
     if lvl > 0:
@@ -1883,7 +1916,7 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
         ns = argparse.Namespace(shape=m.group(1), feet=int(m.group(2)), at=args.at, frm=c["token"],
                                 toward=args.toward, save=args.save, dc=dc, dmg=args.dmg, half=args.half,
                                 name=name, no_slot=True, log_name=shown, cond=getattr(args, "cond", None), cond_rounds=getattr(args, "cond_rounds", None),
-                                cond_mods=getattr(args, "cond_mods", None))
+                                cond_mods=getattr(args, "cond_mods", None), immunity=immunity_of(args))
         out.append(cmd_area(ns, st))
     elif args.target:
         t = token(st, args.target)
@@ -1921,7 +1954,7 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
                 st.setdefault("pending_saves", {})[t["token"]] = {
                     "kind": args.save, "dc": dc, "dmg": dmg, "half": args.half, "name": shown,
                     "cond": getattr(args, "cond", None), "cond_rounds": getattr(args, "cond_rounds", None),
-                    "cond_mods": getattr(args, "cond_mods", None)}
+                    "cond_mods": getattr(args, "cond_mods", None), "immunity": immunity_of(args)}
                 st["awaiting"] = f"{t['name']}: roll a {args.save.capitalize()} save against {shown}"
                 out.append(f"  {t['name']}'s save is pending: ask the player, then `save {t['token']} --total N` (question set)")
             else:
@@ -1936,12 +1969,16 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
                               + (f", {taken} damage [{who(t)}: {status(t)}]" if args.dmg else ""))
                 if not ok:
                     out += spell_condition(st, t, getattr(args, "cond", None), getattr(args, "cond_rounds", None), shown, getattr(args, "cond_mods", None))
+                out += grant_immunity(st, t, immunity_of(args), affected=not ok)
+            if t["side"] == "pc":
+                out += grant_immunity(st, t, immunity_of(args), affected=False)   # "targeted": now; "affected": after the save
         elif dmg:
             apply_damage(t, dmg)
             if not t.get("hidden"):
                 event(st, f"{shown}: {who(t)} takes {dmg} damage [{who(t)}: {status(t)}]")
         if not args.save:   # no save allowed: the condition just applies
             out += spell_condition(st, t, getattr(args, "cond", None), getattr(args, "cond_rounds", None), shown, getattr(args, "cond_mods", None))
+            out += grant_immunity(st, t, immunity_of(args), affected=True)
     return out
 
 
@@ -1955,7 +1992,7 @@ def cmd_sla(args: Args, st: State) -> str:
     if is_buff(entry.get("effect")):
         buff_targets(st, c, entry["effect"], args.target)
     else:
-        apply_effect_data(args, entry.get("effect"), c, st)
+        apply_effect_data(args, entry.get("effect"), c, st, args.name)
     sp = _spent(c)
     per_day = entry["per_day"]
     note = ""
@@ -2971,9 +3008,14 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
         per_dmg = dice_avg(data.get("dmg")) if data.get("dmg") else 0.0
         cond_v = COND_VALUE.get(str(data.get("cond", "")).lower(), 2 if data.get("cond") else 0) * min(3.0, avg_rounds(data.get("cond_rounds", 1)))
 
+        spec_imm = data.get("immunity")
+        imm = {"name": name.lower(), "from": c["token"] if (spec_imm or {}).get("from") == "caster" else None} if spec_imm else None
+
         def value_of(targets: list[Token]) -> float:
             v = 0.0
             for o in targets:
+                if is_immune(st, o, imm):   # it wouldn't work on this one right now
+                    continue
                 pf = p_fail_save(o, data.get("save"), dc)
                 dmg_v = per_dmg * (pf + (1 - pf) * (0.5 if data.get("half") else 0.0))
                 sign = 1 if (o["side"] in FRIENDLY) != friendly else -1
@@ -4215,6 +4257,9 @@ def cmd_save(args: Args, st: State) -> str:
             event(st, f"{shown} — {'success' if ok else 'failure'}" + ("" if not pending["dmg"] else f": no damage from {pending['name']}"))
         if not ok:
             out += spell_condition(st, c, pending.get("cond"), pending.get("cond_rounds"), pending["name"], pending.get("cond_mods"))
+            imm = pending.get("immunity")
+            if imm and imm["after"] == "affected":
+                out += grant_immunity(st, c, imm, affected=True)
     else:
         event(st, f"{shown} — {'success' if ok else 'failure'}")
     return "\n".join(out)
@@ -4271,10 +4316,16 @@ def cmd_area(args: Args, st: State) -> str:
     hit = [o for o in R.tokens_in(st, squares) if o["token"] != args.frm]
     out = [f"{args.shape} {args.feet} ft covers {len(squares)} squares; creatures: "
            + (", ".join(label(o) for o in hit) or "none")]
+    imm = getattr(args, "immunity", None)
+    immune = [o for o in hit if is_immune(st, o, imm)]
+    if immune:
+        out.append(f"  immune to it right now (unaffected): {', '.join(label(o) for o in immune)}")
+        hit = [o for o in hit if o not in immune]
     if not args.save:   # no save: a condition hits everyone in the area
         for o in hit:
             out += spell_condition(st, o, getattr(args, "cond", None), getattr(args, "cond_rounds", None),
                                    args.name or f"the {args.shape}")
+            out += grant_immunity(st, o, imm, affected=True)
         return "\n".join(out)
     if args.dc is None:
         raise CombatError("--save needs --dc")
@@ -4290,7 +4341,8 @@ def cmd_area(args: Args, st: State) -> str:
             st.setdefault("pending_saves", {})[o["token"]] = {
                 "kind": args.save, "dc": args.dc, "dmg": dmg, "half": args.half, "name": shown_name,
                 "cond": getattr(args, "cond", None), "cond_rounds": getattr(args, "cond_rounds", None),
-                    "cond_mods": getattr(args, "cond_mods", None)}
+                    "cond_mods": getattr(args, "cond_mods", None), "immunity": imm}
+            out += grant_immunity(st, o, imm, affected=False)
             pcs.append(o)
             continue
         ok, total_s, how = _save(st, o, args.save, args.dc)
@@ -4303,6 +4355,7 @@ def cmd_area(args: Args, st: State) -> str:
             event(st, f"{shown_name}: {shown} — {'success' if ok else 'failure'}, {taken} damage [{who(o)}: {status(o)}]")
         if not ok:
             out += spell_condition(st, o, getattr(args, "cond", None), getattr(args, "cond_rounds", None), shown_name, getattr(args, "cond_mods", None))
+        out += grant_immunity(st, o, imm, affected=not ok)
     if pcs:
         names = ", ".join(o["name"] for o in pcs)
         st["awaiting"] = f"{names}: roll a {args.save.capitalize()} save against {shown_name}"

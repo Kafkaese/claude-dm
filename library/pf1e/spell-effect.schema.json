@@ -147,6 +147,34 @@
   "attack": {
    "type": "integer",
    "description": "the touch attack bonus (ranged touch for a ray: BAB + Dex mod; melee touch: BAB + Str mod), rolled against touch AC before the effect lands"
+  },
+  "immunity": {
+   "type": "object",
+   "additionalProperties": false,
+   "description": "After the effect, the target is immune to it for a while: daze {\"rounds\": 10, \"from\": \"anyone\", \"after\": \"affected\"}; a once-a-day hex {\"rounds\": 14400, \"from\": \"caster\", \"after\": \"targeted\"}. While immune, a single-target use is refused and an area skips it.",
+   "properties": {
+    "rounds": {
+     "type": [
+      "integer",
+      "string"
+     ],
+     "description": "how long (a number, a formula of cl, or dice)"
+    },
+    "from": {
+     "enum": [
+      "anyone",
+      "caster"
+     ],
+     "description": "immune to everyone's use of it, or only that caster's"
+    },
+    "after": {
+     "enum": [
+      "affected",
+      "targeted"
+     ],
+     "description": "only once it took effect (failed save), or as soon as it was targeted"
+    }
+   }
   }
  },
  "$comment": "A spell's or spell-like ability's effect as the script uses it, resolved at the caster's level. Library spell files (library/pf1e/spells/*.md) hold it in a ```spell-effect block, where numbers may be formulas of cl (e.g. \"10*cl\", dice \"{min(cl,5)}d4\") and ranges keywords (touch, close, medium, long; library/pf1e/spellcasting.json). A spell without a combat effect: {\"utility\": true}.",

@@ -1015,3 +1015,48 @@ class SurpriseRound(CampaignCase):
 def E_first(st: dict) -> str:
     import dm_engine
     return dm_engine._first_visible_after(st, None)["token"]
+
+
+DAZE = ('```spell-effect\n{"target": "one", "range": "close", "save": "will", "cond": "dazed", "cond_rounds": 1, '
+        '"immunity": {"rounds": 10, "from": "anyone", "after": "affected"}}\n```\n')
+HEX = ('```spell-effect\n{"target": "one", "range": 30, "save": "will", "cond": "asleep", "cond_rounds": 3, '
+       '"immunity": {"rounds": "14400", "from": "caster", "after": "targeted"}}\n```\n')
+
+
+class Immunity(CampaignCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.write("spells/daze.md", DAZE)
+        self.write("spells/slumber.md", HEX)
+        weak = dict(GOBLIN, saves={"fort": 0, "ref": 0, "will": -30})
+        strong = dict(GOBLIN, saves={"fort": 0, "ref": 0, "will": 30})
+        caster = dict(GOBLIN, spellcasting=[{"class": "witch", "cl": 2, "type": "spontaneous", "dc_base": 13,
+                                             "concentration": 5, "slots": {"0": 99, "1": 9},
+                                             "spells": {"0": ["daze"], "1": ["slumber"]}}])
+        self.new(blank="12x6")
+        self.add("w1", "Witch", "B2", caster, init=20)
+        self.add("w2", "Witch2", "B4", caster, side="ally", init=1)
+        self.add("C", "Corin", "J5", PC_PROFILE, side="pc", init=10)
+        self.add("g1", "Weak", "F2", dict(weak), side="ally", init=5)
+        self.add("g2", "Strong", "F3", dict(strong), side="ally", init=4)
+        self.run_cmd("next")
+
+    def test_daze_immunity_after_being_dazed(self) -> None:
+        out = self.run_cmd("cast", "w1", "daze", "--target", "g1")
+        self.assertIn("immune to daze for 10 rounds", out)
+        import combat_rules as R
+        self.assertTrue(R.has(self.tok("g1"), "immune to daze"))
+        self.assertIn("immune to daze right now", self.fail_cmd("cast", "w1", "daze", "--target", "g1", "--out-of-turn"))
+        out = self.run_cmd("cast", "w1", "daze", "--target", "g2", "--override")   # saves: no immunity
+        self.assertNotIn("immune", out)
+        self.assertNotIn("immune to daze", [x["name"] for x in self.tok("g2")["conditions"]])
+
+    def test_hex_immunity_only_from_that_caster_and_on_a_save_too(self) -> None:
+        self.run_cmd("cast", "w1", "slumber", "--target", "g2")                      # saves, still immune to w1's
+        self.assertIn("immune to slumber from Witch", [x["name"] for x in self.tok("g2")["conditions"]])
+        self.assertIn("right now", self.fail_cmd("cast", "w1", "slumber", "--target", "g2", "--override"))
+        self.run_cmd("cast", "w2", "slumber", "--target", "g2", "--out-of-turn", "--override")   # another witch's: fine
+
+    def test_plans_skip_immune_targets(self) -> None:
+        self.run_cmd("cast", "w1", "daze", "--target", "g1")
+        self.assertNotIn("daze on g1", self.run_cmd("options", "w1"))
