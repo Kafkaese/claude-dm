@@ -194,6 +194,11 @@
       },
       "description": "Feats, at least the ones the script uses: Combat Reflexes, Blind-Fight, Precise Shot, Improved <maneuver>. Listing all is fine; [] if none."
     },
+    "caster_level": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Caster level, for `cast`: the script works the spell's library effect out at it (the player gives the DC)."
+    },
     "ammo": {
       "type": "object",
       "additionalProperties": {"type": "integer", "minimum": 0},

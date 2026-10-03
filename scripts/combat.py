@@ -1899,9 +1899,47 @@ def cmd_ability(args: Args, st: State) -> str:
     return "\n".join(out)
 
 
+def cast_pc(args: Args, st: State, c: Token) -> str:
+    """A PC casts: the effect from the library at the PC's caster level and the player's DC; slots are
+    the player's business (their sheet). Provoking stays a question for the table: the concentration
+    roll is the player's, so the effect only lands once the casting held."""
+    prof = c.get("profile") or {}
+    cl = args.cl or prof.get("caster_level") or 1
+    system = campaign_system(args.campaign)
+    try:
+        lib, where = R.library_spell_effect(args.spell, system)
+        data = R.resolve_effect(lib, int(cl), system) if lib and not lib.get("utility") else None
+    except ValueError as e:
+        raise CombatError(str(e))
+    threatened = [o["token"] for o in st["tokens"] if threatens(o, c)]
+    if threatened and not args.no_provoke and not args.defensive:
+        raise CombatError(f"{c['token']} is threatened by {', '.join(threatened)}: casting provokes. Resolve that first "
+                          f"(`provoke {c['token']} --reason \"casting {args.spell}\"`, then the player's concentration "
+                          f"check if hit), then cast with --no-provoke; or --defensive once the player's concentration "
+                          f"check (DC 15 + 2 x spell level) succeeded")
+    if data and is_buff(data):
+        effect = apply_buff(st, c, data, args.spell, args.target)
+    else:
+        apply_effect_data(args, data, c, st)
+        if args.save and args.dc is None:
+            raise CombatError(f"{args.spell} allows a save: give the DC from {c['name']}'s sheet (--dc N)")
+        effect = _spell_effect(args, st, c, args.spell, args.dc) + effect_notes(data)
+        if not data and not (args.dmg or args.save or args.heal or getattr(args, "cond", None)):
+            effect.append(f"  (no effect data in {where}: give the effect in the command, or add a spell-effect block)")
+    if not c.get("hidden"):
+        event(st, f"{who(c)} casts a spell")
+    out = [f"{c['token']} casts {args.spell} (CL {cl}" + (f", DC {args.dc}" if args.dc else "") + ")"] + effect
+    if not st.get("turn") or st.get("turn") == c["token"]:
+        out.append(action_status(st, c))
+    return "\n".join(out)
+
+
 def cmd_cast(args: Args, st: State) -> str:
-    """An NPC casts a spell: check and spend the slot or prepared copy, provoke or cast defensively, then the effect."""
+    """An NPC casts a spell: check and spend the slot or prepared copy, provoke or cast defensively, then the effect.
+    A PC's spell goes to cast_pc."""
     c = token(st, args.token)
+    if c["side"] == "pc":
+        return cast_pc(args, st, c)
     spell = args.spell.lower()
     casters = (c.get("profile") or {}).get("spellcasting") or []
     if not casters:
@@ -2830,6 +2868,14 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                     + (", dropping what it holds; it can't attack" if fear == "panicked"
                        else "; it fights only if cornered") + ". Only flight is listed.")
     attackable = [] if fear else foes
+    # its standard action is spent this turn, a move is left: only where to move (or stay) matters
+    ta = turn_actions(c) if st.get("turn") == c["token"] else {}
+    move_only = bool(ta.get("standard")) and not ta.get("full") and not c.get("moved") and not c.get("stepped") \
+        and can_take(st, c, "move") is None
+    if move_only:
+        head.append("  ITS STANDARD ACTION IS SPENT: only its move action is left (move, or stay put).")
+        attackable = []
+        two, routes2 = one, routes   # "advance" and "withdraw" become single moves
 
     def add(kind: str, deal: float, support: float, sq: Square, provoked: list[str], text: str,
             extra: str = "", exposure: float = 1.0) -> None:
@@ -2909,6 +2955,8 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                 ev_next, _n = _attack_ev(st, c, t, melee_ws, "melee")
                 hidden = c.get("hidden") and all(V.hidden_from(st, c, V.presumed(f, c)) for f in foes)
             how = f"move {one[q]} ft" if q in one else f"double move {two[q]} ft"
+            if move_only and q not in one:
+                continue
             add("melee", 0.5 * ev_next if reach_next else 0.0, 0, q, prov_of[q],
                 f"{how} to {fmt_pos(*q)}, closing on {t['token']}" + (" (stays hidden)" if hidden else ""),
                 f"(next round: full attack ~{ev_next:.1f}, counted at half)" if reach_next else "(still out of reach)")
@@ -2944,7 +2992,7 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
         if spec.get("uses") is None or used < spec["uses"]:
             castables.append((f"ability {nm}", spec, spec.get("dc"), 0, 0, False))   # Su/Ex: no AoO
 
-    if fear:
+    if fear or move_only:
         castables = []
 
     def casting(q: Square, lvl: int, conc: int, provokes: bool) -> tuple[float, list[str], str]:
@@ -3072,12 +3120,15 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                 f"{where(q, one.get(q, 0))}{text}{note}")
 
     # --- defense: total defense here or on the safest square in one move (+4 AC: ~20% fewer hits) ---
-    if not fear:
+    if move_only:
+        add("defense", 0, 0, start, [], "stay where it is")
+    elif not fear:
         add("defense", 0, 0, start, [], "stay, total defense", exposure=0.8)
     safest = min(one, key=lambda q: (_incoming(st, c, q, memo), one[q]))
     if safest != start:
-        add("defense", 0, 0, safest, provokers(safest), f"{where(safest, one[safest])}total defense (safest square in one move)",
-            exposure=0.8)
+        add("defense", 0, 0, safest, provokers(safest), f"{where(safest, one[safest])}"
+            + ("to the safest square in one move" if move_only else "total defense (safest square in one move)"),
+            exposure=1.0 if move_only else 0.8)
     # --- retreat: withdraw (full-round double move; leaving the first square doesn't provoke) ---
     if fear and two and routes2 and foes:   # a run (×4 speed) would go further; the withdraw is the safe minimum
         head.append("  (it may also run: `move … --as run`, four times its speed, away from the source)")
@@ -3090,8 +3141,10 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
             prov = path_provokers(st, c, route[1:], {}) if len(route) > 2 else []
             with _placed(c, dest):
                 out_of_sight = all(V.concealment(st, V.presumed(f, c), c)[0] >= 50 for f in foes)
-            add("retreat", 0, 0, dest, prov, f"withdraw {two[dest]} ft to {fmt_pos(*dest)}"
-                + (" (out of their sight)" if out_of_sight else "") + " (full-round)")
+            if move_only:
+                prov = provokers(dest)
+            add("retreat", 0, 0, dest, prov, (f"move {two[dest]} ft away to " if move_only else f"withdraw {two[dest]} ft to ")
+                + fmt_pos(*dest) + (" (out of their sight)" if out_of_sight else "") + ("" if move_only else " (full-round)"))
     plans.sort(key=lambda p: -p[0])
     return head + [f"  {i + 1}. {text}" for i, (_s, text) in enumerate(plans[:limit])]
 
@@ -4489,6 +4542,7 @@ def main(argv: list[str] | None = None) -> int:
         cp.add_argument("--no-provoke", action="store_true", help="it doesn't provoke (e.g. a quickened spell)")
         if nm == "cast":
             cp.add_argument("--level", type=int); cp.add_argument("--class", dest="cls")
+            cp.add_argument("--cl", type=int, help="a PC's caster level for the library effect (default: the sheet's caster_level, else 1)")
         cp.add_argument("--area", help='template, e.g. "cone 15", "burst 20", "line 60"')
         cp.add_argument("--at", help="burst center square"); cp.add_argument("--toward", help="cone/line direction square")
         cp.add_argument("--target", help="a single target token")

@@ -181,7 +181,7 @@ class Hub:
             self.publish({"type": "player", "text": text})
             self.publish({"type": "busy", "busy": True})
             st = combat_state(self.campaign()) if self.eng.combat_engaged else None
-            step = bool(st and not st.get("awaiting") and is_go_signal(text))
+            step = bool(st and not st.get("awaiting") and is_go_signal(text, st))
             self.worker = threading.Thread(target=self._run_step if step else self._run_turn, args=(text,), daemon=True)
             self.worker.start()
         return 202, "ok"

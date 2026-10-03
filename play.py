@@ -438,7 +438,7 @@ def main() -> None:
         camp = maps.current_campaign()
         st = combat_state(camp) if dm.combat_engaged else None
         try:
-            if camp and st and not st.get("awaiting") and is_go_signal(text):
+            if camp and st and not st.get("awaiting") and is_go_signal(text, st):
                 ok = run_combat_step(dm, camp, dm.send, runner=get_runner(camp)) != "error"   # the interface plays one step
                 if _pc_up(camp):
                     print(f"{DIM}(your turn){RESET}")

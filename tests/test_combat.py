@@ -853,10 +853,11 @@ class LibrarySpells(CampaignCase):
         self.add("s1", "Caster", "B3", self.caster(1), init=20)
         self.add("C", "Corin", "C3", PC_PROFILE, side="pc", init=10)
         self.run_cmd("next")
+        self.assertIn("burning hands", self.run_cmd("options", "s1"))   # the plans see it too
         out = self.run_cmd("cast", "s1", "burning hands", "--toward", "C3")
         self.assertIn("1d4", out)
         self.assertIn("PC saves pending (Corin)", out)
-        self.assertIn("burning hands", self.run_cmd("options", "s1"))   # the plans see it too
+        self.assertIn("STANDARD ACTION IS SPENT", self.run_cmd("options", "s1"))   # afterwards: only the move
 
 
 class EffectDetails(CampaignCase):
@@ -881,3 +882,20 @@ class EffectDetails(CampaignCase):
         import combat_rules as R
         self.assertTrue(R.has(self.tok("w1"), "shield"))
         self.assertFalse(R.has(self.tok("a1"), "shield"))           # self only
+
+
+class PlayerCasting(CampaignCase):
+    def test_pc_casts_from_the_library(self) -> None:
+        self.write("spells/daze.md", '```spell-effect\n{"target": "one", "range": "close", "save": "will", '
+                                     '"cond": "dazed", "cond_rounds": 1}\n```\n')
+        self.new(blank="10x6")
+        self.add("C", "Ilvan", "B2", dict(PC_PROFILE, caster_level=1), side="pc", init=20)
+        self.add("g1", "Gob", "E2", dict(GOBLIN, saves={"fort": 0, "ref": 0, "will": -20}), init=10)
+        self.add("g2", "Gob2", "C3", GOBLIN, init=5)
+        self.run_cmd("next")
+        self.assertIn("casting provokes", self.fail_cmd("cast", "C", "daze", "--target", "g1", "--dc", "14"))   # g2 is adjacent
+        out = self.run_cmd("cast", "C", "daze", "--target", "g1", "--dc", "14", "--no-provoke")
+        self.assertIn("dazed", out)
+        import combat_rules as R
+        self.assertTrue(R.has(self.tok("g1"), "dazed"))
+        self.assertIn("give the DC", self.fail_cmd("cast", "C", "daze", "--target", "g1", "--no-provoke", "--override"))

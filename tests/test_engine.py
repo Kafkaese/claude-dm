@@ -336,3 +336,41 @@ class Skipping(CampaignCase):
         self.run_cmd("act", "C", "standard", "total defense")
         snap = E.combat_snapshot(self.slug)
         self.assertEqual(snap["pc_actions_left"]["main"], ["move"])
+
+
+class FollowUp(CampaignCase):
+    """After an NPC's standard action changes the situation, it gets one more look at its move."""
+
+    def test_second_look_after_a_kill(self) -> None:
+        self.new(blank="12x6")
+        self.add("C", "Corin", "J5", PC_PROFILE, side="pc", init=5)
+        self.add("g1", "Gob", "B2", GOBLIN, init=20)
+        self.add("a1", "Ally", "C2", GOBLIN, side="ally", init=10)
+        prompts: list[str] = []
+
+        def send(prompt: str) -> bool:
+            prompts.append(prompt)
+            if prompt.startswith("[Combat step, sent") and "pointer is on g1" in prompt:
+                self.run_cmd("attack", "g1", "a1", "--roll", "1d20+99", "--dmg", "99")
+            return True
+
+        E.run_combat_step(E.Engine(lambda ev: None), self.slug, send)
+        follow = [p for p in prompts if p.startswith("[Combat step continued")]
+        self.assertEqual(len(follow), 1)
+        self.assertIn("Ally went down", follow[0])
+        self.assertIn("STANDARD ACTION IS SPENT", follow[0])
+
+    def test_no_second_look_when_nothing_changed(self) -> None:
+        self.new(blank="12x6")
+        self.add("C", "Corin", "C2", PC_PROFILE, side="pc", init=5)
+        self.add("g1", "Gob", "B2", GOBLIN, init=20)
+        prompts: list[str] = []
+
+        def send(prompt: str) -> bool:
+            prompts.append(prompt)
+            if "pointer is on g1" in prompt:
+                self.run_cmd("attack", "g1", "C", "--roll", "1d20+0", "--dmg", "1")
+            return True
+
+        E.run_combat_step(E.Engine(lambda ev: None), self.slug, send)
+        self.assertFalse([p for p in prompts if p.startswith("[Combat step continued")])

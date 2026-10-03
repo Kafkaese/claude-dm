@@ -204,6 +204,9 @@ def _error_line(content: Any) -> str:
 class Engine:
     """One headless DM session. `send()` blocks until the reply to that message is complete."""
 
+    QUIET_NOTICE = 60   # seconds without any event before the frontend hears "still waiting"
+    last_event = 0.0
+
     def __init__(self, on_event: EventHandler, model: str | None = None, effort: str = 'medium', debug: bool = False,
                  record_session: bool = False, role: str = "dm", system_prompt: str | None = None,
                  campaign: str | None = None) -> None:
@@ -398,9 +401,14 @@ class Engine:
             self.emit(type="status", label="thinking")
         proc.stdin.write(json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n")
         proc.stdin.flush()
+        self.last_event, told = time.time(), 0
         while not self.done.wait(0.2):
             if not self.alive():
                 break
+            quiet = int(time.time() - self.last_event)
+            if quiet >= self.QUIET_NOTICE * (told + 1):   # say so once a minute: Claude may be retrying (outage, usage limit)
+                told += 1
+                self.emit(type="status", label=f"still waiting for Claude: nothing for {quiet} s (it may be retrying)")
         with self.lock:
             self.waiting = False
             if self._tel is not None:   # the process died mid-reply
@@ -421,9 +429,11 @@ class Engine:
                "chars_in": tel["chars_in"], "chars_out": tel["chars_out"],
                "tools": tools, "tool_calls": len(tools), "tool_errors": sum(1 for x in tools if x.get("error")),
                "subagent_tool_calls": tel["sub_tools"]}
-        for k in ("num_turns", "duration_ms", "died", "is_error"):
+        for k in ("num_turns", "duration_ms", "died", "is_error", "subtype"):
             if k in result:
                 rec[k] = result[k]
+        if result.get("is_error"):   # the error's own text (an API or limit message), to diagnose stalls later
+            rec["error_text"] = str(result.get("result") or result.get("errors") or "")[:300]
         if "total_cost_usd" in result:   # Claude Code reports a running total for the process
             total = result["total_cost_usd"] or 0
             rec["cost_usd"] = round(max(0.0, total - self._cost_seen) if total >= self._cost_seen else total, 4)
@@ -445,6 +455,7 @@ class Engine:
         """Reader thread: parse the stdout event stream and handle each event."""
         assert proc.stdout is not None
         for line in proc.stdout:
+            self.last_event = time.time()
             try:
                 m = json.loads(line)
             except ValueError:
@@ -556,7 +567,9 @@ class Engine:
                 if self.record_session:
                     save_session(sid)
             if m.get("is_error"):
-                self.emit(type="error", message=f"The DM hit an error ({m.get('subtype')}). Try again.")
+                why = str(m.get("result") or "; ".join(map(str, m.get("errors") or [])) or m.get("subtype") or "")[:300]
+                self.emit(type="error", message=f"The DM hit an error: {why or 'unknown'}. Try again"
+                                                 " (\"continue\" resumes an interrupted combat step).")
             if self.waiting and self.armed and self._tel is not None:
                 self._write_telemetry(m)
             if self.waiting and self.armed:
@@ -815,11 +828,21 @@ def load_history(session_id: str | None) -> list[dict[str, str]]:
 # (`next` is refused inside the DM's own process: CLAUDE_DM_MODE=play.)
 
 GO_SIGNALS = ("next", "end turn")
+# "carry on" phrasings: a go signal too, but only while it isn't the PC's turn (there, the player
+# may mean something else, and ending their turn by accident would be worse than asking)
+RESUME_SIGNALS = ("continue", "resume", "go on", "carry on", "please continue", "please resume", "keep going")
 
 
-def is_go_signal(text: str) -> bool:
-    """Whether the player's message is just a go signal ("next" or "end turn")."""
-    return text.strip().lower().rstrip(".!") in GO_SIGNALS
+def is_go_signal(text: str, st: dict[str, Any] | None = None) -> bool:
+    """Whether the player's message is just a go signal ("next", "end turn", or with the fight's
+    state given, "continue"/"resume" while an NPC holds the turn: e.g. after an interrupted step)."""
+    t = text.strip().lower().rstrip(".!")
+    if t in GO_SIGNALS:
+        return True
+    if t in RESUME_SIGNALS and st and st.get("turn") is not None:
+        cur = next((c for c in st.get("tokens", []) if c["token"] == st["turn"]), None)
+        return bool(cur and cur["side"] != "pc")
+    return False
 
 
 def ends_turn(text: str) -> bool:
@@ -964,6 +987,38 @@ def _visible_prompt(c: dict[str, Any], started: str, pc_after: bool, next_name: 
             f"before your tool call; only the narration after it is shown.]")
 
 
+def _followup_due(cm: Any, camp: str, tok: str, foes_before: dict[str, int]) -> tuple[dict[str, Any], dict[str, Any], str] | None:
+    """After an NPC's step: (state, its token, why) when it should get a second look at its move action:
+    its standard action is spent, its move isn't, and the situation changed (a foe dropped, or a melee
+    creature now threatens no one). Else None: most steps need no second call."""
+    st = combat_state(camp) or {}
+    c = next((t for t in st.get("tokens", []) if t["token"] == tok), None)
+    if not c or st.get("turn") != tok or c.get("hidden") or not cm.can_act(c):
+        return None
+    ta = c.get("turn_actions") or {}
+    if not ta.get("standard") or ta.get("full") or c.get("moved") or c.get("stepped") or cm.can_take(st, c, "move"):
+        return None
+    toks = {t["token"]: t for t in st.get("tokens", [])}
+    dropped = [toks[t]["name"] for t in foes_before if t in toks and toks[t]["hp"] <= 0]
+    if dropped:
+        return st, c, f"{', '.join(dropped)} went down"
+    foes = [o for o in st.get("tokens", []) if (o["side"] in cm.FRIENDLY) != (c["side"] in cm.FRIENDLY)
+            and o["hp"] > 0 and not o.get("removed")]
+    melee = any(w.get("type", "melee") == "melee" for w in ((c.get("profile") or {}).get("attacks") or {}).values())
+    if melee and foes and not any(cm.threatens(c, o) for o in foes):
+        return st, c, "it threatens no enemy where it stands"
+    return None
+
+
+def _followup_prompt(c: dict[str, Any], why: str, ctx: str) -> str:
+    """The second look at an NPC's move action, after its standard action changed the situation."""
+    return (f"[Combat step continued, sent by the interface: {c['name']} ({c['token']}) has used its standard "
+            f"action and still has its move action. The situation changed: {why}. Updated options:\n{ctx}\n"
+            f"If it would move now (toward the next enemy, into cover, away), do it in ONE combat_batch call and "
+            f"narrate the move in one short line. If it stays put, make no tool call and reply with only \"…\" "
+            f"(nothing is shown). Don't write any of the briefing.]")
+
+
 def _hidden_prompt(c: dict[str, Any], started: str) -> str:
     """The instruction for a hidden actor's step (its text is only shown if it gets revealed)."""
     return (f"[Combat step, sent by the interface. The turn pointer is on {c['token']} ({c['name']}), which "
@@ -1041,6 +1096,8 @@ def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool], runn
             acted = acted or not still
         else:
             nxt = _first_visible_after(st, c["token"])
+            foes_before = {o["token"]: o["hp"] for o in now.get("tokens", [])
+                           if (o["side"] in cm.FRIENDLY) != (live["side"] in cm.FRIENDLY) and o["hp"] > 0 and not o.get("removed")}
             eng.hold()   # the briefing invites thinking out loud: only the final narration is shown
             try:
                 ok = say(_visible_prompt(c, started, pc_after=bool(nxt and nxt["side"] == "pc"),
@@ -1048,6 +1105,18 @@ def run_combat_step(engine: Engine, camp: str, send: Callable[[str], bool], runn
             finally:
                 text = eng.release(publish=True, after_tools=True)
             acted = True
+            follow = _followup_due(cm, camp, c["token"], foes_before) if ok else None
+            if follow:   # its standard action changed the situation and its move is still left: look again
+                after_st, after_tok, why = follow
+                pos = (after_tok["x"], after_tok["y"])
+                eng.hold()
+                try:
+                    ok = say(_followup_prompt(after_tok, why, _step_context(after_st, after_tok)))
+                finally:
+                    later = combat_state(camp) or {}
+                    me = next((t for t in later.get("tokens", []) if t["token"] == c["token"]), after_tok)
+                    more = eng.release(publish=(me["x"], me["y"]) != pos, after_tools=True)
+                text = (text + "\n" + more).strip()
         if runner is not None and text.strip():
             runner.note(c["name"], text.strip(), by_runner=use_runner)
         if not ok:

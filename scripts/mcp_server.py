@@ -220,13 +220,16 @@ TOOLS: list[Tool] = [
              "place": "--place", "follow": "--follow", "condition": "--condition", "item": "--item", "dmg": "--dmg",
              "damage": "--damage", "nonlethal": "--nonlethal", "reverse": "--reverse", "reach": "--reach",
              "mod": "--mod", "out_of_turn": "--out-of-turn", "override": "--override"})),
-    Tool("combat_cast", "An NPC casts a spell (or, with sla, uses a spell-like ability): spends the slot or use, provokes or casts "
-         "defensively, and applies the effect given here. Every NPC spell and SLA goes through this.",
+    Tool("combat_cast", "A spell (or, with sla, a spell-like ability). NPC: spends the slot or use, provokes or casts defensively, and "
+         "applies the effect (from the library, at its caster level). PC: the effect from the library at the sheet's caster level; "
+         "give the player's DC (dc), resolve provoking first (combat_provoke, then their concentration roll) and pass no_provoke, "
+         "or defensive after their concentration check succeeded. Every spell in a fight goes through this.",
          {"caster": S(TOK), "spell": S("spell or ability name"), "sla": B("a spell-like ability"),
-          "level": I("spell level, if ambiguous"), "class": S("casting class, if several"), **EFFECT},
+          "level": I("spell level, if ambiguous"), "class": S("casting class, if several"),
+          "cl": I("PC: caster level, if not on the sheet"), **EFFECT},
          ["caster", "spell"],
          lambda a: (["sla", a["caster"], a["spell"]] + flags(a, EFFECT_FLAGS) if a.get("sla") else
-                    ["cast", a["caster"], a["spell"]] + flags(a, {"level": "--level", "class": "--class", **EFFECT_FLAGS}))),
+                    ["cast", a["caster"], a["spell"]] + flags(a, {"level": "--level", "class": "--class", "cl": "--cl", **EFFECT_FLAGS}))),
     Tool("combat_ability", "Use a special ability from the creature's profile (bardic performance, channel energy, breath weapon, …): "
          "uses per day, the action (a performance kept up costs its maintain action), and the effect: a buff on the allies it reaches, "
          "healing, or damage/conditions with saves. Aim it like a spell when it needs it.",
