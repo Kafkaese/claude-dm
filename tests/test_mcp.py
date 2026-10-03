@@ -85,3 +85,18 @@ class CampaignLock(CampaignCase):
         self.assertEqual(srv._campaign({}), self.slug)
         with self.assertRaises(M.ToolError):
             srv._campaign({"campaign": "some-other-campaign"})
+
+
+class BatchCampaignSlip(CampaignCase):
+    def test_campaign_inside_actions_is_accepted(self) -> None:
+        import mcp_server as M
+        self.new(blank="8x6")
+        self.add("g1", "Gob", "B2", GOBLIN, init=10)
+        srv = M.Server()
+        ok, text = srv.call("combat_batch", {"campaign": self.slug, "actions": [
+            {"tool": "combat_move", "args": {"campaign": self.slug, "token": "g1", "to": "C3", "out_of_turn": True}}]})
+        self.assertTrue(ok, text)
+        ok, text = srv.call("combat_batch", {"campaign": self.slug, "actions": [
+            {"tool": "combat_move", "args": {"campaign": "another", "token": "g1", "to": "C4", "out_of_turn": True}}]})
+        self.assertFalse(ok)
+        self.assertIn("one batch plays one campaign", text)

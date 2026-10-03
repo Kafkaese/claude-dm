@@ -45,5 +45,4 @@ Delegate to the **dm-scribe** agent (wait for the result: `run_in_background: fa
 
 ## Step 6: Close
 - Show the player recap. It's theirs to read.
-- If this is a git repo, offer to commit the session as a save point with the message `<campaign>: session NN`.
 - Close with a short in-world teaser line that doesn't spoil anything, e.g. an ominous image or an open question the characters already know about.

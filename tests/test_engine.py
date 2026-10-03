@@ -490,3 +490,20 @@ class RunnerHearsThePlayer(CampaignCase):
         self.assertIn('"Get him!" I point at the fleeing guard', frame)
         self.assertNotIn("Combat step, sent", frame.split("STEP")[0])
         self.assertFalse(runner.engine.alive())                              # nothing started
+
+
+class Compaction(CampaignCase):
+    def test_compacts_only_when_large_and_hides_it(self) -> None:
+        shown: list[dict] = []
+        eng = E.Engine(lambda ev: shown.append(ev))
+        sent: list[str] = []
+        eng.alive = lambda: True                                    # type: ignore[method-assign]
+        eng.send = lambda text: sent.append(text) or True           # type: ignore[method-assign]
+        eng.context_tokens = 90_000
+        self.assertFalse(eng.compact_if_large())
+        eng.context_tokens = 180_000
+        self.assertTrue(eng.compact_if_large())
+        self.assertTrue(sent[0].startswith("/compact "))
+        self.assertEqual(eng.context_tokens, 0)
+        self.assertIsNone(E.player_part(sent[0]))                    # never shown as the player's message
+        self.assertEqual(E.exchange_kind(sent[0]), "command:compact")

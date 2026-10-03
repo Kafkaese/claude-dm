@@ -141,8 +141,15 @@ def is_combat_tool(name: str, inp: dict[str, Any]) -> bool:
     return name == "Bash" and "combat.py" in str(inp.get("command", "")) and " profile check" not in str(inp.get("command", ""))
 
 
-INTERFACE_PREFIXES = ("[Combat step", "[The player is switching to another campaign", "[Test setup", "[The fight is over")
+INTERFACE_PREFIXES = ("[Combat step", "[The player is switching to another campaign", "[Test setup", "[The fight is over", "/compact")
 RECAP_PREFIX = "[Interface recap"
+
+
+COMPACT_PROMPT = ("/compact Keep what running this table needs: the campaign and session number, the current scene and "
+                  "situation, a fight in progress (round, whose turn; the combat tools have the details), what the player's "
+                  "character did and said recently and what they're trying to do, NPCs met and what was said, rulings, "
+                  "corrections and table preferences from this conversation, open threads touched this session, and anything "
+                  "promised to the player. Facts from dm/ files can be dropped: they're in the files (and dm/screen-digest.md).")
 
 
 def player_part(text: str) -> str | None:
@@ -209,6 +216,24 @@ class Engine:
 
     QUIET_NOTICE = 60   # seconds without any event before the frontend hears "still waiting"
     last_event = 0.0
+    COMPACT_AT = 140_000   # context tokens per call above which the conversation gets compacted between turns
+    context_tokens = 0
+
+    def compact_if_large(self) -> bool:
+        """Between turns: if the conversation has grown past COMPACT_AT tokens of context, compact it
+        (`/compact`, keeping what the table needs). Every later call then reads far less. Returns
+        whether it compacted. Its text is never shown."""
+        if self.role != "dm" or self.context_tokens < self.COMPACT_AT or not self.alive() or self.busy:
+            return False
+        self.emit(type="status", label="tidying the DM's notes")
+        self.hold()
+        try:
+            ok = self.send(COMPACT_PROMPT)
+        finally:
+            self.release(publish=False)
+        if ok:
+            self.context_tokens = 0
+        return ok
 
     def __init__(self, on_event: EventHandler, model: str | None = None, effort: str = 'medium', debug: bool = False,
                  record_session: bool = False, role: str = "dm", system_prompt: str | None = None,
@@ -527,6 +552,10 @@ class Engine:
         elif t == "assistant":
             content = m.get("message", {}).get("content", [])
             mid = m.get("message", {}).get("id")
+            u = m.get("message", {}).get("usage") or {}
+            if top and u:   # how much context the last call read: the cue for compacting
+                self.context_tokens = sum(int(u.get(k) or 0) for k in ("input_tokens", "cache_read_input_tokens",
+                                                                       "cache_creation_input_tokens"))
             for c in content:
                 if c.get("type") == "tool_use" and is_combat_tool(c.get("name", ""), c.get("input") or {}):
                     self.combat_engaged = True

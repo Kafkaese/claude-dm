@@ -213,6 +213,7 @@ class Hub:
         if ok and self.eng.combat_engaged and step_due(self.campaign(), text):
             self._step()
         self.end_fight_if_over()
+        self.eng.compact_if_large()   # past ~140k tokens a call: compact between turns
         self._pin_campaign()
         self.refresh_campaign()
         self.publish({"type": "busy", "busy": False})
@@ -221,6 +222,7 @@ class Hub:
         """Worker thread for a go signal ("next", "end turn"): one engine-driven combat step."""
         self._step()
         self.end_fight_if_over()
+        self.eng.compact_if_large()   # past ~140k tokens a call: compact between turns
         self.publish({"type": "busy", "busy": False})
 
     def _with_recap(self, text: str) -> str:

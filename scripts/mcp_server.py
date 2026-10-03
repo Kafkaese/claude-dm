@@ -447,6 +447,10 @@ class Server:
             for i, act in enumerate(a["actions"]):
                 sub = BY_NAME[act["tool"]]
                 sa = dict(act.get("args") or {})
+                inner = sa.pop("campaign", None)   # a common slip: the batch's campaign repeated per action
+                if inner and inner != camp:
+                    return False, "\n".join(parts + [f"[{i + 1}] {act['tool']}: one batch plays one campaign ({camp}), not {inner}",
+                                                       "(stopped; nothing after this ran)"])
                 try:
                     self._validate(sub, sa, with_campaign=False)
                     argv = self._argv(sub, sa)
