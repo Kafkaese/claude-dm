@@ -484,6 +484,31 @@ function lightSources(m) {
 }
 // the last actor's movement: a line through the square centres, a dot at the start, an arrowhead
 // that stops at the edge of its token
+// the latest turn's marks: area effects as tinted squares, then the movement, then a line with an
+// arrowhead to everyone it attacked (red), hit with a spell or ability (purple) or helped (green)
+const MARK_COLOR = { attack: "#C0392B", spell: "#8E44AD", help: "#2E8B57" };
+const MARK_NAME = { attack: "attacked", spell: "targeted", help: "helped" };
+function marksSvg(mk) {
+  let s = `<g pointer-events="none">`;
+  for (const area of mk.areas) for (const [x, y] of area)
+    s += `<rect x="${LAB + x * CELL + 1}" y="${LAB + y * CELL + 1}" width="${CELL - 2}" height="${CELL - 2}" fill="rgba(142,68,173,0.2)" stroke="rgba(142,68,173,0.6)" stroke-width="1.5" rx="3"/>`;
+  if (mk.path.length > 1) s += moveLine({ path: mk.path, size: mk.size, side: mk.side });
+  const ax = LAB + (mk.x + mk.size / 2) * CELL, ay = LAB + (mk.y + mk.size / 2) * CELL;
+  for (const t of mk.targets) {
+    const tx = LAB + (t.x + t.size / 2) * CELL, ty = LAB + (t.y + t.size / 2) * CELL;
+    const len = Math.hypot(tx - ax, ty - ay) || 1, ux = (tx - ax) / len, uy = (ty - ay) / len;
+    const from = [ax + ux * (mk.size * CELL / 2 - 4), ay + uy * (mk.size * CELL / 2 - 4)];
+    const tip = [tx - ux * (t.size * CELL / 2 - 2), ty - uy * (t.size * CELL / 2 - 2)];
+    if (Math.hypot(tip[0] - from[0], tip[1] - from[1]) < 6) continue;   // adjacent and overlapping: the ring is enough
+    const back = [tip[0] - ux * 10, tip[1] - uy * 10], col = MARK_COLOR[t.kind] || MARK_COLOR.attack;
+    const head = [tip, [back[0] - uy * 5.5, back[1] + ux * 5.5], [back[0] + uy * 5.5, back[1] - ux * 5.5]].map(p => p.join(",")).join(" ");
+    s += `<line x1="${from[0]}" y1="${from[1]}" x2="${back[0]}" y2="${back[1]}" stroke="#FFFFFF" stroke-width="5.5" opacity="0.7" stroke-linecap="round"/>` +
+         `<line x1="${from[0]}" y1="${from[1]}" x2="${back[0]}" y2="${back[1]}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/>` +
+         `<polygon points="${head}" fill="${col}" stroke="#FFFFFF" stroke-width="1.2"/>` +
+         `<circle cx="${tx}" cy="${ty}" r="${t.size * CELL / 2 - 3}" fill="none" stroke="${col}" stroke-width="2.5" stroke-dasharray="4 3"/>`;
+  }
+  return s + `</g>`;
+}
 function moveLine(mv) {
   const pts = mv.path.map(([x, y]) => [LAB + (x + mv.size / 2) * CELL, LAB + (y + mv.size / 2) * CELL]);
   if (pts.length < 2) return "";
@@ -533,7 +558,7 @@ function renderMap(m) {
     }
   }
   if (m.light) s += lightOverlay(m);
-  if (m.move) s += moveLine(m.move);
+  if (m.marks) s += marksSvg(m.marks);
   for (const t of m.tokens) {
     const span = t.size * CELL, cx = LAB + t.x * CELL + span / 2, cy = LAB + t.y * CELL + span / 2, rad = span / 2 - 6;
     if (t.current) s += `<circle cx="${cx}" cy="${cy}" r="${rad + 4}" fill="none" stroke="#E0A21C" stroke-width="4"/>`;
@@ -559,7 +584,11 @@ function renderLegend(m) {
   const used = new Set(((m && m.grid) || []).join(""));
   const keys = Object.keys(names).filter(ch => used.has(ch)).map(ch =>
     `<span class="key"><svg viewBox="0 0 ${CELL} ${CELL}" aria-hidden="true">${terrainShape(ch, 0, 0)}</svg>${esc(names[ch])}</span>`);
-  if (m && m.move) keys.push(`<span class="key"><svg viewBox="0 0 ${CELL} ${CELL}" aria-hidden="true"><rect width="${CELL}" height="${CELL}" fill="var(--map-floor)"/><line x1="6" y1="30" x2="34" y2="10" stroke="${TOKEN_COLOR(m.move.side)}" stroke-width="4" stroke-dasharray="6 4"/></svg>last move (${esc(m.move.token)})</span>`);
+  const mk = m && m.marks;
+  if (mk && mk.path.length > 1) keys.push(`<span class="key"><svg viewBox="0 0 ${CELL} ${CELL}" aria-hidden="true"><rect width="${CELL}" height="${CELL}" fill="var(--map-floor)"/><line x1="6" y1="30" x2="34" y2="10" stroke="${TOKEN_COLOR(mk.side)}" stroke-width="4" stroke-dasharray="6 4"/></svg>moved (${esc(mk.token)})</span>`);
+  if (mk && mk.areas.length) keys.push(`<span class="key"><svg viewBox="0 0 ${CELL} ${CELL}" aria-hidden="true"><rect width="${CELL}" height="${CELL}" fill="var(--map-floor)"/><rect x="2" y="2" width="${CELL - 4}" height="${CELL - 4}" rx="3" fill="rgba(142,68,173,0.2)" stroke="rgba(142,68,173,0.6)" stroke-width="2"/></svg>area (${esc(mk.token)})</span>`);
+  for (const kind of new Set(mk ? mk.targets.map(t => t.kind) : []))
+    keys.push(`<span class="key"><svg viewBox="0 0 ${CELL} ${CELL}" aria-hidden="true"><rect width="${CELL}" height="${CELL}" fill="var(--map-floor)"/><line x1="6" y1="30" x2="30" y2="12" stroke="${MARK_COLOR[kind]}" stroke-width="3.5"/><polygon points="34,9 25,11 31,18" fill="${MARK_COLOR[kind]}"/></svg>${MARK_NAME[kind]} by ${esc(mk.token)}</span>`);
   if (m && m.light) {
     const flat = m.light.squares.flat();
     const sw = (fill, label, extra = "") => `<span class="key"><svg viewBox="0 0 ${CELL} ${CELL}" aria-hidden="true"><rect width="${CELL}" height="${CELL}" fill="var(--map-floor)"/><rect width="${CELL}" height="${CELL}" fill="${fill}"/>${extra}</svg>${label}</span>`;

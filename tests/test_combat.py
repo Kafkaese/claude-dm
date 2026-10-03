@@ -1134,3 +1134,49 @@ class Weapons(CampaignCase):
     def test_plans_draw_the_weapon(self) -> None:
         out = self.run_cmd("options", "g1").split("Details:")[0]
         self.assertIn("draw rapier (dropping its composite longbow), attack C", out)
+
+
+class TurnMarks(CampaignCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.write("spells/burning-hands.md", BURNING)
+        caster = dict(GOBLIN, spellcasting=[{"class": "sorcerer", "cl": 1, "type": "spontaneous", "dc_base": 13,
+                                             "concentration": 5, "slots": {"1": 4}, "spells": {"1": ["burning hands"]}}])
+        self.new(blank="12x6")
+        self.add("g1", "Gob", "B2", GOBLIN, init=20)
+        self.add("s1", "Caster", "B5", caster, init=15)
+        self.add("C", "Corin", "E2", PC_PROFILE, side="pc", init=10)
+        self.add("h1", "Lurker", "K5", GOBLIN, "enemy", 5, "--hidden")
+        import combat
+        self.combat = combat
+
+    def marks(self) -> dict:
+        return self.combat.turn_marks(self.state())
+
+    def test_marks_follow_the_turn(self) -> None:
+        self.run_cmd("next")                                       # g1
+        self.run_cmd("move", "g1", "D2")
+        self.run_cmd("attack", "g1", "C", "--with", "spear")
+        mk = self.marks()
+        self.assertEqual((mk["token"], [t["to"] for t in mk["targets"]], mk["targets"][0]["kind"]), ("g1", ["C"], "attack"))
+        self.assertEqual(mk["path"][-1], [3, 1])
+        self.run_cmd("next")                                       # s1: g1's marks are gone
+        self.assertIsNone(self.marks())
+        self.run_cmd("cast", "s1", "burning hands", "--toward", "C5")
+        mk = self.marks()
+        self.assertEqual(mk["token"], "s1")
+        self.assertTrue(mk["areas"] and [1, 4] not in mk["areas"][0])
+        self.run_cmd("next")                                       # Corin: the caster's marks stay until he acts
+        self.assertEqual(self.marks()["token"], "s1")
+        self.run_cmd("move", "C", "F2")
+        mk = self.marks()
+        self.assertEqual((mk["token"], mk["areas"]), ("C", []))
+
+    def test_aoo_and_hidden_targets_are_not_marked(self) -> None:
+        self.run_cmd("light", "ambient", "dark")                   # so the lurker stays hidden from Corin
+        self.run_cmd("next")
+        self.run_cmd("attack", "g1", "C", "--with", "spear", "--aoo", "--out-of-turn", "--override")
+        self.assertIsNone(self.marks())
+        self.run_cmd("attack", "g1", "h1", "--with", "spear", "--override")   # a hidden one: not drawn
+        self.assertTrue(self.tok("h1")["hidden"])
+        self.assertIsNone(self.marks())

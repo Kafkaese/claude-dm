@@ -521,6 +521,62 @@ TERRAIN_NAMES = {"#": "wall", "+": "door", "^": "difficult", "~": "shallow water
                  "_": "pit", "=": "bridge"}
 
 
+# ---------- turn marks: what the map shows of the latest turn ----------
+# The actor's movement, the areas of its area effects, and whom it attacked or targeted (spells,
+# maneuvers, buffs, heals). A new turn clears them; when the interface moves on to a PC's turn, the
+# last NPC's marks stay until the PC acts, so the player sees what just happened. Only the actor's
+# own actions count (not attacks of opportunity or readied actions on others' turns).
+
+def marks_for(st: State, c: Token) -> dict[str, Any]:
+    """The turn marks of `c`, started fresh if they belonged to someone else."""
+    m = st.get("turn_marks")
+    if not m or m.get("token") != c["token"]:
+        m = st["turn_marks"] = {"token": c["token"], "areas": [], "targets": []}
+    return m
+
+
+def mark_target(st: State, a: Token, t: Token, kind: str) -> None:
+    """Record that the actor attacked or targeted `t` on its own turn (kind: attack, spell, help)."""
+    if st.get("turn") != a["token"] or t is a:
+        return
+    m = marks_for(st, a)
+    if not any(x["to"] == t["token"] and x["kind"] == kind for x in m["targets"]):
+        m["targets"].append({"to": t["token"], "kind": kind})
+
+
+def mark_area(st: State, a: Token | None, squares: list[Square]) -> None:
+    """Record the squares an area effect of the actor covered, on its own turn."""
+    if a is None or st.get("turn") != a["token"]:
+        return
+    marks_for(st, a)["areas"].append([list(q) for q in squares])
+
+
+def turn_marks(st: State) -> dict[str, Any] | None:
+    """The player-safe marks of the latest turn for the map: {token, side, size, x, y, path, areas,
+    targets: [{to, kind, x, y, size}]}, or None (nothing yet, or a hidden actor)."""
+    m = st.get("turn_marks")
+    if not m:
+        line = movement_line(st)   # an older fight: just the movement
+        return dict(line, areas=[], targets=[]) if line else None
+    a = next((t for t in st["tokens"] if t["token"] == m["token"]), None)
+    if a is None or a.get("hidden") or a.get("removed"):
+        return None
+    if a["token"] == st.get("turn"):
+        path = a.get("turn_path") or []
+    else:
+        lm = st.get("last_move") or {}
+        path = lm.get("path") or [] if lm.get("token") == a["token"] else []
+    targets = []
+    for x in m["targets"]:
+        t = next((o for o in st["tokens"] if o["token"] == x["to"]), None)
+        if t is not None and not t.get("hidden") and not t.get("removed"):
+            targets.append({"to": t["token"], "kind": x["kind"], "x": t["x"], "y": t["y"], "size": t.get("size", 1)})
+    if len(path) < 2 and not m["areas"] and not targets:
+        return None
+    return {"token": a["token"], "side": a["side"], "size": a.get("size", 1), "x": a["x"], "y": a["y"],
+            "path": [list(p) for p in path] if len(path) > 1 else [], "areas": m["areas"], "targets": targets}
+
+
 def movement_line(st: State) -> dict[str, Any] | None:
     """The movement to draw on the map: the current actor's path this turn if it has moved, else
     the last actor's. Never a hidden creature's. Returns {token, side, size, path} or None."""
@@ -836,6 +892,8 @@ def _attack_once(args: Args, st: State, a: Token, t: Token, name: str | None, bo
     crit confirmation, concealment, damage and DR. Writes the combat log line; returns the DM report.
     """
     atk_delta, ac, notes, dmnotes, miss = attack_mods(st, a, t, kind, args.touch, args.charge, weapon)
+    if not args.aoo:
+        mark_target(st, a, t, "attack")
     if V.reveals_senses(st, a, t):
         dmnotes.append(f"{a['token']} has given its special senses away (its foes now plan with them)")
     if args.ac is not None:
@@ -1353,6 +1411,8 @@ def cmd_next(args: Args, st: State) -> str:
         surprise_over = bool(st.pop("surprise", None))
     st["turn"] = c["token"]
     st.pop("end_turn", None)
+    if c["side"] != "pc":
+        st["turn_marks"] = {"token": c["token"], "areas": [], "targets": []}
     out = [f"Round {st['round']}: {label(c)} ({c['name']}) acts"] + lapsed
     if surprise_over:
         out.append("  the surprise round is over: full actions from now on")
@@ -1771,6 +1831,7 @@ def apply_buff(st: State, c: Token, spec: dict[str, Any], name: str, target: str
     rounds = rounds_of(spec.get("buff_rounds", 1))
     for o in targets:
         R.add_condition(st, o, label_, rounds=rounds, mods=extra or None)
+        mark_target(st, c, o, "help")
     if targets and not c.get("hidden"):
         event(st, f"{label_}: {', '.join(who(o) for o in targets)} ({rounds} rounds)")
     return [f"  {label_} on {', '.join(o['token'] for o in targets) or 'nobody in range'} for {rounds} rounds"
@@ -1802,6 +1863,7 @@ def cmd_ability(args: Args, st: State) -> str:
         at = parse_pos(args.at, st) if args.at else (c["x"], c["y"])
         shape, ft = spec.get("area", "burst 30").split()
         squares = R.area_cells(st, "burst", int(ft), origin=at) if shape == "burst" else []
+        mark_area(st, c, squares)
         hit = [o for o in R.tokens_in(st, squares) if not o.get("removed")]
         if spec.get("who") == "allies":
             hit = [o for o in hit if (o["side"] in FRIENDLY) == friendly]
@@ -1939,6 +2001,8 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
     elif args.target:
         t = token(st, args.target)
         V.reveals_senses(st, c, t)
+        mark_target(st, c, t, "help" if getattr(args, "heal", None) or (t["side"] in FRIENDLY) == (c["side"] in FRIENDLY)
+                    else "spell")
         mult = 1
         if getattr(args, "touch_attack", None):   # rays and touch spells: roll to hit first
             hit, mult, lines = touch_attack(args, st, c, t, shown)
@@ -2199,6 +2263,7 @@ def cmd_move(args: Args, st: State) -> str:
     if st.get("turn") == c["token"] and not args.out_of_turn:   # the diagonal count goes on next time it moves
         c["diag_parity"] = end_parity
     if st.get("turn") == c["token"]:   # its own movement this turn, for the map's movement line
+        marks_for(st, c)
         tp = c.setdefault("turn_path", [])
         tp += [list(sq) for sq in (route if not tp or tuple(tp[-1]) != route[0] else route[1:])]
     if not args.step:
@@ -3661,6 +3726,8 @@ def cmd_maneuver(args: Args, st: State) -> str:
     breaks free (or --reverse), `release` lets go."""
     a, t = token(st, args.attacker), token(st, args.target)
     kind = args.kind
+    if not getattr(args, "aoo", False) and kind not in ("release", "escape"):
+        mark_target(st, a, t, "attack")
     pa, pt = a.get("profile") or {}, t.get("profile") or {}
     if a is t:
         raise CombatError("a maneuver needs another creature as its target")
@@ -4574,6 +4641,7 @@ def cmd_area(args: Args, st: State) -> str:
         squares = R.area_cells(st, args.shape, args.feet, frm=token(st, args.frm),
                                toward=parse_pos(args.toward, st))
     hit = [o for o in R.tokens_in(st, squares) if o["token"] != args.frm]
+    mark_area(st, token(st, args.frm) if args.frm else None, squares)
     out = [f"{args.shape} {args.feet} ft covers {len(squares)} squares; creatures: "
            + (", ".join(label(o) for o in hit) or "none")]
     imm = getattr(args, "immunity", None)

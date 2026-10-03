@@ -767,7 +767,7 @@ def combat_snapshot(camp: str | None) -> dict[str, Any] | None:
             tokens.append(dict(r, x=c["x"], y=c["y"], size=c.get("size", 1), unseen=unseen))
     grid_map = {"w": st["w"], "h": st["h"], "grid": st["grid"], "tokens": tokens,
                 "terrain_names": cm.TERRAIN_NAMES, "light": _light_view(cm, st),
-                "move": cm.movement_line(st)}   # the last actor's movement (never a hidden creature's)
+                "marks": cm.turn_marks(st)}   # the latest turn: movement, areas, targets (never a hidden actor's)
     turn = next((r["name"] for r in rows if r["current"]), None)
     cur = next((r for r in rows if r["current"]), None)
     # Who plays on the next go signal: the first live actor after the turn pointer (the pointer
