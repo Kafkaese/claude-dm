@@ -79,7 +79,7 @@ WRAPPER_PROMPT = """You are running inside Claude DM's player-facing web interfa
   - Setup: a prepared encounter (combat_encounters action=list) is ONE combat_setup call once the player's initiative is in. Otherwise: every combatant needs a valid combat profile (add one from the stat block first; a PC's sheet must pass the PC schema, so ask the player for missing values). Decide the lighting as part of the encounter. PC tokens use the first letter of the name (Corin → C). After setup, narrate the opening, give the initiative order and stop: the interface starts the turns right after your reply (an enemy that's first plays at once). If the player declares actions before their turn comes, tell them who acts first; their turn follows.
   - THE COMBAT RUNNER plays most NPC turns: a separate, lean process the interface hands each enemy's step to (it saves most of the tokens). You then get "[Interface recap: …]" in front of the player's next message: what it narrated and the combat log. Treat that as what happened; the player saw it. Creatures you play yourself (a boss, a story NPC: `dm_plays` in the encounter, or combat_add main_dm) still come to you as combat steps.
   - THE INTERFACE RUNS THE TURN ORDER. Never run `next` (it's refused). A bracketed "[Combat step …]" message names ONE actor, what it can see, and its tactical options (squares, the roll it needs there, what provokes; combat_options with area for area effects): resolve exactly that actor in ONE combat_batch call, narrate only that actor, and stop. Play it by its nature and what it sees. A hidden actor's step: reply "…" unless it gets revealed.
-  - SUBMIT WHAT THE PLAYER DECLARED, EXACTLY: never judge yourself whether an action is legal or already used up, the script does. The "Now: round N, …'s turn. Actions left …" line in the bracket is the truth about whose turn it is and what's left; earlier turns don't count. If a tool REFUSES the declared action (e.g. a 5-foot step that costs 10 ft), tell the player plainly why and ask what they do instead. Never substitute another action for them (no full move instead of a refused step).
+  - SUBMIT WHAT THE PLAYER DECLARED, EXACTLY: never judge yourself whether an action is legal or already used up, the script does. The "Now: round N, …" line in the bracket is the truth about whose turn it is (on the PC's turn: what's left; earlier turns don't count). When it says it's NOT the player's turn, the player is talking between other creatures' turns: answer, but don't resolve their character's actions or hand them the turn. If a tool REFUSES the declared action (e.g. a 5-foot step that costs 10 ft), tell the player plainly why and ask what they do instead. Never substitute another action for them (no full move instead of a refused step).
   - To explain why an NPC did something, show its logged briefing: combat_info what=briefing token=… (round=N). Never move tokens back and forth to recreate an earlier position.
   - Corrections go through combat_undo (the player's last command) or the specific command (combat_hp, combat_condition). NEVER edit the combat state files or the scripts yourself: if you think the script is wrong, say so out of character and go on with its result, or ask the player how to rule.
   - Every action is charged to the actor's turn, and the tool results say what's left; actions without their own tool (draw a weapon, stand up, drink a potion) are combat_act. On the PC's turn, resolve what the player declares and say which actions remain, from that report. If the player corrects a roll they already gave (a forgotten modifier), call combat_undo and enter the corrected one: never `override` for that. `override` is only for a feat or ability that changes the rules (Spring Attack, Quick Draw). If the player ends the turn in other words or together with their actions, call combat_endturn.
@@ -1289,13 +1289,25 @@ class CombatRunner:
 
 
 def turn_line(st: dict[str, Any] | None) -> str:
-    """Whose turn it is and what that PC has left, from the script: the DM's action bookkeeping
-    comes from here, never from its memory of earlier turns."""
+    """Whose turn it is, from the script: on the PC's turn what it has left (the DM's action bookkeeping
+    comes from here, never from its memory of earlier turns); between NPC steps, that it isn't the
+    player's turn and who acts next."""
     if not st or st.get("turn") is None:
         return ""
     c = next((t for t in st.get("tokens", []) if t["token"] == st["turn"]), None)
-    if not c or c["side"] != "pc":
+    if not c:
         return ""
+    if c["side"] != "pc":   # between NPC steps: the player is talking out of turn
+        nxt = _first_visible_after(st, c["token"])
+        spent = any((c.get("turn_actions") or {}).values()) or c.get("moved") or c.get("stepped")
+        shown = c["name"] if not c.get("hidden") else "a creature"
+        where = (f"{shown} has just taken its turn" if spent else f"{shown}'s turn hasn't been played yet (interrupted?)")
+        upcoming = f"; next up: {nxt['name']}" if nxt else ""
+        mine = " (the player's turn)" if nxt and nxt["side"] == "pc" else ""
+        return (f"Now: round {st.get('round')}, NOT the player's turn: {where}{upcoming}{mine}. The interface plays "
+                f"the next turn when the player presses Next. Answer what the player says or asks (speaking is a "
+                f"free action), but don't resolve actions for their character, don't say it's their turn, and only "
+                f"allow a readied or immediate action if the rules do.")
     try:
         left = _combat_module().actions_left(st, c)
     except Exception:   # never block a message on the helper

@@ -458,3 +458,21 @@ class AnnounceTurn(CampaignCase):
         hub._step()
         self.assertTrue(order[-1].startswith("SYSTEM Your turn, Corin"), order)
         self.assertTrue(any(o.startswith("[Combat step continued") for o in order[:-1]))
+
+
+class TalkingOutOfTurn(CampaignCase):
+    def test_turn_line_between_npc_steps(self) -> None:
+        self.new(blank="10x6")
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=5)
+        self.add("g1", "Gob", "F2", GOBLIN, init=20)
+        self.add("g2", "Gob2", "H2", GOBLIN, init=10)
+        self.run_cmd("next")                                    # g1's turn
+        self.run_cmd("attack", "g1", "C", "--with", "shortbow")
+        line = E.turn_line(self.state())
+        self.assertIn("NOT the player's turn: Gob has just taken its turn; next up: Gob2", line)
+        self.assertIn("don't say it's their turn", line)
+        self.run_cmd("next")                                    # g2 now, not yet acted; Corin after it
+        line = E.turn_line(self.state())
+        self.assertIn("hasn't been played yet", line)
+        self.assertIn("next up: Corin (the player's turn)", line)
+        self.assertIn("NOT the player's turn", E.with_recap("Can I see his face?", "", [], self.state()))
