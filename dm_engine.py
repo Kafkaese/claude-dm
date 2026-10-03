@@ -787,7 +787,7 @@ def combat_snapshot(camp: str | None) -> dict[str, Any] | None:
         "active": True, "round": st.get("round", 1), "turn": turn, "initiative": rows,
         # whose turn it is, for the End turn / Next button ("pc" = the player acts now)
         "turn_side": cur["side"] if cur else None, "turn_token": cur["token"] if cur else None,
-        "upcoming": upcoming, "pc_actions_left": pc_left,
+        "upcoming": upcoming, "pc_actions_left": pc_left, "surprise": bool(st.get("surprise")),
         "awaiting": st.get("awaiting"),
         "events": [{"round": e.get("round"), "text": e.get("text", "")} for e in st.get("events", [])],
         "terrain": terrain,
@@ -897,7 +897,8 @@ def _first_visible_after(st: dict[str, Any], token: str | None) -> dict[str, Any
     start = toks.index(token) if token in toks else -1
     for k in range(1, len(full) + 1):
         c = full[(start + k) % len(full)]
-        if cm.in_fight(c) and not c.get("hidden"):
+        wraps = start >= 0 and start + k >= len(full)
+        if cm.in_fight(c) and not c.get("hidden") and (wraps or not cm.surprised(st, c)):
             return c
     return None
 

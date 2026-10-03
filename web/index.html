@@ -639,7 +639,7 @@ function setCombat(c) {
   document.body.classList.toggle("combat", active);
   document.getElementById("combat-badge").hidden = !active;
   if (!active) return;
-  document.getElementById("round").textContent = `Round ${c.round}`;
+  document.getElementById("round").textContent = c.surprise ? "Surprise round" : `Round ${c.round}`;
   document.getElementById("turn").textContent = c.turn ? `${c.turn}’s turn` : "";
   if (c.map) renderMap(c.map);
   // token colors match the map image (fixed, not themed)

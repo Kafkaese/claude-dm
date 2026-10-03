@@ -40,7 +40,9 @@
         "tactics": {"type": "object", "description": "This fight's personality and morale for the combatant, over its stat block's: {\"weights\": {…}, \"morale\": {…}} (see the system's combat-profile schema)."},
         "dm_plays": {"type": "boolean", "description": "The main DM plays its turns (a boss, a story NPC with plans and dialogue). Default: the combat runner plays them."}
       }}},
-    "surprise": {"type": "boolean", "description": "The fight opens with a surprise round (only a standard or move action each; the PCs' side, if unaware, doesn't act)."},
+    "surprise": {"anyOf": [{"type": "boolean"}, {"type": "object", "additionalProperties": false, "required": ["unaware"],
+                                                    "properties": {"unaware": {"type": "array", "items": {"type": "string"}}}}],
+                 "description": "The fight opens with a surprise round. true: the encounter's creatures ambush an unaware party (PCs and allies get no turn in it). Or {\"unaware\": [tokens, \"party\", \"enemies\"]}. Adjust at the table with combat_surprise once the Perception checks are in."},
     "tactics": {"type": "string", "description": "How the enemies fight (DM only; shown by setup)."},
     "morale": {"type": "string", "description": "When they flee or surrender."},
     "exit_ramp": {"type": "string", "description": "How the fight can end without the PC dying."},

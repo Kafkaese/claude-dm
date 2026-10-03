@@ -240,7 +240,7 @@ class ActionEconomy(CampaignCase):
         self.run_cmd("cond", "C", "add", "prone")
         self.run_cmd("act", "C", "move", "stand up")
         self.assertFalse(any(x["name"] == "prone" for x in self.tok("C")["conditions"]))
-        self.run_cmd("surprise", "on")
+        self.run_cmd("surprise", "on", "--unaware", "g1")
         self.assertIn("only one action", self.fail_cmd("attack", "C", "g1", "--total", "1", "--damage", "1"))
 
 
@@ -264,7 +264,7 @@ class Encounters(CampaignCase):
         self.assertIn("Shoot from the reeds", out)
         st = self.state()
         self.assertEqual(sorted(t["token"] for t in st["tokens"]), ["C", "k1", "k2"])
-        self.assertTrue(st["surprise"])
+        self.assertEqual(st["surprise"], {"unaware": ["C"]})      # true: the creatures ambush the party
         self.assertIn("active", self.fail_cmd("setup", "ford", "--init", "C=12"))
 
     def test_broken_encounter_creates_nothing(self) -> None:
@@ -974,3 +974,44 @@ class MapGenerator(CampaignCase):
         self.assertTrue((self.dir / "dm/combat/maps/camp-5.txt").exists())
         self.assertIn("exists", self.fail_cmd("map", "camp", "--seed", "5"))
         self.assertIn("no template", self.fail_cmd("map", "spaceship"))
+
+
+class SurpriseRound(CampaignCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.new(blank="10x6")
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=25)
+        self.add("a1", "Ally", "B3", GOBLIN, side="ally", init=18)
+        self.add("g1", "Gob", "F2", GOBLIN, init=20)
+        self.add("g2", "Gob2", "G3", GOBLIN, init=10)
+
+    def test_unaware_get_no_turn_and_stay_flat_footed(self) -> None:
+        out = self.run_cmd("surprise", "on", "--unaware", "party")
+        self.assertIn("unaware (no turn, flat-footed until they act): C, a1", out)
+        self.assertIn("surprise round: only a standard or move action", self.run_cmd("next"))
+        self.assertEqual(self.state()["turn"], "g1")              # Corin (25) is skipped
+        import combat
+        st = self.state()
+        _, ac, notes, _, _ = combat.attack_mods(st, combat.token(st, "g1"), combat.token(st, "C"), "melee")
+        self.assertIn("flat-footed", notes)
+        self.run_cmd("next")
+        self.assertEqual(self.state()["turn"], "g2")              # the ally (18) is skipped too
+        out = self.run_cmd("next")                                # wraps: round 2, everyone acts
+        self.assertIn("the surprise round is over", out)
+        st = self.state()
+        self.assertEqual((st["turn"], st["round"]), ("C", 2))
+        self.assertNotIn("surprise", st)
+
+    def test_no_surprise_round_unless_some_are_aware(self) -> None:
+        self.assertIn("some, but not all", self.fail_cmd("surprise", "on", "--unaware", "party,enemies"))
+        self.assertIn("who was unaware", self.fail_cmd("surprise", "on"))
+
+    def test_interface_announces_the_right_next_actor(self) -> None:
+        self.run_cmd("surprise", "on", "--unaware", "party")
+        st = self.state()
+        self.assertEqual(E_first(st), "g1")
+
+
+def E_first(st: dict) -> str:
+    import dm_engine
+    return dm_engine._first_visible_after(st, None)["token"]

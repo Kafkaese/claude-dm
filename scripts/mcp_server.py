@@ -296,8 +296,10 @@ TOOLS: list[Tool] = [
           "log": S("a line for the player-visible combat log"), "override": B("don't charge it")},
          ["token", "kind", "what"],
          lambda a: ["act", a["token"], a["kind"], a["what"]] + flags(a, {"provokes": "--provokes", "log": "--log", "override": "--override"})),
-    Tool("combat_surprise", "Turn the surprise round on or off (one standard or move action each; ends when the next round starts).",
-         {"on": B("true: surprise round")}, ["on"], lambda a: ["surprise", "on" if a["on"] else "off"]),
+    Tool("combat_surprise", "The surprise round: who was unaware when the fight began (after the Perception checks) gets no turn in "
+         "it and stays flat-footed until its first turn; the aware act with one standard or move action each. Ends when the next round starts.",
+         {"on": B("true: surprise round"), "unaware": S('who was unaware: tokens, comma-separated, or "party" / "enemies"')},
+         ["on"], lambda a: ["surprise", "on" if a["on"] else "off"] + (["--unaware", a["unaware"]] if a.get("unaware") else [])),
     Tool("combat_undo", "Take back the last command if it was the player's own input (e.g. they correct a roll: "
          "forgot flanking), restoring HP, log and actions; then enter the corrected command. NPC rolls stand. "
          "Use this, never override, for corrections.", {}, [], lambda a: ["undo"]),

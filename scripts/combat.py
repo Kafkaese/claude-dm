@@ -32,7 +32,9 @@ Every action reports what's left. --override: a feat or ability changes it (Spri
                                   (damage incl. sneak attack, spells and abilities with effect data,
                                   support, AoO risk, exposure), then per target the squares that threaten
                                   it and the d20 roll needed there, charge lanes, ranged spots, retreats
-  surprise on|off                 the surprise round: one standard or move action each
+  surprise on --unaware C,k1 | off
+                                  the surprise round: the unaware (tokens, or party / enemies) get no turn and
+                                  stay flat-footed; the aware act with one standard or move action each
 Prepared encounters (dm/combat/encounters/<name>.md, a ```encounter block; library/general/encounter.schema.json)
   encounter list | check [NAME …] list them, or validate (map, profiles, squares, lights) without creating anything
   setup NAME --init C=17 [--place C=E5] [--force]
@@ -1284,9 +1286,17 @@ def can_act(c: Token) -> bool:
     return c["hp"] >= 0 and not R.flag(c, "helpless") and not any(R.has(c, n) for n in NO_ACTIONS)
 
 
+def surprised(st: State, c: Token) -> bool:
+    """Whether the creature was unaware when the fight began, during the surprise round: it gets no
+    turn in it (CRB pg. 178), and stays flat-footed until its first turn."""
+    s = st.get("surprise")
+    return isinstance(s, dict) and c["token"] in s.get("unaware", [])
+
+
 def next_actor(st: State) -> tuple[Token, bool] | None:
     """The creature `next` will land on, and whether that starts a new round. Counts from the
-    pointer's place in the full order, so it's right even if the current actor just dropped."""
+    pointer's place in the full order, so it's right even if the current actor just dropped.
+    In the surprise round, creatures that were unaware are skipped until the round wraps."""
     full = order(st)
     if not any(in_fight(c) for c in full):
         return None
@@ -1295,8 +1305,9 @@ def next_actor(st: State) -> tuple[Token, bool] | None:
     for k in range(1, len(full) + 1):
         j = start + k
         c = full[j % len(full)]
-        if in_fight(c):
-            return c, start >= 0 and j >= len(full)
+        wraps = start >= 0 and j >= len(full)
+        if in_fight(c) and (wraps or not surprised(st, c)):
+            return c, wraps
     return None
 
 
@@ -1327,6 +1338,8 @@ def cmd_next(args: Args, st: State) -> str:
     out = [f"Round {st['round']}: {label(c)} ({c['name']}) acts"] + lapsed
     if surprise_over:
         out.append("  the surprise round is over: full actions from now on")
+    elif st.get("surprise"):
+        out.append("  surprise round: only a standard or move action (plus free and swift actions); no full-round actions")
     # start of this creature's turn
     for o, name in R.expire(st, c["token"], st["round"]):
         out.append(f"  ended: {name} on {label(o)}")
@@ -2357,10 +2370,38 @@ def cmd_act(args: Args, st: State) -> str:
     return "\n".join(out)
 
 
+def unaware_tokens(st: State, spec: str | list[str]) -> list[str]:
+    """Tokens from a list or a comma list, where "party" means every PC and ally, "enemies" every enemy."""
+    names = spec if isinstance(spec, list) else [x.strip() for x in str(spec).split(",") if x.strip()]
+    out: list[str] = []
+    for n in names:
+        if n.lower() in ("party", "pcs"):
+            out += [c["token"] for c in st["tokens"] if c["side"] in FRIENDLY]
+        elif n.lower() == "enemies":
+            out += [c["token"] for c in st["tokens"] if c["side"] not in FRIENDLY]
+        else:
+            out.append(token(st, n)["token"])
+    return sorted(set(out))
+
+
 def cmd_surprise(args: Args, st: State) -> str:
-    """Mark the current round as the surprise round (only a standard or move action each)."""
-    st["surprise"] = args.mode == "on"
-    return f"surprise round: {args.mode} (ends when the next round starts)"
+    """The surprise round (CRB pg. 178): the creatures that were unaware of their foes when the fight
+    began get no turn in it and stay flat-footed until their first turn; the aware ones get one standard
+    or move action each (plus free and swift). It ends when the next round starts."""
+    if args.mode == "off":
+        st.pop("surprise", None)
+        return "surprise round: off"
+    if not args.unaware:
+        raise CombatError("who was unaware? `surprise on --unaware C,k1` (or party / enemies); the others act in it")
+    unaware = unaware_tokens(st, args.unaware)
+    live = [c for c in st["tokens"] if in_fight(c)]
+    aware = [c["token"] for c in live if c["token"] not in unaware]
+    if not aware or not any(c["token"] in unaware for c in live):
+        raise CombatError("no surprise round: one happens only if some, but not all, combatants are aware of their foes")
+    st["surprise"] = {"unaware": unaware}
+    note = "" if st.get("round", 1) == 1 else " (note: it's already past round 1)"
+    return (f"surprise round on{note}: unaware (no turn, flat-footed until they act): {', '.join(unaware)}; "
+            f"aware (one standard or move action each): {', '.join(aware)}. It ends when the next round starts.")
 
 
 def action_ok(st: State, c: Token, kind: str) -> str | None:
@@ -4020,8 +4061,9 @@ def cmd_setup(args: Args) -> str:
             rolls.append(f"{argv[1]}: {m.group(1)}")
     st = load(args.campaign)
     st["encounter"] = {"file": str(path.relative_to(PROJECT)), "title": enc.get("title") or path.stem}
-    if enc.get("surprise"):
-        st["surprise"] = True
+    if enc.get("surprise"):   # true: the encounter's creatures ambush an unaware party; or {"unaware": [...]}
+        spec = enc["surprise"].get("unaware", "party") if isinstance(enc["surprise"], dict) else "party"
+        st["surprise"] = {"unaware": unaware_tokens(st, spec)}
     save(args.campaign, st)
     first = next_actor(st)
     first_s = f"{first[0]['token']} ({first[0]['name']}{', hidden' if first[0].get('hidden') else ''})" if first else "nobody"
@@ -4479,7 +4521,8 @@ def main(argv: list[str] | None = None) -> int:
     ac_.add_argument("--provokes", action="store_true", help="it provokes attacks of opportunity (Table 8-2)")
     ac_.add_argument("--log", help="a line for the player-visible combat log")
     ac_.add_argument("--override", action="store_true", help="don't charge it (a feat or ability)")
-    sub.add_parser("surprise").add_argument("mode", choices=["on", "off"])
+    sp_ = sub.add_parser("surprise"); sp_.add_argument("mode", choices=["on", "off"])
+    sp_.add_argument("--unaware", help="who was unaware: tokens, comma-separated (or party / enemies)")
     ab = sub.add_parser("ability"); ab.add_argument("token"); ab.add_argument("name")
     ab.add_argument("--target"); ab.add_argument("--at"); ab.add_argument("--toward")
     sub.add_parser("undo", help="take back the player's last command (a corrected roll); NPC rolls stand")
