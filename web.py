@@ -270,6 +270,12 @@ class Hub:
         leaves a combat step due (the player ended their turn in the same message, or a fight was
         just set up with the PC first), the step runs right after."""
         camp = self.campaign()
+        if self.end_fight_if_over(said=text):   # a finished fight: the player's message (or End combat) ends it
+            self._compact()
+            self._pin_campaign()
+            self.refresh_campaign()
+            self.publish({"type": "busy", "busy": False})
+            return
         st = combat_state(camp) if camp and self.eng.combat_engaged else None
         if st and camp:
             self._get_runner(camp).heard(text)   # allies hear what the PC says (no process starts here)
@@ -279,7 +285,7 @@ class Hub:
         self.refresh_combat()
         if ok and self.eng.combat_engaged and step_due(self.campaign(), text):
             self._step()
-        self.end_fight_if_over()
+        self.announce_fight_over()
         self._compact()
         self._pin_campaign()
         self.refresh_campaign()
@@ -288,7 +294,7 @@ class Hub:
     def _run_step(self, text: str) -> None:
         """Worker thread for a go signal ("next", "end turn"): one engine-driven combat step."""
         self._step()
-        self.end_fight_if_over()
+        self.announce_fight_over()
         self._compact()
         self.publish({"type": "busy", "busy": False})
 
@@ -472,22 +478,37 @@ class Hub:
             self.publish({"type": "player", "text": text})
         self._run_turn(text)
 
-    def end_fight_if_over(self) -> None:
-        """After a turn or step: if no enemy is left standing and nobody is dying, end the encounter
-        (the interface runs combat_end) and let the main DM narrate the aftermath."""
+    over_announced: tuple[str, Any] | None = None   # the finished fight the player has been told about
+
+    def announce_fight_over(self) -> None:
+        """After a turn or step: when no enemy is left standing and nobody is dying, the fight stays on
+        screen (the final turn included) and the button turns into End combat; say so once."""
+        camp = self.campaign()
+        if not camp or not self.eng.combat_engaged or not fight_over(camp):
+            return
+        key = (camp, (combat_state(camp) or {}).get("started"))
+        if key != self.over_announced:
+            self.over_announced = key
+            self.system("The fight is over. Press End combat (or just say what you do next) to wrap it up.")
+
+    def end_fight_if_over(self, said: str | None = None) -> bool:
+        """When the fight is over and the player acts (End combat, or any message): end the encounter
+        (the interface runs combat_end) and let the main DM narrate the aftermath, answering the
+        player's message with it. Returns whether it ended a fight."""
         camp = self.campaign()
         why = fight_over(camp) if camp and self.eng.combat_engaged else None
         if not why or not camp:
-            return
+            return False
         try:
             report = end_fight(camp)
         except RuntimeError as e:
             self.system(f"The fight looks over, but ending it failed: {e}")
-            return
+            return False
         self._stop_runners()
         self.refresh_combat()   # the panel closes with the "fight is over" card
-        self._exchange(fight_over_prompt(why, report))
+        self._exchange(fight_over_prompt(why, report, said))
         self.refresh_combat()
+        return True
 
     def resume_fight(self) -> None:
         """A continued conversation with a fight in progress: show the fight at once (this conversation

@@ -338,9 +338,9 @@ function add(cls, html) { const d = document.createElement("div"); d.className =
 function addPlayer(text) {
   const t = text.trim().toLowerCase();
   const d = document.createElement("div");
-  if (t === "next" || t === "end turn") {           // go signals render as quiet dividers
+  if (t === "next" || t === "end turn" || t === "end combat") {   // go signals render as quiet dividers
     d.className = "signal";
-    d.textContent = t === "next" ? "next turn" : "end of your turn";
+    d.textContent = t === "next" ? "next turn" : t === "end combat" ? "end of the fight" : "end of your turn";
   } else {
     d.className = "player"; d.textContent = text;
   }
@@ -370,6 +370,7 @@ autoBox.addEventListener("change", () => {
 });
 function turnSignal() {
   const c = combatState;
+  if (c.active && c.over) return "end combat";   // the last enemy is down: the player wraps it up
   if (!c.active || c.awaiting) return null;
   // no visible actor is up (a hidden one the DM should have skipped): offer a neutral "Next turn"
   return c.turn_side === "pc" ? "end turn" : "next";
@@ -381,13 +382,15 @@ function updateTurnButton() {
   turnBtn.hidden = !c.active;
   if (!c.active) return;
   const label = document.getElementById("turn-label");
-  turnBtn.classList.toggle("end", sig === "end turn");
+  turnBtn.classList.toggle("end", sig === "end turn" || sig === "end combat");
   const up = c.upcoming;   // who plays on the next signal (computed by the server, hidden ones skipped)
-  if (c.awaiting) label.textContent = "Answer the DM";
+  if (sig === "end combat") label.textContent = "End combat";
+  else if (c.awaiting) label.textContent = "Answer the DM";
   else if (sig === "end turn") label.textContent = "End turn";
   else label.textContent = up ? `Next: ${up.name}` : "Next turn";
   turnBtn.disabled = busy || !sig;
-  turnBtn.setAttribute("aria-label", sig === "end turn" ? "End your turn" : (up ? `Play ${up.name}'s turn` : "Play the next turn"));
+  turnBtn.setAttribute("aria-label", sig === "end combat" ? "End the fight" : sig === "end turn" ? "End your turn"
+    : (up ? `Play ${up.name}'s turn` : "Play the next turn"));
 }
 turnBtn.addEventListener("click", () => {
   const sig = turnSignal();

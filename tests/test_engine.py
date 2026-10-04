@@ -434,6 +434,31 @@ class FightOver(CampaignCase):
         self.assertTrue(sent and sent[0].startswith("[The fight is over"))
         self.assertIn("XP", sent[0])
 
+    def test_the_player_ends_a_finished_fight(self) -> None:
+        """The final turn stays on screen: the snapshot says over (End combat), the hub says so once,
+        and the player's next message ends the fight, reaching the DM with the aftermath."""
+        import web
+        hub = web.Hub(self.slug)
+        hub.engine = E.Engine(lambda ev: None)
+        hub.engine.combat_engaged = True
+        sent: list[str] = []
+        notes: list[str] = []
+        hub._exchange = lambda text: sent.append(text) or True       # type: ignore[method-assign]
+        hub.system = lambda text: notes.append(text)                   # type: ignore[method-assign]
+        hub._get_runner = lambda camp: None                            # type: ignore[method-assign]
+        self.run_cmd("hp", "g1", "-20")
+        self.run_cmd("remove", "h1")
+        self.assertTrue(E.combat_snapshot(self.slug)["over"])
+        hub.announce_fight_over()
+        hub.announce_fight_over()
+        self.assertEqual(len(notes), 1)                                # said once
+        self.assertTrue(E.combat_state(self.slug))                     # not ended by itself
+        hub._run_turn("I search the goblin's pockets")
+        self.assertFalse(E.combat_state(self.slug))
+        self.assertEqual(len(sent), 1)
+        self.assertIn("I search the goblin's pockets", sent[0])
+        self.assertNotIn("player's message", E.fight_over_prompt("x", "r", "End combat"))
+
 
 class AnnounceTurn(CampaignCase):
     def test_follow_up_comes_before_the_players_turn(self) -> None:

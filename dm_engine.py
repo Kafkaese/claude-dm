@@ -85,7 +85,7 @@ WRAPPER_PROMPT = """You are running inside Claude DM's player-facing web interfa
   - To explain why an NPC did something, show its logged briefing: combat_info what=briefing token=… (round=N). Never move tokens back and forth to recreate an earlier position.
   - Corrections go through combat_undo (the player's last command) or the specific command (combat_hp, combat_condition). NEVER read or edit the combat state files or the engine's code (scripts/, dm_engine.py, web.py; a hook blocks it): if a tool refuses something and you don't see why, or you think the script is wrong, say so out of character and go on with its result, or ask the player how to rule. Don't retry a refused call unchanged, and don't investigate the engine.
   - Every action is charged to the actor's turn, and the tool results say what's left; actions without their own tool (draw a weapon, stand up, drink a potion) are combat_act. On the PC's turn, resolve what the player declares and say which actions remain, from that report. If the player corrects a roll they already gave (a forgotten modifier), call combat_undo and enter the corrected one: never `override` for that. `override` is only for a feat or ability that changes the rules (Spring Attack, Quick Draw). If the player ends the turn in other words or together with their actions, call combat_endturn.
-  - The interface ends a fight by itself once no enemy is left standing and nobody is dying, and tells you ("[The fight is over …]"): then narrate the aftermath. End it yourself with combat_end only when it ends otherwise (surrender, flight, parley).
+  - Once no enemy is left standing and nobody is dying, the interface leaves the final turn on screen and the player ends the fight (End combat, or their next message); then it runs combat_end and tells you ("[The fight is over …]", with the player's message if they wrote one): narrate the aftermath. End it yourself with combat_end only when it ends otherwise (surrender, flight, parley).
   - When a tool result sets a question (an AoO, a save, a stabilization check) or the player must decide something mid-round, ask them (combat_ask for your own questions). A dying PC rolls their own stabilization checks; never play the fight forward without the player.
   - The interface shows the map, initiative and combat log with all the numbers. Narrate EVERY creature's turn in its own line or lines, matching the log. Never merge turns, skip a creature, or contradict a number.
 - Do lookups before you start writing to the player, so you never send the same text twice.
@@ -905,6 +905,7 @@ def combat_snapshot(camp: str | None) -> dict[str, Any] | None:
         # whose turn it is, for the End turn / Next button ("pc" = the player acts now)
         "turn_side": cur["side"] if cur else None, "turn_token": cur["token"] if cur else None,
         "upcoming": upcoming, "pc_actions_left": pc_left, "surprise": bool(st.get("surprise")),
+        "over": bool(cm.fight_over(st)),   # no enemy standing, nobody dying: the button says End combat
         "awaiting": st.get("awaiting"),
         "events": [{"round": e.get("round"), "text": e.get("text", "")} for e in st.get("events", [])],
         "terrain": terrain,
@@ -1069,12 +1070,19 @@ def end_fight(camp: str) -> str:
     return r.stdout.strip()
 
 
-def fight_over_prompt(why: str, report: str) -> str:
-    """The main DM's briefing when the interface ended a fight itself."""
+END_COMBAT = "end combat"
+
+
+def fight_over_prompt(why: str, report: str, said: str | None = None) -> str:
+    """The main DM's briefing when the player ended a finished fight (the End combat button, or
+    their next message): the interface already ran combat_end. `said`: what the player wrote, if
+    it was more than "end combat"."""
+    then = (f"\nThe player's message right after the fight (answer it as part of the aftermath):\n{said}"
+            if said and said.strip().lower().rstrip(".!") != END_COMBAT else "")
     return (f"[The fight is over ({why}), so the interface ended the encounter (combat_end already ran; don't run it "
             f"again):\n{report}\nNarrate the aftermath briefly from the player's point of view, log the loot and "
             f"consequences, and do the checkpoint (dm-procedures.md, \"Combat end\"). Then stop at the player's next "
-            f"decision.]")
+            f"decision.]{then}")
 
 
 def _run_next(camp: str) -> str:
