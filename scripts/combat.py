@@ -2754,19 +2754,21 @@ def find_weapon(c: Token, name: str) -> str:
 
 
 def hand_action(st: State, c: Token, what: str, args: Args) -> str:
-    """Charge a draw or sheathe: free with Quick Draw (draw only); with BAB +1 or more it combines with
-    a move action spent on movement this turn (before or after); otherwise a move action."""
+    """Charge a draw or sheathe: free with Quick Draw (draw only); with BAB +1 or more a DRAW combines
+    with a move action spent on movement this turn (before or after; CRB: not a sheathe); otherwise a
+    move action."""
     if getattr(args, "out_of_turn", False) or getattr(args, "override", False) or st.get("turn") != c["token"]:
         return "not charged"
     if what.startswith("draw") and "quick draw" in _feats(c):
         return "free (Quick Draw)"
     a = turn_actions(c)
     bab = (c.get("profile") or {}).get("bab", 1)
-    if bab >= 1 and "movement" in a["move"] and not a.get("combined"):
+    drawing = what.startswith("draw")
+    if drawing and bab >= 1 and "movement" in a["move"] and not a.get("combined"):
         a["combined"] = True
         return "combined with its move"
     spend(st, c, "move", what)
-    if bab >= 1:
+    if drawing and bab >= 1:
         a["combinable"] = True   # a move it makes later this turn rides on this move action
     return "a move action"
 
@@ -2788,6 +2790,11 @@ def cmd_wield(args: Args, st: State) -> str:
             cost = hand_action(st, c, f"sheathe {other}", args)
             c["wielding"].remove(other)
             out.append(f"{c['token']} sheathes its {other} ({cost})")
+            if cost != "not charged":   # sheathing a weapon provokes (CRB Table 8-2)
+                lines, _ = provoke_aoos(st, c, reason=f"sheathing its {other}")
+                out += lines
+                if c["hp"] <= 0:
+                    return "\n".join(out)
     need = weapons(c)[name]["hands"]
     if need > free_hands(c):
         held = ", ".join(wielding(c))
@@ -3167,6 +3174,26 @@ def tactics_weights(st: State, c: Token) -> tuple[dict[str, float], str]:
     return weights, "; ".join(notes)
 
 
+# Dropping a weapon to draw another is free, but the weapon lies on the ground: getting it back is a
+# move action that provokes, and it may be lost for good. Plans that drop one pay for it (in points of
+# expected damage), more when it was the creature's only melee weapon (it then threatens no one).
+DROP_COST = 1.0
+DROP_LAST_MELEE = 1.5
+
+
+def drop_cost(c: Token, dropped: list[str]) -> float:
+    """The plan penalty for letting go of these held weapons."""
+    if not dropped:
+        return 0.0
+    ws = weapons(c)
+    on_ground = {g for g in dropped}
+    melee_left = [n for n, w in ws.items() if w["type"] == "melee" and n not in on_ground
+                  and (w["kind"] == "weapon" or w["kind"] == "natural"
+                       or (w["kind"] == "unarmed" and "improved unarmed strike" in _feats(c)))]
+    lost_melee = any(ws.get(n, {}).get("type") == "melee" for n in dropped) and not melee_left
+    return DROP_COST * len(dropped) + (DROP_LAST_MELEE if lost_melee else 0.0)
+
+
 def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square, list[Square]],
                provokers: Any, two: dict[Square, int] | None = None, routes2: dict[Square, list[Square]] | None = None,
                limit: int = 9) -> list[str]:
@@ -3213,15 +3240,15 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
     single = move_only or bool(limited)
 
     def add(kind: str, deal: float, support: float, sq: Square, provoked: list[str], text: str,
-            extra: str = "", exposure: float = 1.0, idle: float = 0.0) -> None:
+            extra: str = "", exposure: float = 1.0, idle: float = 0.0, lose: float = 0.0) -> None:
         risk_aoo = _aoo_risk(st, c, provoked)
         risk_next = _incoming(st, c, sq, memo) * exposure
         w = weights.get(kind, 0.0)
-        score = deal + support - risk_aoo - 0.5 * risk_next + w - idle
+        score = deal + support - risk_aoo - 0.5 * risk_next + w - idle - lose
         parts = [f"deals ~{deal:.1f}" if deal else "", f"support ~{support:.1f}" if support else "",
                  f"AoO risk ~{risk_aoo:.1f} ({', '.join(provoked)})" if provoked else "",
                  f"takes ~{risk_next:.1f} next round there", f"{kind} {w:+g}" if w else "",
-                 f"a wasted turn −{idle:g}" if idle else ""]
+                 f"a wasted turn −{idle:g}" if idle else "", f"a dropped weapon −{lose:g}" if lose else ""]
         plans.append((score, f"[{score:+.1f}] {text}" + (f" {extra}" if extra else "") + " — " + ", ".join(p for p in parts if p)))
 
     def where(sq: Square, feet: int) -> str:
@@ -3236,10 +3263,12 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
         unseen = V.concealment(st, c, t)[0] >= 50
         for kind in ("melee", "ranged"):
             best: tuple[float, Any] | None = None
+            sheathe_plan: tuple[float, list[str], str, Any] | None = None
             for sq, feet in one.items():
                 step = sq == start or (feet == 5 and R.sq_dist(start, sq) == 1)
                 ws = [x for x in _weapons(prof, kind, step and not limited) if ammo_left(c, x[0]) != 0 and at_hand(c, x[0])]
                 draw = ""
+                dropped: list[str] = []
                 if not ws and limited:   # drawing takes the move action, and the attack would be a second one
                     break
                 if not ws:   # nothing of this kind in hand: draw one (the move action: no full attack this turn)
@@ -3247,7 +3276,8 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                     if not ws:
                         break
                     need = weapons(c).get(ws[0][0], {}).get("hands", 1)
-                    drop = f" (dropping its {', '.join(wielding(c))})" if need > free_hands(c) and wielding(c) else ""
+                    dropped = list(wielding(c)) if need > free_hands(c) and wielding(c) else []
+                    drop = f" (dropping its {', '.join(dropped)})" if dropped else ""
                     draw = f"draw {ws[0][0]}{drop}, "
                 with _placed(c, sq), _holding(c, [ws[0][0]] if draw else None):
                     if kind == "melee" and not threatens(c, t):
@@ -3266,19 +3296,29 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                                 gifted.append(o["token"])
                     shoot_threat = _threatened_by(st, c) if kind == "ranged" else []
                 provoked = sorted(set(([] if step else provokers(sq)) + shoot_threat))
+                if dropped and sq == start and not move_only and sheathe_plan is None:
+                    # the alternative: sheathe (a move action, provokes) and draw (the other move): no attack
+                    # this turn, the weapon kept; next round it attacks from here (counted at half)
+                    sheathe_plan = (ev, dropped, ws[0][0], _threatened_by(st, c))
                 full = step and len(ws) > 1
                 label_ = (f"{where(sq, feet)}{draw}{'full attack' if full else 'attack'} {t['token']} "
                           f"({'/'.join(n for n, _w, _b in ws[:3])}{'…' if len(ws) > 3 else ''}: hits on {', '.join(notes[:3])})"
                           + (" [can't see it: guess its square]" if unseen else ""))
                 extra = f"gives {', '.join(gifted)} flanking" if gifted else ""
-                score = ev + flank_gift - _aoo_risk(st, c, provoked)
+                lose = drop_cost(c, dropped)
+                score = ev + flank_gift - _aoo_risk(st, c, provoked) - lose
                 if best is None or score > best[0]:
-                    best = (score, (ev, flank_gift, sq, provoked, label_, extra))
+                    best = (score, (ev, flank_gift, sq, provoked, label_, extra, lose))
             if best:
-                ev, gift, sq, provoked, label_, extra = best[1]
-                add(kind, ev, gift, sq, provoked, label_, extra)
+                ev, gift, sq, provoked, label_, extra, lose = best[1]
+                add(kind, ev, gift, sq, provoked, label_, extra, lose=lose)
                 if kind == "melee":
                     attacked.add(t["token"])
+            if sheathe_plan and not limited:
+                ev_s, held, drawn, threats = sheathe_plan
+                add(kind, 0.5 * ev_s, 0.0, start, threats,
+                    f"stay, sheathe its {', '.join(held)} and draw its {drawn} (two move actions, no attack now)",
+                    f"(next round: attacks {t['token']} ~{ev_s:.1f}, counted at half)")
 
     # --- advance: a melee creature that can't reach a foe this turn closes in (a double move) ---
     melee_ws = _weapons(prof, "melee", True)
@@ -3288,6 +3328,8 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
             spots = []
             melee_held = [n for n, _w, _b in melee_ws if at_hand(c, n)]
             imagined = None if melee_held else [melee_ws[0][0]]   # it would draw its melee weapon on the way
+            let_go = (list(wielding(c)) if imagined and weapons(c).get(imagined[0], {}).get("hands", 1) > free_hands(c)
+                      else [])   # …letting go of what's in its hands (sheathing would cost the second move)
             for q, feet in two.items():
                 with _placed(c, q), _holding(c, imagined):
                     if threatens(c, t):
@@ -3310,9 +3352,11 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                 continue
             spot = SPOT_VALUE if in_view else 0.0   # an enemy back in sight: it (and its allies) can strike next round
             add("melee", 0.5 * ev_next if reach_next else 0.0, spot, q, prov_of[q],
-                f"{how} to {fmt_pos(*q)}" + (f", drawing its {imagined[0]}" if imagined else "") + f", closing on {t['token']}"
+                f"{how} to {fmt_pos(*q)}" + (f", drawing its {imagined[0]}" if imagined else "")
+                + (f" (dropping its {', '.join(let_go)})" if let_go else "") + f", closing on {t['token']}"
                 + (" (stays hidden)" if hidden else "") + (" (it comes into view there)" if in_view else ""),
-                f"(next round: full attack ~{ev_next:.1f}, counted at half)" if reach_next else "(still out of reach)")
+                f"(next round: full attack ~{ev_next:.1f}, counted at half)" if reach_next else "(still out of reach)",
+                lose=drop_cost(c, let_go))
 
     # --- spells, spell-like abilities and special abilities with effect data ---
     sp = _spent(c)
@@ -4885,6 +4929,11 @@ def cmd_end(args: Args, st: State) -> str:
         cr = f", CR {c['cr']}" if c.get("cr") else ""
         out.append(f"  {c['token']} {c['name']}: {status}{cr}")
     out.append(f"XP from defeated/removed enemies with CR: {xp} (check removed ones: fled ≠ defeated unless overcome)")
+    if st.get("ground"):   # dropped and disarmed weapons: still lying where they fell
+        names = {t["token"]: t["name"] for t in st["tokens"]}
+        out.append("Left on the ground: " + "; ".join(f"{names.get(g['owner'], g['owner'])}'s {g['item']} at {fmt_pos(*g['at'])}"
+                                                      for g in st["ground"])
+                   + ". The party can pick these up now; anything not recovered is lost (update the sheets).")
     # bookkeeping: PC HP back to their sheets, the combat log into the session log
     for c in st["tokens"]:
         ref = c.get("ref") or ""

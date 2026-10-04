@@ -1149,6 +1149,38 @@ class Weapons(CampaignCase):
         out = self.run_cmd("options", "g1").split("Details:")[0]
         self.assertIn("draw rapier (dropping its composite longbow), attack C", out)
 
+    def test_dropping_costs_and_sheathing_is_offered(self) -> None:
+        out = self.run_cmd("options", "g1").split("Details:")[0]
+        drop = next(l for l in out.splitlines() if "dropping its composite longbow" in l)
+        self.assertIn("a dropped weapon −1", drop)                   # the bow: not its only melee weapon
+        self.assertIn("sheathe its composite longbow and draw its rapier", out)
+
+    def test_dropping_the_last_melee_weapon_costs_more(self) -> None:
+        import combat
+        self.run_cmd("wield", "g1", "rapier", "--drop", "composite longbow", "--out-of-turn")
+        st = self.state()
+        st["ground"] = []                                            # its bow is back in its quiver… for the test
+        combat.save(self.slug, st)
+        self.run_cmd("move", "C", "K5", "--out-of-turn")            # Corin far away: the bow is the only way to reach him
+        out = self.run_cmd("options", "g1").split("Details:")[0]
+        drop = next((l for l in out.splitlines() if "dropping its rapier" in l and "attack C" in l), "")
+        self.assertIn("a dropped weapon −2.5", drop)
+
+    def test_sheathing_provokes_and_doesnt_ride_on_movement(self) -> None:
+        import combat
+        st = self.state()
+        c = combat.token(st, "g1")
+        c["wielding"] = ["composite longbow"]
+        c["turn_actions"] = {"standard": None, "move": ["movement"], "full": None, "swift": None}   # it already moved
+        combat.save(self.slug, st)
+        out = self.run_cmd("wield", "g1", "rapier", "--sheathe", "composite longbow")
+        self.assertIn("sheathes its composite longbow (a move action)", out)   # not "combined with its move"
+        self.assertIn("aoo", out.lower())                            # it provokes (Corin can't take it yet: flat-footed)
+
+    def test_end_reports_what_lies_on_the_ground(self) -> None:
+        self.run_cmd("wield", "g1", "rapier", "--drop", "composite longbow")
+        self.assertIn("Left on the ground: Guard's composite longbow at B2", self.run_cmd("end"))
+
 
 class TurnMarks(CampaignCase):
     def setUp(self) -> None:
