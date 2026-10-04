@@ -82,6 +82,7 @@ When a **unique, powerful or boss** enemy drops to 0 HP or below from the PC's a
 
 ## When the PC goes down
 - **The player rolls** their stabilization checks while dying (Constitution, per the system's rules). The script asks for one at the start of each of their turns.
+- **First aid** (`combat_first_aid`): an ally next to the dying PC can stabilize them with a Heal check (DC 15, a standard action that provokes; no taking 10 in combat). Any healing of a dying creature stabilizes it too. Companions and allies get it in their turn plans; a PC healer rolls their own check. Someone who stabilized on their own is still at risk after the fight (the end report says so) until they're tended.
 - **Resolve the end of the fight in the same reply, step by step:** what the enemies do (per the exit ramp prepared for this fight), what the companion does, what happens to the PC. Never "keep rolling it forward and report back later".
 - **Apply the session-zero mercy policy and lethality openly,** as agreed.
 

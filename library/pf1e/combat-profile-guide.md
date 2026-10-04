@@ -103,6 +103,11 @@ Where the stat block lists the spell's level, put it in `level`, because the con
 `profile check` resolves every listed spell and warns about the ones without effect data. Conditions and buffs use the names in `library/pf1e/conditions.json` (`blessed`, `frightened`, `evil eye (attack rolls)`, …); a custom one brings `cond_mods` (`{}` = tracked by name on purpose).
 
 
+## Skills the script rolls
+| Stat block | Profile |
+|---|---|
+| **Skills** Heal +5 | `"skills": {"heal": 5}`: first aid on a dying ally (DC 15). Untrained: the Wis modifier; with a healer's kit, +2 more |
+
 ## Sneak attack and special abilities
 Each entry in `abilities` takes `"type": "su"` (default) or `"ex"`. Neither provokes, needs concentration or is subject to spell resistance.
 

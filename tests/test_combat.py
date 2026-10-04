@@ -1398,3 +1398,58 @@ class SpellResistance(CampaignCase):
         import combat_rules as R
         _errs, warns = R.check_profile(dict(GOBLIN, sla=[{"name": "channel negative energy", "per_day": 5, "level": 1}]))
         self.assertTrue(any("supernatural" in w for w in warns), warns)
+
+
+class FirstAid(CampaignCase):
+    """Heal DC 15, a standard action that provokes, on a dying creature next to the healer."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.new(blank="10x6")
+        self.add("b1", "Brenna", "C2", dict(GOBLIN, skills={"heal": 99}), side="ally", init=20)
+        self.add("C", "Corin", "B2", dict(PC_PROFILE, con=12), side="pc", init=10)
+        self.add("k1", "Kovan", "H5", GOBLIN, side="ally", init=8)
+        self.add("g1", "Gob", "J2", GOBLIN, init=5)
+        self.run_cmd("hp", "C", "-33")                               # Corin: -3, dying
+        self.run_cmd("next")                                          # Brenna's turn
+
+    def tok(self, t: str) -> dict:
+        import combat
+        return combat.token(self.state(), t)
+
+    def test_ally_stabilizes_a_dying_pc(self) -> None:
+        plans = self.run_cmd("options", "b1").split("Details:")[0]
+        self.assertIn("first aid on C", plans.splitlines()[2])        # the top plan
+        out = self.run_cmd("first-aid", "b1", "C")
+        self.assertIn("success, stable", out)
+        self.assertTrue(self.tok("C").get("stable_aided"))
+        self.assertEqual(self.tok("b1")["turn_actions"]["standard"], "first aid on C")   # its standard action
+        self.assertIn("already stable with help", self.fail_cmd("first-aid", "b1", "C", "--override"))
+
+    def test_refusals(self) -> None:
+        self.assertIn("isn't dying", self.fail_cmd("first-aid", "b1", "k1"))
+        self.run_cmd("move", "b1", "F2")
+        self.run_cmd("next")                                          # Corin's turn (dying): skip it for the test
+        self.assertIn("next to", self.fail_cmd("first-aid", "b1", "C", "--out-of-turn"))
+
+    def test_a_pc_healer_rolls_their_own_check(self) -> None:
+        self.run_cmd("hp", "k1", "-20")                               # Kovan dying, next to nobody
+        self.run_cmd("hp", "C", "40")
+        self.run_cmd("move", "C", "G5", "--out-of-turn")
+        self.assertIn("player's roll", self.fail_cmd("first-aid", "C", "k1", "--out-of-turn"))
+        self.assertIn("failure, still dying", self.run_cmd("first-aid", "C", "k1", "--total", "9", "--out-of-turn"))
+        self.assertIn("success", self.run_cmd("first-aid", "C", "k1", "--total", "15", "--out-of-turn"))
+
+    def test_any_healing_stabilizes_and_unaided_is_reported(self) -> None:
+        self.run_cmd("hp", "C", "1")                                  # -3 → -2: cured of 1 point
+        self.assertTrue(self.tok("C").get("stable_aided"))
+        self.run_cmd("hp", "k1", "-20")                               # Kovan: -8, dying
+        self.run_cmd("stabilize", "k1")                               # NPC ally rolls (may fail: force success below)
+        import combat
+        st = self.state()
+        k = combat.token(st, "k1")
+        combat.R.add_condition(st, k, "stable")
+        k["stable_aided"] = False
+        combat.save(self.slug, st)
+        self.assertTrue(combat.needs_first_aid(combat.token(self.state(), "k1")))   # first aid still helps
+        self.assertIn("Stable but unaided: Kovan", self.run_cmd("end"))

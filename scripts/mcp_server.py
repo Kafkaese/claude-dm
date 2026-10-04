@@ -280,6 +280,13 @@ TOOLS: list[Tool] = [
     Tool("combat_stabilize", "A dying creature's stabilization check (a PC's total is required; NPCs roll).",
          {"token": S(TOK), "total": I("PC: the player's total")}, ["token"],
          lambda a: ["stabilize", a["token"]] + flags(a, {"total": "--total"})),
+    Tool("combat_first_aid", "First aid: a Heal check (DC 15, a standard action that provokes) on a dying creature next to the "
+         "healer. Success makes it stable with help (no more HP loss). NPCs roll their Heal modifier; a PC healer's check is the "
+         "player's roll (total). Fails cleanly if the target isn't dying or is already stable with help.",
+         {"healer": S(TOK), "target": S(TOK), "total": I("PC healer: the player's Heal check"),
+          "out_of_turn": OOT, "override": B("don't charge the action")}, ["healer", "target"],
+         lambda a: ["first-aid", a["healer"], a["target"]] + flags(a, {"total": "--total", "out_of_turn": "--out-of-turn",
+                                                                      "override": "--override"})),
     Tool("combat_condition", "Add a condition or effect (known conditions carry their rules; others: give modifiers), or remove one.",
          {"token": S(TOK), "action": S("add or remove", ["add", "remove"]), "condition": S("e.g. shaken, prone, bless"),
           "rounds": I("duration in rounds (expires by itself)"), "atk": I("attack modifier"), "ac": I("AC modifier"),

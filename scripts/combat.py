@@ -93,6 +93,9 @@ Play
   save TOKEN fort|ref|will --dc N [--total N]
                                   NPC: rolled from the profile. PC: the player's total. Resolves a
                                   pending area-effect save for that token, if there is one
+  first-aid HEALER TARGET [--total N]
+                                  a Heal check (DC 15, standard action, provokes) on a dying creature next
+                                  to the healer: success makes it stable with help (NPCs roll skills.heal)
   stabilize TOKEN [--total N]     dying check: DC 10, minus the negative HP total (the PC's --total;
                                   NPCs roll). Failure costs 1 HP; success adds "stable"
   order TOKEN aoo always|never|ask
@@ -1259,10 +1262,11 @@ def cmd_endturn(args: Args, st: State) -> str:
     return f"{c['name']}'s turn is over; the interface plays the next step"
 
 
-ACTOR_ARG = {"wield": "token", "pickup": "token", "ability": "token", "maneuver": "attacker", "attack": "attacker", "move": "token", "cast": "token", "sla": "token", "provoke": "token", "area": "frm"}
+ACTOR_ARG = {"wield": "token", "pickup": "token", "ability": "token", "maneuver": "attacker", "attack": "attacker", "move": "token", "cast": "token", "sla": "token", "provoke": "token", "area": "frm", "first-aid": "token"}
 
 
-UNDOABLE = ("wield", "pickup", "attack", "damage", "maneuver", "move", "save", "stabilize", "act", "provoke", "endturn", "ability")
+UNDOABLE = ("wield", "pickup", "attack", "damage", "maneuver", "move", "save", "stabilize", "act", "provoke", "endturn", "ability",
+            "first-aid")
 READ_ONLY = ("show", "dist", "threat", "events", "sight", "actions", "options", "spells", "ask", "briefing")
 
 
@@ -1891,6 +1895,7 @@ def cmd_ability(args: Args, st: State) -> str:
         for o in hit:
             before = o["hp"]
             o["hp"] = min(o.get("max_hp", o["hp"] + amount), o["hp"] + amount)
+            healed(st, o, before)
             out.append(f"  {o['token']}: {before} → {o['hp']}")
             if not o.get("hidden"):
                 event(st, f"{name}: {who(o)} is healed, +{o['hp'] - before} HP [{who(o)}: {status(o)}]")
@@ -2084,6 +2089,7 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
             amount, detail, _ = _roll(args.heal)
             before = t["hp"]
             t["hp"] = min(t.get("max_hp", t["hp"] + amount), t["hp"] + amount)
+            healed(st, t, before)
             if t.get("nonlethal"):
                 t["nonlethal"] = max(0, t["nonlethal"] - amount)
             out.append(f"{name}: heals {args.heal} → {detail} = {amount}: {t['token']} HP {before} → {t['hp']}/{t.get('max_hp')}")
@@ -3531,6 +3537,25 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
             add("spell", v * keep, 0, q, sorted(set(([] if q == start else provokers(q)) + prov)),
                 f"{where(q, one.get(q, 0))}{text}{note}")
 
+    # --- first aid: a dying ally next to it, or one move away (Heal DC 15, a standard action, provokes) ---
+    if not move_only and not fear and not (limited and R.has(c, "nauseated")):
+        aid_bonus = first_aid_bonus(c)
+        aid_chance = max(0.05, min(1.0, (21 - (FIRST_AID_DC - aid_bonus)) / 20))
+        for o in [o for o in allies if needs_first_aid(o)][:2]:
+            ox, oy = o["x"], o["y"]
+            spots = [q for q in one if max(abs(q[0] - ox), abs(q[1] - oy)) <= 1 and q != (ox, oy)]
+            if not spots:
+                continue
+
+            def aid_risk(q: Square) -> list[str]:
+                with _placed(c, q):
+                    return sorted(set(([] if q == start else provokers(q)) + _threatened_by(st, c)))
+            q = min(spots, key=lambda q: (_aoo_risk(st, c, aid_risk(q)), _incoming(st, c, q, memo), one[q]))
+            worth = FIRST_AID_PC if o["side"] == "pc" else FIRST_AID_ALLY
+            add("heal", 0, aid_chance * worth, q, aid_risk(q),
+                f"{where(q, one[q])}first aid on {o['token']} (dying, {o['hp']} HP; Heal {aid_bonus:+d} vs DC {FIRST_AID_DC}: {aid_chance:.0%})",
+                "(`combat_first_aid`)")
+
     # --- defense: total defense here or on the safest square in one move (+4 AC: ~20% fewer hits) ---
     # Holding back is a wasted turn unless it's in danger, its morale broke, or it's afraid: total
     # defense where no enemy can reach it defends against nothing.
@@ -4655,7 +4680,9 @@ def cmd_hp(args: Args, st: State) -> str:
     """Change a token's HP (healing or damage outside an attack) and log it."""
     c = token(st, args.token)
     delta = int(args.delta)
+    before = c["hp"]
     c["hp"] = min(c["max_hp"], c["hp"] + delta)
+    healed(st, c, before)
     state = health(c) if c["hp"] > 0 else ("disabled" if c["hp"] == 0 else "dying / down")
     if not c.get("hidden"):
         why = f" ({args.why})" if args.why else ""
@@ -4689,15 +4716,18 @@ def cmd_cond(args: Args, st: State) -> str:
 
 def _stabilize(st: State, c: Token, total_reported: int | None) -> str:
     """PF1e dying check: DC 10 Constitution check, with a penalty equal to the negative HP total."""
+    nat = None
     if total_reported is None:
         mod = R.ability_mod(c.get("con"))
         total_c, detail, _ = _roll(f"1d20{mod:+d}")
+        nat = _natural(detail)
         how = f"1d20{mod:+d} → {detail} = {total_c}"
     else:
         total_c, how = total_reported, f"reported {total_reported}"
     final = total_c + c["hp"]   # hp is negative: the penalty
-    if final >= 10:
+    if final >= 10 or nat == 20:   # a natural 20 always stabilizes (CRB pg. 190)
         R.add_condition(st, c, "stable")
+        c["stable_aided"] = False   # on its own: it still loses HP hourly unless someone helps (first aid)
         if not c.get("hidden"):
             event(st, f"{who(c)} stabilizes [{status(c)}]")
         return f"stabilization: {how}, {c['hp']} HP penalty → {final} vs DC 10: stable"
@@ -4717,6 +4747,74 @@ def cmd_stabilize(args: Args, st: State) -> str:
     if c["side"] == "pc" and args.total is None:
         raise CombatError("a PC's stabilization check is the player's roll: pass --total N")
     return _stabilize(st, c, args.total)
+
+
+# First aid (library/pf1e/rules/heal-skill.md, CRB pg. 98, Table 8-2): a Heal check, DC 15, a standard
+# action that provokes, on a dying creature (negative HP, still losing them; table reading: next to it).
+# Success makes it stable with help: no more HP loss. A failure changes nothing and can be retried.
+# Taking 10 is impossible in combat. Heal works untrained; a healer's kit adds +2 (the profile's
+# skills.heal includes it). A PC's check is the player's roll.
+FIRST_AID_DC = 15
+FIRST_AID_PC = 8.0     # what stopping a dying PC from bleeding out is worth to the plans (points of expected damage)
+FIRST_AID_ALLY = 4.0
+
+
+def healed(st: State, c: Token, before: int) -> None:
+    """After healing: a dying creature cured of even 1 point becomes stable with help (CRB pg. 190);
+    at 0 or more HP it isn't dying any more."""
+    if c["hp"] > before and before < 0:
+        if c["hp"] < 0:
+            R.add_condition(st, c, "stable")
+            c["stable_aided"] = True
+        else:
+            R.remove_condition(c, "stable")
+            c.pop("stable_aided", None)
+
+
+def first_aid_bonus(c: Token) -> int:
+    """The creature's Heal modifier for first aid (profile skills.heal; untrained +0 if unknown)."""
+    return int(((c.get("profile") or {}).get("skills") or {}).get("heal", 0))
+
+
+def needs_first_aid(c: Token) -> bool:
+    """Dying (negative HP, alive) and not yet stable with help: first aid would do something."""
+    return c["hp"] < 0 and not is_dead(c) and not c.get("removed") and not (R.has(c, "stable") and c.get("stable_aided", True))
+
+
+def cmd_first_aid(args: Args, st: State) -> str:
+    """A Heal check to stabilize a dying creature next to the healer (a standard action that provokes)."""
+    c, t = token(st, args.token), token(st, args.target)
+    if not needs_first_aid(t):
+        why = ("is dead" if is_dead(t) else "isn't dying" if t["hp"] >= 0 else "is already stable with help")
+        raise CombatError(f"{t['token']} {why}: first aid does nothing (nothing was spent)")
+    if feet_between(c, t) > 5:
+        raise CombatError(f"{t['token']} is {feet_between(c, t)} ft away: first aid needs it next to {c['token']} (move first)")
+    if c["side"] == "pc" and args.total is None:
+        raise CombatError("first aid is a Heal check, the player's roll: pass --total N (DC 15; no taking 10 in combat)")
+    out = []
+    if not (args.out_of_turn or args.override):
+        spend(st, c, "standard", f"first aid on {t['token']}")
+        lines, _ = provoke_aoos(st, c, reason=f"giving first aid to {t['token']}")
+        out += lines
+        if not can_act(c):
+            return "\n".join(out + [f"{c['token']} goes down before finishing the first aid"])
+    if args.total is None:
+        bonus = first_aid_bonus(c)
+        total, detail, _ = _roll(f"1d20{bonus:+d}")
+        how = f"Heal 1d20{bonus:+d} → {detail} = {total}"
+    else:
+        total, how = args.total, f"Heal reported {args.total}"
+    ok = total >= FIRST_AID_DC
+    if ok:
+        R.add_condition(st, t, "stable")
+        t["stable_aided"] = True
+    out.insert(0, f"{c['token']} gives {t['token']} first aid: {how} vs DC {FIRST_AID_DC}: "
+                  + ("success, stable" if ok else "failure, still dying (it can try again)"))
+    if not c.get("hidden"):
+        event(st, f"{who(c)} gives {who(t)} first aid — " + (f"{who(t)} is stable [{status(t)}]" if ok else "no luck yet"))
+    if st.get("turn") == c["token"]:
+        out.append(action_status(st, c))
+    return "\n".join(out)
 
 
 def _save(st: State, c: Token, kind: str, dc: int, total_reported: int | None = None) -> tuple[bool, int, str]:
@@ -4929,6 +5027,11 @@ def cmd_end(args: Args, st: State) -> str:
         cr = f", CR {c['cr']}" if c.get("cr") else ""
         out.append(f"  {c['token']} {c['name']}: {status}{cr}")
     out.append(f"XP from defeated/removed enemies with CR: {xp} (check removed ones: fled ≠ defeated unless overcome)")
+    alone = [c["name"] for c in st["tokens"] if c["side"] in FRIENDLY and c["hp"] < 0 and not is_dead(c)
+             and R.has(c, "stable") and c.get("stable_aided") is False]
+    if alone:   # stabilized on their own: still losing HP hourly (CRB pg. 190) until someone tends them
+        out.append(f"Stable but unaided: {', '.join(alone)}: still at risk (an hourly Con check, 1 HP per failure) "
+                   f"until someone gives first aid (Heal DC 15) or any healing.")
     if st.get("ground"):   # dropped and disarmed weapons: still lying where they fell
         names = {t["token"]: t["name"] for t in st["tokens"]}
         out.append("Left on the ground: " + "; ".join(f"{names.get(g['owner'], g['owner'])}'s {g['item']} at {fmt_pos(*g['at'])}"
@@ -5007,6 +5110,9 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--step", action="store_true", help="a 5-foot step (no AoO)")
     m.add_argument("--no-aoo", action="store_true", help="don't roll NPC attacks of opportunity")
     sb = sub.add_parser("stabilize"); sb.add_argument("token"); sb.add_argument("--total", type=int)
+    fa = sub.add_parser("first-aid"); fa.add_argument("token"); fa.add_argument("target")
+    fa.add_argument("--total", type=int, help="a PC healer's Heal check (the player's roll)")
+    fa.add_argument("--out-of-turn", action="store_true"); fa.add_argument("--override", action="store_true")
     sv = sub.add_parser("save"); sv.add_argument("token"); sv.add_argument("kind", nargs="?", choices=["fort", "ref", "will"])
     sv.add_argument("--dc", type=int); sv.add_argument("--total", type=int)
     ar = sub.add_parser("area"); ar.add_argument("shape", choices=["burst", "cone", "line"]); ar.add_argument("feet", type=int)
@@ -5122,7 +5228,7 @@ def main(argv: list[str] | None = None) -> int:
                 "threat": cmd_threat, "hp": cmd_hp, "cond": cmd_cond, "init": cmd_init,
                 "reveal": cmd_flag, "hide": cmd_flag, "remove": cmd_flag, "end": cmd_end,
                 "attack": cmd_attack, "log": cmd_log, "events": cmd_events,
-                "ask": cmd_ask, "wield": cmd_wield, "pickup": cmd_pickup, "briefing": cmd_briefing, "damage": cmd_damage, "stabilize": cmd_stabilize, "save": cmd_save, "area": cmd_area,
+                "ask": cmd_ask, "wield": cmd_wield, "pickup": cmd_pickup, "briefing": cmd_briefing, "damage": cmd_damage, "stabilize": cmd_stabilize, "first-aid": cmd_first_aid, "save": cmd_save, "area": cmd_area,
                 "order": cmd_order, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
                 "provoke": cmd_provoke, "endturn": cmd_endturn, "maneuver": cmd_maneuver,
                 "light": cmd_light, "sight": cmd_sight, "act": cmd_act, "surprise": cmd_surprise, "ability": cmd_ability,

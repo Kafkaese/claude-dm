@@ -63,6 +63,8 @@
       }
     },
     "perception": {"type": "integer", "description": "Perception modifier (Senses line). Used to decide how far a creature notices others in plain sight (take 10)."},
+    "skills": {"type": "object", "additionalProperties": false, "description": "Skill modifiers the script rolls itself.",
+               "properties": {"heal": {"type": "integer", "description": "Heal modifier for first aid (DC 15), a healer's kit's +2 included; untrained: its Wis modifier (default +0)"}}},
     "aoo": {"type": "integer", "minimum": 0, "description": "AoOs per round, only if it differs from the rules (1, +Dex with Combat Reflexes)."},
     "attacks": {
       "type": "object", "description": "One entry per distinct attack. Required for kind creature (may be empty for a creature that doesn't attack).",
