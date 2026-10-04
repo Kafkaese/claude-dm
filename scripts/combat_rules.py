@@ -454,7 +454,19 @@ def check_profile(p: Any, system: str = 'pf1e') -> tuple[list[str], list[str]]:
     for i, s in enumerate(p.get("sla") or []):
         if isinstance(s, dict) and s.get("per_day") not in ("constant",) and "level" not in s:
             warns.append(f"sla[{i}] {s.get('name')!r}: no 'level', so concentration checks assume level 0")
+        name = str(s.get("name", "")).lower() if isinstance(s, dict) else ""
+        if any(h in name for h in SU_HINTS):
+            warns.append(f"sla[{i}] {s.get('name')!r} looks like a supernatural ability (Su): put it in 'abilities' with "
+                         f'"type": "su" (no attack of opportunity, no concentration, no spell resistance), unless its text says (Sp)')
+    for name, a in (p.get("abilities") or {}).items():
+        if isinstance(a, dict) and "type" not in a:
+            warns.append(f"abilities.{name}: no 'type' (\"su\" or \"ex\"); assuming su")
     return errs, warns
+
+
+# Special abilities that are supernatural in the CRB, not spell-like (library/pf1e/rules/special-abilities.md):
+# a profile listing one under "sla" would make it provoke, need concentration and face spell resistance.
+SU_HINTS = ("channel", "bardic performance", "performance", "breath weapon", "lay on hands", "smite")
 
 
 def profile_text_blocks(text: str) -> list[str]:

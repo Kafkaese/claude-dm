@@ -249,10 +249,12 @@ TOOLS: list[Tool] = [
          "or defensive after their concentration check succeeded. Every spell in a fight goes through this.",
          {"caster": S(TOK), "spell": S("spell or ability name"), "sla": B("a spell-like ability"),
           "level": I("spell level, if ambiguous"), "class": S("casting class, if several"),
-          "cl": I("PC: caster level, if not on the sheet"), **EFFECT},
+          "cl": I("PC: caster level, if not on the sheet"),
+          "sr_check": I("PC: the player's caster level check (d20 + CL) when a target has spell resistance"), **EFFECT},
          ["caster", "spell"],
          lambda a: (["sla", a["caster"], a["spell"]] + flags(a, EFFECT_FLAGS) if a.get("sla") else
-                    ["cast", a["caster"], a["spell"]] + flags(a, {"level": "--level", "class": "--class", "cl": "--cl", **EFFECT_FLAGS}))),
+                    ["cast", a["caster"], a["spell"]] + flags(a, {"level": "--level", "class": "--class", "cl": "--cl",
+                                                                   "sr_check": "--sr-check", **EFFECT_FLAGS}))),
     Tool("combat_ability", "Use a special ability from the creature's profile (bardic performance, channel energy, breath weapon, …): "
          "uses per day, the action (a performance kept up costs its maintain action), and the effect: a buff on the allies it reaches, "
          "healing, or damage/conditions with saves. Aim it like a spell when it needs it.",

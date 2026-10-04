@@ -297,6 +297,7 @@ class Engine:
     last_event = 0.0
     COMPACT_AT = 120_000   # context tokens per call above which the conversation gets compacted between turns
     COMPACT_AFTER_FIGHT_AT = 100_000   # lower right after a fight: its tool calls and logs are dead weight then
+    COMPACT_IN_FIGHT_AT = 180_000      # during a fight only when it's this large: wait for the fight's end
     context_tokens = 0
     combat_rules_read = False   # combat.md is read when a fight starts, not with the session's table rules
 
@@ -385,6 +386,18 @@ class Engine:
         """The text held back so far (without releasing it)."""
         with self.lock:
             return "".join(ev.get("delta", "") for ev in self._held or [] if ev["type"] == "text")
+
+    def held_acted(self) -> bool:
+        """Whether the reply being held made any tool call."""
+        with self.lock:
+            return any(ev["type"] == "_tool" for ev in self._held or [])
+
+    def scrub_held(self, marker: str) -> None:
+        """Remove a marker from the held text (it must never reach the player)."""
+        with self.lock:
+            for ev in self._held or []:
+                if ev["type"] == "text" and marker in ev.get("delta", ""):
+                    ev["delta"] = ev["delta"].replace(marker, "")
 
     def release(self, publish: bool, after_tools: bool = False) -> str:
         """Stop holding text; show what was held back if `publish`, else drop it. With after_tools,
@@ -931,7 +944,7 @@ def load_history(session_id: str | None) -> list[dict[str, str]]:
             r = json.loads(line)
         except ValueError:
             continue
-        if r.get("isSidechain"):
+        if r.get("isSidechain") or r.get("isCompactSummary"):   # a compaction's summary isn't the player's
             continue
         msg = r.get("message") or {}
         if r.get("type") == "user" and isinstance(msg.get("content"), str):
@@ -943,6 +956,7 @@ def load_history(session_id: str | None) -> list[dict[str, str]]:
                 name = re.search(r"<command-name>(.*?)</command-name>", text, re.S)
                 args = re.search(r"<command-args>(.*?)</command-args>", text, re.S)
                 text = f"{name.group(1).strip() if name else ''} {args.group(1).strip() if args else ''}".strip()
+                text = player_part(text) or ""   # /compact is the interface's
             if text.strip():
                 out.append({"role": "player", "text": text})
         elif r.get("type") == "assistant":
@@ -1105,16 +1119,20 @@ def _step_context(st: dict[str, Any], c: dict[str, Any]) -> str:
         lines.append(f"In hand: {', '.join(cm.wielding(c)) or 'nothing'}. Attacking with another weapon needs combat_wield "
                      f"first (a move action; with BAB +1 it rides on a move; drop what's in the way for free). Only a melee "
                      f"weapon in hand (or natural attacks) threatens.")
-    spells = []
+    spells: list[str] = []
+    spent: list[str] = []   # only what it can still cast: a used-up spell isn't an option
     for sc in prof.get("spellcasting") or []:
         for lvl, names in (sc.get("spells") or {}).items():
-            spells += [f"{n} ({lvl})" for n in names]
-    slas = [s_["name"] for s_ in prof.get("sla") or []]
-    if spells or slas:
-        lines.append("Spells: " + (", ".join(spells) or "none") + ("; SLAs (sla=true): " + ", ".join(slas) if slas else "")
-                     + " (combat_info what=spells for what's left)")
+            for n in dict.fromkeys(names):
+                (spells if cm.spell_left(c, sc, lvl, n) else spent).append(f"{n} ({lvl})")
+    slas = [s_["name"] for s_ in prof.get("sla") or [] if cm.sla_left(c, s_)]
+    spent += [f"{s_['name']} (SLA)" for s_ in prof.get("sla") or [] if not cm.sla_left(c, s_)]
+    if spells or slas or spent:
+        lines.append("Spells it can still cast: " + (", ".join(spells) or "none") + ("; SLAs (sla=true; Sp: they provoke like spells, and spell resistance applies): " + ", ".join(slas) if slas else "")
+                     + (f". USED UP, not an option: {', '.join(spent)}" if spent else ""))
     if prof.get("abilities"):
-        lines.append("Abilities (combat_ability): " + ", ".join(prof["abilities"])
+        lines.append("Abilities (combat_ability; Su/Ex: no attack of opportunity, no spell resistance): "
+                     + ", ".join(f"{n} ({str((a or {}).get('type', 'su')).capitalize()})" for n, a in prof["abilities"].items())
                      + (f" — performing {c['performing']} (keep it up with combat_ability, or it ends)" if c.get("performing") else ""))
     if prof.get("sneak_attack"):
         lines.append(f"Sneak attack +{prof['sneak_attack']} (automatic when flanking or the target is denied its Dex).")
@@ -1430,7 +1448,7 @@ Each message gives the turn's context (whose turn, the actions left, an open que
 4. Then narrate the result in 1-3 lines (more for a crit, a kill or a spectacular moment), say which actions are left (from the tool's report), and STOP. Don't play anyone else's turn, don't run combat_next, never end the turn yourself, and never write the PC's words, thoughts or actions beyond what the player declared.
 5. When a result sets a question (an attack of opportunity, a save, a concentration or stabilization check), ask the player for that roll. The context shows an open question; the player's message may answer it.
 6. When a unique, named or boss enemy drops from the PC's attack, stop before describing it and ask "How do you want to do this?"; the player's next message describes the finish, and you narrate it.
-7. HAND BACK TO THE DM: reply with exactly {ESCALATE} and nothing else (no tool call, no other text) when the message is anything other than resolving the character's actions in this fight: talking with an NPC beyond a short battle cry (parley, threats, questions, surrender terms), questions about the world, lore, the story or a rule you aren't certain of, a stunt or skill use that needs a DC set (Bluff, Intimidate, Acrobatics past the basics), out-of-character remarks, or anything the sheet and tools don't cover.
+7. HAND BACK TO THE DM: decide this FIRST, before any tool call. Reply with exactly {ESCALATE} and nothing else (no tool call, no other text) when the message is anything other than resolving the character's actions in this fight: talking with an NPC beyond a short battle cry (parley, threats, questions, surrender terms), questions about the world, lore, the story or a rule you aren't certain of, a stunt or skill use that needs a DC set (Bluff, Intimidate, Acrobatics past the basics), out-of-character remarks, or anything the sheet and tools don't cover.
 
 Narration rules (strict):
 - Address the PC as "you". Never state an enemy's AC, attack bonus, HP or saves; say "hit", "miss", "bloodied". No game terms in NPCs' mouths.
@@ -1481,7 +1499,9 @@ class PlayerTurnRunner(CombatRunner):
 
     def play(self, text: str, st: dict[str, Any], recent: list[str]) -> tuple[bool, str | None]:
         """Resolve one player message. Returns (ok, the narration shown), with None for the narration
-        when it handed the message back to the main DM (nothing is shown then)."""
+        when it handed the message back to the main DM (nothing is shown then). A hand-back after a
+        tool call doesn't count: the actions are resolved, and passing the message on would have the
+        main DM resolve them a second time (a stabilization check rolled twice)."""
         key = (st.get("round"), st.get("turn"))
         if self.turn_key is not None and key != self.turn_key and self.engine.alive():
             self.engine.new_session()   # a new turn: start clean (the context line has what's left)
@@ -1492,7 +1512,8 @@ class PlayerTurnRunner(CombatRunner):
         try:
             ok = self.send(self.player_frame(text, st, recent))
         finally:
-            handed_back = ESCALATE in self.engine.held_text()
+            handed_back = ESCALATE in self.engine.held_text() and not self.engine.held_acted()
+            self.engine.scrub_held(ESCALATE)
             shown = self.engine.release(publish=not handed_back, after_tools=True)
         if not ok or handed_back:
             return ok, None

@@ -144,6 +144,14 @@
    "type": "boolean",
    "description": "needs a touch attack"
   },
+  "sr": {
+   "type": "boolean",
+   "description": "the spell's Spell Resistance line: true for 'yes' (incl. 'yes (harmless)', 'yes (object)'), false for 'no' or no SR line (personal spells). See library/pf1e/rules/spell-resistance.md"
+  },
+  "sr_harmless": {
+   "type": "boolean",
+   "description": "Spell Resistance: yes (harmless). A resistant creature must lower its SR (standard action) or the caster makes the caster level check"
+  },
   "attack": {
    "type": "integer",
    "description": "the touch attack bonus (ranged touch for a ray: BAB + Dex mod; melee touch: BAB + Str mod), rolled against touch AC before the effect lands"

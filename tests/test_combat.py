@@ -1236,3 +1236,133 @@ class Pursuit(CampaignCase):
         self.assertIn("it comes into view there", plans)
         first = plans.split("  1. ", 1)[1].splitlines()[0]
         self.assertIn("closing on g1", first)
+
+
+class ReviewFixes(CampaignCase):
+    """Fixes from the Road Toughs fight review."""
+
+    def test_fire_bolt_is_an_ability_not_a_weapon(self) -> None:
+        cleric = dict(GOBLIN, attacks={"heavy mace": {"bonus": 1, "damage": "1d8+1", "type": "melee"},
+                                       "fire bolt": {"bonus": 1, "damage": "1d6", "type": "ranged", "touch": True, "range": 30}})
+        self.new(blank="10x6")
+        self.add("s1", "Selvana", "B2", cleric, side="ally", init=20)
+        self.add("g1", "Gob", "F2", GOBLIN, init=10)
+        self.run_cmd("next")
+        import combat
+        st = self.state()
+        self.assertEqual(combat.weapons(combat.token(st, "s1"))["fire bolt"]["kind"], "ability")
+        self.assertNotIn("draw fire bolt", self.run_cmd("options", "s1"))
+        self.run_cmd("attack", "s1", "g1", "--with", "fire bolt")        # no wield needed
+        self.assertEqual(combat.wielding(combat.token(self.state(), "s1")), ["heavy mace"])
+
+    def test_fire_bolt_as_a_spell_like_ability(self) -> None:
+        cleric = dict(GOBLIN, attacks={"heavy mace": {"bonus": 1, "damage": "1d8+1", "type": "melee"}},
+                      sla=[{"name": "fire bolt", "per_day": 2, "cl": 1,
+                            "effect": {"target": "one", "range": 30, "touch": True, "attack": 1, "dmg": "1d6+{cl//2}"}}])
+        self.new(blank="10x6")
+        self.add("s1", "Selvana", "B2", cleric, side="ally", init=20)
+        self.add("g1", "Gob", "F2", GOBLIN, init=10)
+        self.run_cmd("next")
+        self.assertIn("use fire bolt on g1", self.run_cmd("options", "s1"))
+        out = self.run_cmd("sla", "s1", "fire bolt", "--target", "g1")
+        self.assertIn("touch", out)
+        import combat
+        self.assertEqual(combat._spent(combat.token(self.state(), "s1"))["sla"].get("fire bolt"), 1)
+
+    def test_used_up_spells_leave_the_briefing(self) -> None:
+        import combat
+        import dm_engine as E
+        caster = dict(GOBLIN, spellcasting=[{"class": "cleric", "cl": 1, "type": "prepared", "dc_base": 13, "concentration": 4,
+                                             "slots": {"0": 99, "1": 1}, "spells": {"0": ["guidance"], "1": ["cure light wounds"]}}])
+        self.new(blank="10x6")
+        self.add("s1", "Selvana", "B2", caster, side="ally", init=20)
+        self.add("g1", "Gob", "F2", GOBLIN, init=10)
+        st = self.state()
+        c = combat.token(st, "s1")
+        sc = c["profile"]["spellcasting"][0]
+        self.assertTrue(combat.spell_left(c, sc, 1, "cure light wounds"))
+        c["spent"] = {"slots": {}, "prepared": {"cleric": ["cure light wounds"]}, "sla": {}}
+        self.assertFalse(combat.spell_left(c, sc, 1, "cure light wounds"))
+        self.assertTrue(combat.spell_left(c, sc, 0, "guidance"))
+        st["tokens"] = [c if t["token"] == "s1" else t for t in st["tokens"]]
+        brief = E._step_context(st, c)
+        self.assertIn("USED UP, not an option: cure light wounds (1)", brief)
+        self.assertIn("Spells it can still cast: guidance (0)", brief)
+
+    def test_a_stable_pc_is_labelled_stable(self) -> None:
+        import combat
+        self.new(blank="8x6")
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=20)
+        self.run_cmd("hp", "C", "-35")
+        self.run_cmd("stabilize", "C", "--total", "30")
+        self.assertIn("stable", combat.status(combat.token(self.state(), "C")))
+        self.assertNotIn("dying", combat.status(combat.token(self.state(), "C")))
+
+
+class SpellResistance(CampaignCase):
+    """Spells and SLAs must beat spell resistance (1d20 + CL vs SR); Su/Ex abilities ignore it."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        bolt = {"target": "one", "range": 30, "dmg": "1d6+99"}
+        self.caster = dict(GOBLIN, spellcasting=[{"class": "sorcerer", "cl": 1, "type": "spontaneous", "dc_base": 13,
+                                                  "concentration": 5, "slots": {"1": 4},
+                                                  "spells": {"1": ["zap", "plain zap", "burst zap"]},
+                                                  "effects": {"zap": dict(bolt, sr=True), "plain zap": dict(bolt, sr=False),
+                                                              "burst zap": {"target": "area", "area": "burst 10", "dmg": "1d6+99",
+                                                                            "save": "ref", "dc": 99, "sr": True}}}],
+                           sla=[{"name": "fire bolt", "per_day": 3, "cl": 1,
+                                 "effect": {"target": "one", "range": 30, "touch": True, "attack": 99, "dmg": "1d6+99"}}],
+                           abilities={"blast": {"type": "su", "action": "standard", "target": "one", "range": 30, "dmg": "1d6+99"}})
+        self.new(blank="12x8")
+        self.add("s1", "Caster", "B2", self.caster, init=20)
+        self.add("C", "Corin", "B7", PC_PROFILE, side="pc", init=5)
+        self.add("r1", "Resister", "F2", dict(GOBLIN, sr=50), side="ally", init=10)
+        self.add("p1", "Plain", "F4", GOBLIN, side="ally", init=9)
+        self.run_cmd("next")                                          # s1's turn
+
+    def hp(self, tok: str) -> int:
+        import combat
+        return combat.token(self.state(), tok)["hp"]
+
+    def test_spell_and_sla_are_resisted_su_is_not(self) -> None:
+        before = self.hp("r1")
+        out = self.run_cmd("cast", "s1", "zap", "--target", "r1")
+        self.assertIn("RESISTED", out)
+        self.assertEqual(self.hp("r1"), before)
+        out = self.run_cmd("ability", "s1", "blast", "--target", "r1", "--override")
+        self.assertNotIn("spell resistance", out)
+        self.assertLess(self.hp("r1"), before)                        # Su: no SR
+
+    def test_sr_false_spell_and_touch_sla(self) -> None:
+        before = self.hp("r1")
+        out = self.run_cmd("cast", "s1", "plain zap", "--target", "r1")
+        self.assertNotIn("spell resistance", out)
+        self.assertLess(self.hp("r1"), before)
+
+    def test_touch_sla_checks_after_the_hit(self) -> None:
+        before = self.hp("r1")
+        out = self.run_cmd("sla", "s1", "fire bolt", "--target", "r1")
+        self.assertLess(out.index("touch"), out.index("spell resistance"))
+        self.assertEqual(self.hp("r1"), before)
+
+    def test_area_skips_only_the_resister(self) -> None:
+        r1, p1 = self.hp("r1"), self.hp("p1")
+        self.run_cmd("cast", "s1", "burst zap", "--at", "F3")
+        self.assertEqual(self.hp("r1"), r1)
+        self.assertLess(self.hp("p1"), p1)
+
+    def test_pc_check_is_the_players_roll(self) -> None:
+        import combat
+        self.write("spells/zap.md", '# Zap\n```spell-effect\n{"target": "one", "range": 100, "dmg": "1d6+99", "sr": true}\n```\n')
+        st = self.state()
+        st["turn"] = "C"
+        combat.save(self.slug, st)
+        self.assertIn("ask the player for a caster level check", self.fail_cmd("cast", "C", "zap", "--target", "r1", "--no-provoke"))
+        out = self.run_cmd("cast", "C", "zap", "--target", "r1", "--no-provoke", "--sr-check", "60")
+        self.assertIn("overcome", out)
+
+    def test_profile_check_flags_su_abilities_listed_as_sla(self) -> None:
+        import combat_rules as R
+        _errs, warns = R.check_profile(dict(GOBLIN, sla=[{"name": "channel negative energy", "per_day": 5, "level": 1}]))
+        self.assertTrue(any("supernatural" in w for w in warns), warns)

@@ -293,8 +293,14 @@ class Hub:
         self.publish({"type": "busy", "busy": False})
 
     def _compact(self) -> None:
-        """Between turns: compact the conversation when it's large, sooner right after a fight."""
+        """Between turns: compact the conversation when it's large, sooner right after a fight. Not
+        during a fight (a long wait mid-combat, and the DM would lose the rules it just read) unless
+        the context is huge: the fight's end is the better moment."""
         after_fight, self.fight_ended = self.fight_ended, False
+        camp = self.campaign()
+        st = combat_state(camp) if camp and self.eng.combat_engaged else None
+        if st and not after_fight and self.eng.context_tokens < self.eng.COMPACT_IN_FIGHT_AT:
+            return
         self.eng.compact_if_large(after_fight)
 
     def _with_recap(self, text: str) -> str:
@@ -329,7 +335,9 @@ class Hub:
                 runner.stop()
                 self.pc_runner = None
             return False
-        npc.note_player(text, narration)
+        if not narration:   # it acted but wrote nothing to show
+            self.system("Done: see the combat log.")
+        npc.note_player(text, narration or "(resolved; see the combat log)")
         return True
 
     def _get_pc_runner(self, camp: str, st: dict[str, Any]) -> PlayerTurnRunner:

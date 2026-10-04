@@ -23,7 +23,7 @@ Session number: `NN` = "Sessions played" in `campaign.md` + 1, zero-padded to tw
 
 **Check the character sheets for combat:** `combat_profile_check` on `players/characters/*.md`. Every PC's `combat-profile` block must pass `library/<system>/combat-profile-pc.schema.json`, or they can't be added to a fight. Fill in what the sheet already shows yourself. Collect whatever is still missing and ask the player for it in Step 3 (e.g. "For combat I still need your Strength score, Perception modifier and any special senses"). Then update the block.
 
-Reset the session's interruption count with the `world` tool (`session`, and `day "<in-game date>"` if the date changed).
+Reset the session's interruption count with the `world` tool (`mcp__dm__world`: `session`, and `day "<in-game date>"` if the date changed).
 
 Keep the brief in mind for the whole session. It replaces reading the DM files.
 

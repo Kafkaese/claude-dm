@@ -692,3 +692,57 @@ class PlayerTurns(CampaignCase):
         r.play("I step back", st2, [])
         self.assertEqual(fresh, [1])                                  # a new turn: a fresh conversation
         self.assertEqual(E.exchange_kind(r.player_frame("x", st, [])), "player-turn")
+
+
+class ReviewFixesEngine(CampaignCase):
+    def test_no_hand_back_after_acting(self) -> None:
+        self.new(blank="8x6")
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=20)
+        self.run_cmd("next")
+        shown: list[dict] = []
+        r = E.PlayerTurnRunner(lambda ev: shown.append(ev), self.slug, self.state())
+        r.engine.alive = lambda: True                                 # type: ignore[method-assign]
+
+        def send(prompt: str) -> bool:                                # acts, then hands back anyway
+            r.engine.emit(type="text_start")
+            with r.engine.lock:
+                r.engine._held.append({"type": "_tool"})              # type: ignore[union-attr]
+            r.engine.emit(type="text", delta="You slip further. " + E.ESCALATE)
+            return True
+        r.engine.send = send                                          # type: ignore[method-assign]
+        ok, text = r.play("14", self.state(), [])
+        self.assertEqual((ok, text), (True, "You slip further."))    # resolved here: the main DM never gets it
+        self.assertFalse(any(E.ESCALATE in ev.get("delta", "") for ev in shown))
+
+    def test_no_compaction_mid_fight(self) -> None:
+        import web
+        self.new(blank="8x6")
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=20)
+        self.run_cmd("next")
+        hub = web.Hub(self.slug)
+        hub.engine = E.Engine(lambda ev: None)
+        hub.engine.combat_engaged = True
+        calls: list[bool] = []
+        hub.engine.compact_if_large = lambda after_fight=False: calls.append(after_fight) or False   # type: ignore[method-assign]
+        hub.engine.context_tokens = 130_000
+        hub._compact()
+        self.assertEqual(calls, [])                                   # waits for the fight's end
+        hub.engine.context_tokens = 200_000
+        hub._compact()
+        self.assertEqual(calls, [False])                              # unless it's huge
+
+    def test_history_hides_compaction(self) -> None:
+        lines = [{"type": "user", "message": {"content": "/start-session x"}},
+                 {"type": "user", "isCompactSummary": True, "message": {"content": "This session is being continued…"}},
+                 {"type": "user", "message": {"content": "<command-name>/compact</command-name><command-args>Keep it</command-args>"}},
+                 {"type": "user", "message": {"content": "I draw my blade"}}]
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "s.jsonl"
+            p.write_text("\n".join(json.dumps(l) for l in lines))
+            old = E.transcript_path
+            E.transcript_path = lambda sid: p                          # type: ignore[assignment]
+            try:
+                h = E.load_history("s")
+            finally:
+                E.transcript_path = old                               # type: ignore[assignment]
+        self.assertEqual([m["text"] for m in h], ["/start-session x", "I draw my blade"])

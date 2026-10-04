@@ -22,7 +22,7 @@
 | **DR** 5/magic | `"dr": 5, "dr_bypass": "magic"` |
 | **Hardness** 10 (objects) | `"dr": 10, "dr_bypass": "-"` |
 | **Immune** fire, sleep; **Resist** cold 10 | `"immune": ["fire", "sleep"], "resist": {"cold": 10}` |
-| **SR** 15 | `"sr": 15` |
+| **SR** 15 | `"sr": 15`: spells and spell-like abilities must beat it with a caster level check (1d20 + CL); supernatural and extraordinary abilities ignore it |
 | **fast healing** 2 / **regeneration** 5 (fire, acid) | `"fast_healing": 2` / `"regeneration": {"amount": 5, "stopped_by": "fire, acid"}` |
 | **Defensive Abilities** uncanny dodge | `"uncanny_dodge": true` |
 | **Defensive Abilities** improved uncanny dodge | `"improved_uncanny_dodge": true` (can't be flanked) |
@@ -51,7 +51,7 @@ Each distinct attack gets an entry in `attacks`. The **name** is the weapon or n
 | **Melee** sap +3 (1d6+1 nonlethal) | `"nonlethal": true` |
 | **Ranged** shortbow +4 (1d6/×3) | `"shortbow": {"bonus": 4, "damage": "1d6", "type": "ranged", "mult": 3, "range": 60}` |
 | **Ranged** javelin +4 (1d6+3) | `"type": "ranged", "thrown": true, "range": 30` |
-| **Melee** rapier; **Ranged** composite longbow, holding the bow when the fight starts | `"wielding": ["composite longbow"]` (default: its first weapon). Attacks need the weapon in hand; drawing another is `wield`. Two-handed weapons and bows take both hands (`"hands": 2`, guessed from the name if left out); natural attacks (bite, claw, slam…) are always at hand (`"natural": true` where the name doesn't say). `"bab"`: drawing rides on a move with +1 or more (default) |
+| **Melee** rapier; **Ranged** composite longbow, holding the bow when the fight starts | `"wielding": ["composite longbow"]` (default: its first weapon). Attacks need the weapon in hand; drawing another is `wield`. Two-handed weapons and bows take both hands (`"hands": 2`, guessed from the name if left out); natural attacks (bite, claw, slam…) are always at hand (`"natural": true` where the name doesn't say), and so are supernatural or spell-like attacks like fire bolt or a ray (`"ability": true`; guessed for ranged touch attacks named bolt, ray, blast…). `"bab"`: drawing rides on a move with +1 or more (default) |
 | **Gear** 20 arrows; 4 javelins | `"ammo": 20` on the bow, `"ammo": 4` on the javelin. The script counts shots and throws and refuses an empty one (a thrown weapon has to be picked up: a move action that provokes). Leave it out to not track it |
 | longspear (reach) | `"reach": 10` on that attack |
 
@@ -78,7 +78,7 @@ Each spellcasting class or source becomes one entry in `spellcasting`:
 - **Prepared spells** are listed once **per copy**. `slots` counts how many are prepared at that level, including the domain spell.
 - **Spontaneous casters** list their spells known in `spells`, and their spells per day in `slots`.
 
-**Spell-like abilities** go in `sla`:
+**Spell-like abilities (Sp)** go in `sla`: they provoke like spells, can be used defensively (concentration), and spell resistance applies. Supernatural (Su) and extraordinary (Ex) abilities, such as channel energy, bardic performance or a breath weapon, go in `abilities` instead (`library/pf1e/rules/special-abilities.md`):
 
 | Stat block | Profile |
 |---|---|
@@ -104,6 +104,8 @@ Where the stat block lists the spell's level, put it in `level`, because the con
 
 
 ## Sneak attack and special abilities
+Each entry in `abilities` takes `"type": "su"` (default) or `"ex"`. Neither provokes, needs concentration or is subject to spell resistance.
+
 | Stat block | Profile |
 |---|---|
 | **Special Attacks** sneak attack +2d6 | `"sneak_attack": "2d6"`. The script adds it when the target is flanked or denied its Dex (not against concealment; ranged only within 30 ft) |

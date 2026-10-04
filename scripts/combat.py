@@ -617,7 +617,7 @@ def status(c: Token) -> str:
         elif c.get("con") and c["hp"] <= -c["con"]:
             s += ", dead"
         elif c["hp"] < 0:
-            s += ", dying"
+            s += ", stable" if R.has(c, "stable") else ", dying"
         return s
     return health(c)
 
@@ -1631,6 +1631,23 @@ def _spent(c: Token) -> dict[str, Any]:
     return c.setdefault("spent", {"slots": {}, "prepared": {}, "sla": {}})
 
 
+def spell_left(c: Token, sc: dict[str, Any], lvl: str | int, name: str) -> bool:
+    """Whether the caster can still cast this spell of this spellcasting entry: cantrips always; a
+    spontaneous caster while it has slots of that level; a prepared one while an uncast copy is left."""
+    sp = _spent(c)
+    if int(lvl) == 0:
+        return True
+    if sc.get("type") == "spontaneous":
+        return sp["slots"].get(sc["class"].lower(), {}).get(str(lvl), 0) < (sc.get("slots") or {}).get(str(lvl), 0)
+    names = [x.lower() for x in (sc.get("spells") or {}).get(str(lvl), [])]
+    return sp["prepared"].get(sc["class"].lower(), []).count(name.lower()) < names.count(name.lower())
+
+
+def sla_left(c: Token, s_: dict[str, Any]) -> bool:
+    """Whether a spell-like ability has a use left today."""
+    return s_.get("per_day") == "at will" or _spent(c)["sla"].get(s_["name"].lower(), 0) < (s_.get("per_day") or 0)
+
+
 def _concentration(st: State, c: Token, bonus: int, dc: int, why: str) -> tuple[bool, str]:
     """Roll a concentration check. Returns (success, report line)."""
     total_c, detail, _ = _roll(f"1d20{bonus:+d}")
@@ -1724,6 +1741,8 @@ def apply_effect_data(args: Args, data: dict[str, Any] | None, c: Token, st: Sta
             setattr(args, k, data[k])
     if data.get("half") and not args.half:
         args.half = True
+    if data.get("sr") is not None:
+        args.sr, args.sr_harmless = bool(data["sr"]), bool(data.get("sr_harmless"))
     if data.get("dc") and args.dc is None:
         args.dc = data["dc"]
     if data.get("touch") and data.get("target") == "one":
@@ -1881,6 +1900,7 @@ def cmd_ability(args: Args, st: State) -> str:
                             dmg=None, half=False, heal=None, cond=None, cond_rounds=None, dc=None,
                             light_at=None, light_on=None, rounds=None)
     apply_effect_data(ns, spec, c, st, name)
+    ns.sr = False   # supernatural and extraordinary abilities ignore spell resistance
     out += _spell_effect(ns, st, c, name, ns.dc)
     if not c.get("hidden"):
         event(st, f"{who(c)} uses {name}")
@@ -1911,6 +1931,9 @@ def cast_pc(args: Args, st: State, c: Token) -> str:
         apply_effect_data(args, data, c, st, args.spell)
         if args.save and args.dc is None:
             raise CombatError(f"{args.spell} allows a save: give the DC from {c['name']}'s sheet (--dc N)")
+        args.sr_cl = cl
+        if getattr(args, "sr", None) is None:
+            args.sr = True
         effect = _spell_effect(args, st, c, args.spell, args.dc) + effect_notes(data)
         if not data and not (args.dmg or args.save or args.heal or getattr(args, "cond", None)):
             effect.append(f"  (no effect data in {where}: give the effect in the command, or add a spell-effect block)")
@@ -1974,12 +1997,54 @@ def cmd_cast(args: Args, st: State) -> str:
             left_note = f"prepared {args.spell!r} left: {prepared - cast_n - 1}"
     lines, ok = _cast_common(st, c, args.spell, lvl, sc["concentration"], args)
     dc = args.dc or (sc["dc_base"] + lvl)
+    args.sr_cl = sc.get("cl")
+    if getattr(args, "sr", None) is None:
+        args.sr = True   # a spell without a Spell Resistance line in its data: most spells allow it
     if not c.get("hidden"):
         event(st, f"{who(c)} casts a spell" + ("" if ok else ", but loses it"))
     head = f"{c['token']} casts {args.spell} ({sc['class']} {lvl}, CL {sc['cl']}, save DC {dc}): {'OK' if ok else 'LOST'}"
     effect = ([] if not ok else apply_buff(st, c, data, args.spell, args.target) if data and is_buff(data)
               else _spell_effect(args, st, c, args.spell, dc) + effect_notes(data))
     return "\n".join([head] + ([f"  {left_note}"] if left_note else []) + lines + effect)
+
+
+# Spell resistance (library/pf1e/rules/spell-resistance.md, CRB pg. 217): spells and spell-like abilities
+# whose effect says "sr": true (the library's Spell Resistance line; an SLA without one: yes) must beat
+# each target's SR with a caster level check, 1d20 + CL (+2 Spell Penetration, +2 more Greater), ties
+# succeed. A target that resists is unaffected; the others are affected as usual. Supernatural and
+# extraordinary abilities ignore SR. Rays and touch spells: the touch attack first, then the check.
+# A harmless spell on an ally: the ally lowers its SR (table simplification: no action spent).
+# A PC's caster level check is the player's roll (--sr-check), like their saves.
+
+def target_sr(t: Token) -> int:
+    """The creature's spell resistance (0: none)."""
+    return int((t.get("profile") or {}).get("sr") or t.get("sr") or 0)
+
+
+def resists(st: State, c: Token, t: Token, args: Args, shown: str) -> tuple[bool, list[str]]:
+    """Spell resistance against one target: (whether it resists, report lines)."""
+    sr = target_sr(t)
+    if not sr or not getattr(args, "sr", False):
+        return False, []
+    if getattr(args, "sr_harmless", False) and (t["side"] in FRIENDLY) == (c["side"] in FRIENDLY):
+        return False, [f"  {label(t)}: spell resistance lowered for a harmless effect from an ally"]
+    if c["side"] == "pc":
+        total = getattr(args, "sr_check", None)
+        if total is None:
+            raise CombatError(f"{t['token']} has spell resistance: ask the player for a caster level check "
+                              f"(d20 + caster level, + Spell Penetration), then repeat with sr_check N (nothing was applied)")
+        how = f"reported {total}"
+    else:
+        feats = _feats(c)
+        pen = 2 * ("spell penetration" in feats) + 2 * ("greater spell penetration" in feats)
+        cl = int(getattr(args, "sr_cl", None) or 1)
+        total, detail, _ = _roll(f"1d20+{cl + pen}")
+        how = f"1d20+{cl + pen} → {detail} = {total}"
+    ok = total >= sr
+    lines = [f"  {label(t)} spell resistance {sr}: caster level check {how} → {'overcome' if ok else 'RESISTED: unaffected'}"]
+    if not ok and not t.get("hidden"):
+        event(st, f"{shown}: {who(t)} is unaffected")
+    return not ok, lines
 
 
 def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) -> list[str]:
@@ -1996,7 +2061,9 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
         ns = argparse.Namespace(shape=m.group(1), feet=int(m.group(2)), at=args.at, frm=c["token"],
                                 toward=args.toward, save=args.save, dc=dc, dmg=args.dmg, half=args.half,
                                 name=name, no_slot=True, log_name=shown, cond=getattr(args, "cond", None), cond_rounds=getattr(args, "cond_rounds", None),
-                                cond_mods=getattr(args, "cond_mods", None), immunity=immunity_of(args))
+                                cond_mods=getattr(args, "cond_mods", None), immunity=immunity_of(args),
+                                sr=getattr(args, "sr", False), sr_cl=getattr(args, "sr_cl", None),
+                                sr_harmless=getattr(args, "sr_harmless", False), sr_check=getattr(args, "sr_check", None))
         out.append(cmd_area(ns, st))
     elif args.target:
         t = token(st, args.target)
@@ -2009,6 +2076,10 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
             out += lines
             if not hit:
                 return out
+        blocked, lines = resists(st, c, t, args, shown)
+        out += lines
+        if blocked:
+            return out
         if getattr(args, "heal", None):   # cure spells and the like: roll it and heal the target
             amount, detail, _ = _roll(args.heal)
             before = t["hp"]
@@ -2088,6 +2159,9 @@ def cmd_sla(args: Args, st: State) -> str:
         note = f"uses left today: {per_day - used - 1}/{per_day}"
     lvl = entry.get("level", 0)
     lines, ok = _cast_common(st, c, args.name, lvl, entry.get("concentration", entry.get("cl", 0)), args)
+    args.sr_cl = entry.get("cl")
+    if getattr(args, "sr", None) is None:
+        args.sr = True   # spell-like abilities are subject to SR unless the effect says otherwise
     if not c.get("hidden"):
         event(st, f"{who(c)} uses a spell-like ability" + ("" if ok else ", but loses it"))
     dc_val = args.dc or entry.get("dc")
@@ -2572,15 +2646,20 @@ def spend_moves(st: State, c: Token, n: int, what: str) -> None:
 
 NATURAL_HINTS = ("bite", "claw", "slam", "gore", "tail", "tentacle", "sting", "talon", "wing", "hoof", "pincer",
                  "horn", "hoove", "tusk", "rake", "touch")
+ABILITY_HINTS = ("bolt", "ray", "blast", "breath", "spit", "spray", "beam")   # with touch: a Su/Sp attack, nothing held
 TWO_HANDED_HINTS = ("bow", "crossbow", "great", "halberd", "glaive", "guisarme", "lance", "longspear", "quarterstaff",
                     "ranseur", "scythe", "pike", "bardiche", "staff")
 
 
 def weapon_kind(name: str, w: dict[str, Any]) -> str:
-    """'natural', 'unarmed' or 'weapon'."""
+    """'natural', 'unarmed', 'ability' (a Su/Sp attack like fire bolt or a ray: always at hand, takes
+    no hands, never threatens) or 'weapon'."""
     n = name.lower()
     if "unarmed" in n:
         return "unarmed"
+    if w.get("ability") or (w.get("ability") is None and w.get("type") == "ranged" and w.get("touch")
+                            and any(h in n for h in ABILITY_HINTS)):
+        return "ability"
     if w.get("natural") or (w.get("natural") is None and any(h in n for h in NATURAL_HINTS)):
         return "natural"
     return "weapon"
@@ -3249,16 +3328,11 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                 data = effects.get(nm.lower())
                 if not data:
                     continue
-                left = True
-                if int(lvl) > 0 and sc["type"] == "spontaneous":
-                    left = sp["slots"].get(sc["class"].lower(), {}).get(str(lvl), 0) < sc["slots"].get(str(lvl), 0)
-                elif int(lvl) > 0:
-                    left = sp["prepared"].get(sc["class"].lower(), []).count(nm.lower()) < [x.lower() for x in names].count(nm.lower())
-                if left:
+                if spell_left(c, sc, lvl, nm):
                     castables.append((f"cast {nm}", data, data.get("dc") or sc["dc_base"] + int(lvl), int(lvl),
                                       sc.get("concentration", sc.get("cl", 1)), True))
     for s_ in prof.get("sla") or []:
-        if s_.get("effect") and (s_["per_day"] == "at will" or sp["sla"].get(s_["name"].lower(), 0) < s_["per_day"]):
+        if s_.get("effect") and sla_left(c, s_):
             castables.append((f"use {s_['name']}", s_["effect"], s_["effect"].get("dc") or s_.get("dc"), s_.get("level", 1),
                               s_.get("concentration", s_.get("cl", 1) + 3), True))
     for nm, spec in (prof.get("abilities") or {}).items():
@@ -4705,6 +4779,14 @@ def cmd_area(args: Args, st: State) -> str:
     if immune:
         out.append(f"  immune to it right now (unaffected): {', '.join(label(o) for o in immune)}")
         hit = [o for o in hit if o not in immune]
+    if getattr(args, "sr", False) and args.frm:   # spell resistance, per creature
+        caster, kept = token(st, args.frm), []
+        for o in hit:
+            blocked, lines = resists(st, caster, o, args, getattr(args, "log_name", None) or args.name or "the spell")
+            out += lines
+            if not blocked:
+                kept.append(o)
+        hit = kept
     if not args.save:   # no save: a condition hits everyone in the area
         for o in hit:
             out += spell_condition(st, o, getattr(args, "cond", None), getattr(args, "cond_rounds", None),
@@ -4904,6 +4986,7 @@ def main(argv: list[str] | None = None) -> int:
         cp.add_argument("--light-at", help="light/darkness spells: the square it's cast on")
         cp.add_argument("--light-on", help="light/darkness spells: the creature/object carrier token")
         cp.add_argument("--rounds", type=int, help="light/darkness spells: duration in rounds (default: the fight)")
+        cp.add_argument("--sr-check", type=int, help="a PC's caster level check against spell resistance (the player's d20 + CL)")
     sub.add_parser("spells").add_argument("token")
     pv = sub.add_parser("provoke"); pv.add_argument("token"); pv.add_argument("--reason", default="provoking")
     pv.add_argument("--no-aoo", action="store_true")
