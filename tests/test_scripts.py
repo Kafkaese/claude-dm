@@ -61,6 +61,25 @@ class World(CampaignCase):
         st = world.load(self.slug)
         self.assertEqual(st["interruptions"], 0)
 
+    def test_turns_log_themselves(self) -> None:
+        template = (REPO / ".claude/skills/start-session/session-log-template.md").read_text()
+        self.write("dm/session-log/session-01.md", template.replace("budget N", "budget 3"))
+        self.run_world("config", "--pressure", "lively")
+        self.run_world("day", "9 Arodus")
+        self.run_world("turn", "trip", "--route", "inn>market", "--note", "clock Harbor unrest 2/4")
+        self.run_world("planned", "the dockmaster's men search the inn")
+        log = (self.dir / "dm/session-log/session-01.md").read_text()
+        turns = log.split("## World turns")[1].split("## ")[0]
+        lines = [l for l in turns.splitlines() if l.startswith("-")]
+        self.assertEqual(len(lines), 2, turns)                       # the template's empty bullet is gone
+        self.assertIn("9 Arodus, trip: chance", lines[0])
+        self.assertIn("clock Harbor unrest 2/4", lines[0])
+        self.assertIn("planned: the dockmaster's men search the inn", lines[1])
+        st = world.load(self.slug)
+        self.assertIn(f"**Interruptions:** {st['interruptions']} / budget {st['budget']}", log)
+        self.assertIn("**Routes made today:** inn>market", log)
+        self.assertIn("## Oracle rolls", log)                        # the next section is intact
+
 
 class TelemetryReport(unittest.TestCase):
     def test_masking(self) -> None:

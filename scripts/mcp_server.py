@@ -356,17 +356,20 @@ TOOLS: list[Tool] = [
          ["rolls"], lambda a: flags(a, {"hidden": "-H", "note": "--note", "times": "-n", "oracle": "--oracle", "table": "--table"}) + list(a["rolls"]),
          script="roll"),
     Tool("world", "World turns (living-world rules as code). turn CLASS: hop, trip, journey, night-safe, night-camp, skip. "
-         "Also session (start of a session), day (new in-game day), planned (count a planned event), status, config.",
+         "Also session (start of a session), day (new in-game day), planned (count a planned event), status, config. "
+         "turn and planned log themselves in the live log's World turns (add what else fired in note).",
          {"action": S("what", ["turn", "session", "day", "planned", "status", "config"]),
           "class": S("turn class", list(world.CLASSES)), "table": S("event table, e.g. dm/tables/<region>.md"),
           "region_mod": I("region modifier"), "route": S('repeated route, e.g. "inn>market"'), "settlement": B("in a settlement"),
           "weeks": I("skip: weeks"), "name": S("day: the in-game date"), "text": S("planned: what happens"),
+          "note": S("turn/planned: what else was checked or fired (clock, trigger, track change); logged with it"),
           "pressure": S("config", ["calm", "lively", "relentless"]), "base": I("config: base chance"), "budget": I("config: session budget")},
          ["action"],
          lambda a: [a["action"]] + ([a["class"]] if a["action"] == "turn" and a.get("class") else [])
          + ([a["name"]] if a["action"] == "day" and a.get("name") else []) + ([a["text"]] if a["action"] == "planned" and a.get("text") else [])
          + flags(a, {"table": "--table", "region_mod": "--region-mod", "route": "--route", "settlement": "--settlement",
-                     "weeks": "--weeks", "pressure": "--pressure", "base": "--base", "budget": "--budget"}),
+                     "weeks": "--weeks", "pressure": "--pressure", "base": "--base", "budget": "--budget",
+                     "note": "--note"}),
          script="world"),
 ]
 INSTRUCTIONS = ("Claude DM's game tools: combat (combat_*), dice (dice_roll) and world turns (world). Every tool takes "

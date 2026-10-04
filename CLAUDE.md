@@ -62,7 +62,7 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
 9. **Living world.** Follow `library/general/table-rules/living-world.md`:
    - Things happen **to** the PCs, not only because of them.
    - At every transition (travel, rest, time passing, notable PC actions, stuck signals), run a world turn before narrating the result: scheduled events, clocks, reaction triggers, a random event roll, floating clues when the PCs are stuck.
-   - The random-event part is `scripts/world.py turn …`, which applies the transition class, settlement cooldown and session budget deterministically.
+   - The random-event part is `scripts/world.py turn …`, which applies the transition class, settlement cooldown and session budget deterministically, and logs itself in the live log (what else fired goes in its `note`). `dm/world.md` and `dm/state.md` are updated when the session closes; until then the live log is their record.
    - Scale the world turn to the transition class, the settlement cooldown and the session budget. Short hops and making the rounds between NPCs stay uneventful, so moving around is never discouraged.
    - Don't just "arrive". Every proactive event comes from prepared material and gets recorded.
 10. **Communication.** Follow `library/general/table-rules/communication.md` and the campaign's table conventions in `players/session-zero.md`. By default:

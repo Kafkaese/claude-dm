@@ -36,12 +36,13 @@ Before saying anything with plot weight: run the protocol in `continuity.md`. Re
 
 ## Live log and checkpoints
 - **Log as you go:** key events, decisions, rolls that mattered, NPCs met, loot, HP and resources spent, in the right sections of `dm/session-log/session-NN.md` (Log, New elements, Revealed, World turns, Combat). Tersely, at scene breaks.
-- **Checkpoint** at scene breaks (the end of a scene, combat or location; `continuity.md`): lock revealed facts, and update the threads, the timeline, `dm/world.md` and `dm/state.md`.
+- **Checkpoint** at scene breaks (the end of a scene, combat or location; `continuity.md`): lock revealed facts, and update the threads and the timeline. Batch these edits into as few tool calls as possible.
+- **`dm/world.md` and `dm/state.md` wait for close-session.** During play the live log is their record: world turns log themselves (the `world` tool), fights append their log (`combat_end`), and the rest goes into the log at scene breaks. Close-session folds it all into both files.
 
 ## Close-session (from `/end-session`)
 - Refresh the digest for next time.
 - Complete the live log and its "Changes" section. Record the stars & wishes under their own heading, and check any quick "Rulings to check".
-- Do a final checkpoint.
+- Do a final checkpoint, and fold the live log's World turns, track changes and fired triggers into `dm/world.md`.
 - Update `dm/characters/*` Observations (what the player enjoyed, their tactics, how hooks landed), `dm/campaign-plan.md` if the stars & wishes change how to run it, `dm/state.md` (last session, date, location, the exact current scene including a paused combat, PC status, open threads) and `dm/world.md`.
 - Work out the XP (defeated encounters by CR plus story awards, divided as session zero says) or the milestone. Tell the player the award and their status.
 

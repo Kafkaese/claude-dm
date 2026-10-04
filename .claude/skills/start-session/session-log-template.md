@@ -18,14 +18,14 @@ Facts the players learned this session. Flip these to `[locked SNN]` at the next
 -
 
 ## World turns
-Transition (class) → what was checked, what fired (scheduled event, clock, trigger, random event, floating clue), track changes.
+Written by the `world` tool (turns and planned events); its `note` adds what else was checked or fired (scheduled event, clock, trigger, floating clue) and track changes.
 -
 
 ## Oracle rolls
 -
 
 ## Combat
-Grid fights live in `dm/combat/current.json` (via `scripts/combat.py`). Note the results here, plus any standing orders and theater-of-the-mind trackers.
+Grid fights run through the combat tools, and `combat_end` appends each fight's log here. Note standing orders and theater-of-the-mind trackers.
 - **Standing orders:**
 
 ## Changes

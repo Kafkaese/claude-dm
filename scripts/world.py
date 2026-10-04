@@ -18,6 +18,11 @@ Usage: python3 scripts/world.py -c CAMPAIGN COMMAND [args]
                            event rolls on the table (whose "Region modifier" line is used if
                            --region-mod isn't given)
   planned "TEXT"           count a planned proactive event (agenda, clock, trigger) as an interruption
+
+turn and planned take --note "TEXT": what else was checked or fired (a clock, a trigger, a track
+change). Both write their line to the live log's "World turns" section themselves (the session
+being played: dm/session-log/session-NN.md) and keep its header's interruption count and routes
+current, so the DM doesn't log world turns by hand.
   status                   show pressure, budget use, today's cooldown and routes
 
 Every roll goes to dm/roll-log.md as a hidden roll.
@@ -157,6 +162,39 @@ def cmd_turn(args: argparse.Namespace, st: WorldState) -> tuple[str, bool]:
     return "\n".join([head] + lines), any_event
 
 
+def live_log(camp: str) -> Path | None:
+    """The live log of the session being played (session NN = "Sessions played" + 1), if it exists."""
+    md = PROJECT / "campaigns" / camp / "campaign.md"
+    played = re.search(r"\*\*Sessions played:\*\*\s*(\d+)", md.read_text(encoding="utf-8")) if md.exists() else None
+    nn = (int(played.group(1)) if played else 0) + 1
+    path = PROJECT / "campaigns" / camp / "dm" / "session-log" / f"session-{nn:02d}.md"
+    return path if path.exists() else None
+
+
+def log_world(camp: str, line: str, st: WorldState, event: bool = False) -> bool:
+    """Append one line to the live log's "World turns" section (replacing the template's empty bullet)
+    and update the header's interruptions and routes. Returns whether a live log was found."""
+    path = live_log(camp)
+    if not path:
+        return False
+    text = path.read_text(encoding="utf-8")
+    m = re.search(r"^## World turns[^\n]*\n(.*?)(?=^## |\Z)", text, re.S | re.M)
+    if m:
+        body = m.group(1).rstrip("\n")
+        body = re.sub(r"\n-\s*$", "", body) if re.search(r"\n-\s*$", body) else body
+        text = text[:m.start(1)] + body + f"\n- {line}\n\n" + text[m.end(1):]
+    else:
+        text = text.rstrip("\n") + f"\n\n## World turns\n- {line}\n"
+    text = re.sub(r"(\*\*Interruptions:\*\*\s*)\d+\s*/\s*budget\s*\S+",
+                  lambda x: f"{x.group(1)}{st['interruptions']} / budget {st['budget']}", text, count=1)
+    if event and st.get("day"):
+        text = re.sub(r"(\*\*Last random event:\*\*)[^\n·]*", lambda x: f"{x.group(1)} {st['day']} ", text, count=1)
+    if st.get("routes"):
+        text = re.sub(r"(\*\*Routes made today:\*\*)[^\n·]*", lambda x: f"{x.group(1)} {', '.join(st['routes'])}", text, count=1)
+    path.write_text(text, encoding="utf-8")
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     """Command-line entry point. Returns the process exit code."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -169,7 +207,8 @@ def main(argv: list[str] | None = None) -> int:
     tu = sub.add_parser("turn"); tu.add_argument("klass", choices=CLASSES)
     tu.add_argument("--table"); tu.add_argument("--region-mod", type=int); tu.add_argument("--route")
     tu.add_argument("--settlement", action="store_true"); tu.add_argument("--weeks", type=int, default=1)
-    pl = sub.add_parser("planned"); pl.add_argument("text")
+    tu.add_argument("--note", help="what else was checked or fired (clock, trigger, track change)")
+    pl = sub.add_parser("planned"); pl.add_argument("text"); pl.add_argument("--note")
     sub.add_parser("status")
     args = p.parse_args(argv)
     try:
@@ -185,14 +224,21 @@ def main(argv: list[str] | None = None) -> int:
             st.update(day=args.name, day_events=0, routes=[])
             out = f"new day: {args.name} (cooldown and routes reset)"
         elif args.command == "turn":
-            out, _ = cmd_turn(args, st)
+            out, event = cmd_turn(args, st)
             try:
                 append_log(args.campaign, [f"World turn: {l}" for l in out.splitlines()], True, None)
             except Exception:
                 pass
+            day = f"{st['day']}, " if st.get("day") else ""
+            what = "hop (no roll)" if out.startswith("hop:") else " · ".join(out.splitlines())
+            if log_world(args.campaign, f"{day}{what}" + (f" · {args.note}" if args.note else ""), st, event):
+                out += "\n(logged in the live log's World turns)"
         elif args.command == "planned":
             st["interruptions"] += 1
             out = f"planned event counted: {args.text} (interruptions {st['interruptions']}/{st['budget']})"
+            day = f"{st['day']}, " if st.get("day") else ""
+            if log_world(args.campaign, f"{day}planned: {args.text}" + (f" · {args.note}" if args.note else ""), st):
+                out += "\n(logged in the live log's World turns)"
         else:
             out = (f"pressure {st['pressure']} (base {st['base']}%), interruptions {st['interruptions']}/{st['budget']}, "
                    f"day {st.get('day')}: {st['day_events']} random event(s), routes: {', '.join(st['routes']) or 'none'}")

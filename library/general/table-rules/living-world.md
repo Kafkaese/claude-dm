@@ -31,7 +31,7 @@ The procedure:
    `python3 scripts/roll.py -c <campaign> -H --table campaigns/<campaign>/dm/tables/<region>.md`
 6. **Stuck?** If so, apply the stall response (section 4).
 7. **Pick at most one or two interruptions** per transition, and on a hop at most one. If several fire, prioritize the main plot's clocks and the reactions to the PCs, and queue the rest as scheduled events.
-8. **Narrate it and record it** in the live log's "World turns", and update `dm/world.md`.
+8. **Narrate it and record it.** The `world` tool logs every turn and planned event in the live log's "World turns" itself: put what else was checked or fired (a clock, a trigger, a track change) in its `note`, so one call does both. `dm/world.md` is brought up to date from that log when the session closes.
 
 ## 3. Reactions: awareness and heat
 The world notices what the PCs do. Both tracks live in `dm/world.md`. They rise only because of concrete PC actions, and each rise is logged with its cause.
@@ -123,4 +123,4 @@ Independent of random rolls, **every session should include at least one proacti
 ## 6. Keeping it consistent
 - Agents, assassins and patrols come from existing factions and NPCs with agendas in `dm/world.md` or `dm/factions/`. Give them whereabouts that fit `dm/timeline.md`.
 - A random event that turns out to have plot weight goes through the improvisation protocol in `continuity.md`.
-- Record every world-turn outcome that matters: in the live log, in `dm/world.md` (track changes, fired triggers, completed events), and in the timeline if it's a fact.
+- Record every world-turn outcome that matters: in the live log (the `world` tool's `note`), and in the timeline if it's a fact. `dm/world.md` (track changes, fired triggers, completed events) is updated from the log when the session closes.
