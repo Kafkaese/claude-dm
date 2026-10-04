@@ -21,6 +21,10 @@ if os.environ.get("CLAUDE_DM_MODE") == "play" and event.get("tool_name") in ("Ed
               "Use combat_undo for the player's last command, or combat_hp / combat_condition / combat_act --override "
               "to fix a specific thing.", file=sys.stderr)
         sys.exit(2)
+    if norm.endswith("/players/inventory.json"):
+        print("Blocked: possessions and money only change through the gear tool (it logs every change and keeps the "
+              "sheets' gear sections in sync). Use gear add / remove / move / buy / sell / pay / receive.", file=sys.stderr)
+        sys.exit(2)
     if re.search(r"/scripts/[^/]+\.py$|/(dm_engine|web|play)\.py$|/\.claude/", norm):
         print("Blocked: the game's code and settings aren't edited during play (it can't be tested from here). "
               "If you think the script is wrong, tell the player out of character, note it in the session log, "

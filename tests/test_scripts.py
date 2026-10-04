@@ -119,6 +119,8 @@ class PlayGuard(unittest.TestCase):
         self.assertEqual(self.run_hook("/r/scripts/combat.py", True), 2)
         self.assertEqual(self.run_hook("/r/campaigns/x/dm/session-log/session-01.md", True), 0)
         self.assertEqual(self.run_hook("/r/scripts/combat.py", False), 0)
+        self.assertEqual(self.run_hook("/r/campaigns/x/players/inventory.json", True), 2)
+        self.assertEqual(self.run_hook("/r/campaigns/x/dm/shops/smithy.json", True), 0)   # the DM stocks shops by hand
 
 
 class EngineOffLimits(unittest.TestCase):

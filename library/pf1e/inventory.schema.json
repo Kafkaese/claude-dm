@@ -1,0 +1,47 @@
+{
+  "$comment": "campaigns/<c>/players/inventory.json: everything the party owns, by container (each character, the party stash, other places). Written by scripts/gear.py only; the sheets' Gear sections and party.md's stash are generated from it. Player-facing: no secrets in it.",
+  "type": "object",
+  "required": ["containers"],
+  "additionalProperties": false,
+  "properties": {
+    "containers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["label", "kind", "coins", "items"],
+        "additionalProperties": false,
+        "properties": {
+          "label": {"type": "string", "description": "shown name: the character, 'Party stash', 'Packhorse'"},
+          "kind": {"enum": ["character", "stash", "other"]},
+          "sheet": {"type": "string", "description": "a character's sheet (campaign-relative): its Gear section is generated, and Str/size come from its combat profile"},
+          "where": {"type": "string", "description": "a stash: what and where it is in the story (a chest in the Arcaneum, a packhorse)"},
+          "str": {"type": "integer", "minimum": 0, "description": "Strength for the carrying load (default: the sheet's combat profile)"},
+          "size": {"enum": ["small", "medium", "large"], "description": "for the load (default medium)"},
+          "coins": {
+            "type": "object", "additionalProperties": false,
+            "properties": {"pp": {"type": "integer", "minimum": 0}, "gp": {"type": "integer", "minimum": 0},
+                           "sp": {"type": "integer", "minimum": 0}, "cp": {"type": "integer", "minimum": 0}}
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object", "required": ["item", "qty"], "additionalProperties": false,
+              "properties": {
+                "item": {"type": "string", "description": "the item's slug (library/pf1e/items/<slug>.json or the campaign's dm/items/)"},
+                "qty": {"type": "integer", "minimum": 1, "description": "pieces (arrows: single arrows)"},
+                "name": {"type": "string", "description": "a name of its own: 'Rasa Skinner's dagger'"},
+                "masterwork": {"type": "boolean"},
+                "enhancement": {"type": "integer", "minimum": 1, "maximum": 5},
+                "size": {"enum": ["small", "medium", "large"], "description": "made for this size (default medium)"},
+                "broken": {"type": "boolean"},
+                "charges": {"type": "integer", "minimum": 0, "description": "charges left (wands)"},
+                "equipped": {"type": "boolean", "description": "worn or wielded (armor on, weapon at hand), not just carried"},
+                "note": {"type": "string"}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

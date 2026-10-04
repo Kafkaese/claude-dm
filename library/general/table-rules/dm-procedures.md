@@ -46,5 +46,12 @@ Before saying anything with plot weight: run the protocol in `continuity.md`. Re
 - Update `dm/characters/*` Observations (what the player enjoyed, their tactics, how hooks landed), `dm/campaign-plan.md` if the stars & wishes change how to run it, `dm/state.md` (last session, date, location, the exact current scene including a paused combat, PC status, open threads) and `dm/world.md`.
 - Work out the XP (defeated encounters by CR plus story awards, divided as session zero says) or the milestone. Tell the player the award and their status.
 
+## Gear, money and shops
+Everything the party owns is in `players/inventory.json`, and only the `gear` tool changes it. It logs every change in the live log ("Gear & money") and rewrites the sheets' gear sections and the stash in `party.md` (between the generated markers: never edit those by hand).
+- **Loot and rewards:** `gear add` (items) and `gear receive` (coins), into the character who takes them or the stash. Item files must exist: look them up first (`lookup`; the researcher saves `library/<system>/items/<slug>.json`). A campaign's own item (a unique blade, a letter): `dm/items/<slug>.json`.
+- **Spending:** `gear pay` for services, rooms, bribes, tolls (with why); `gear use` when a consumable is used up or a wand spends charges.
+- **Shops:** when the party visits a shop for the first time, write `dm/shops/<slug>.json`: what it plausibly stocks for the settlement (its base value: items at or below it are 75% likely available; `equipment-economy.md`), the settlement's purchase limit, and what it buys. Then `gear buy` / `gear sell` do the rest: prices, half-price sales, the purchase limit, stock counts. Haggling or a special deal is a DM decision: give the price and why.
+- **Moving things:** `gear move` between characters and the stash, money included ("25 gp"). The stash is wherever the campaign says it is (a chest, a packhorse); give it a `where`.
+
 ## Combat end
-`combat_end` writes the XP summary, puts the PC's HP back on their sheet, appends the combat log to the session log and archives the fight. Then log the loot and the resources spent, and do a checkpoint.
+`combat_end` writes the XP summary, puts the PC's HP back on their sheet, appends the combat log to the session log, lists what lies on the ground, and archives the fight. Then put the loot the party takes into the inventory (`gear add`, `gear receive`), log the resources spent (`gear use`), and do a checkpoint.

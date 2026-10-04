@@ -29,6 +29,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 import combat  # noqa: E402
 import combat_rules as R  # noqa: E402
+import gear  # noqa: E402
 import roll  # noqa: E402
 import world  # noqa: E402
 
@@ -381,10 +382,70 @@ TOOLS: list[Tool] = [
                      "note": "--note"}),
          script="world"),
 ]
-INSTRUCTIONS = ("Claude DM's game tools: combat (combat_*), dice (dice_roll) and world turns (world). Every tool takes "
+INSTRUCTIONS = ("Claude DM's game tools: combat (combat_*), dice (dice_roll), world turns (world) and the party's possessions "
+                "and money (gear). Every tool takes "
                 "an optional `campaign` slug; give it on the first call, after that the server remembers it. Token ids: "
                 "PCs uppercase (C), others lowercase+digit (g1); squares like D4. One combat step = one combat_batch call. "
                 "Outputs marked DM VIEW, [HIDDEN], show_dm and sight are for the DM only.")
+
+
+def _gear(a: Args) -> list[str]:
+    """The gear tool's arguments as a gear.py command line."""
+    act = a["action"]
+    mods = flags(a, {"qty": "--qty", "mw": "--mw", "plus": "--plus", "size": "--size"})
+    if act == "init":
+        return ["init"] + flags(a, {"where": "--where"})
+    if act == "show":
+        return ["show"] + ([a["container"]] if a.get("container") else [])
+    if act == "container":
+        return ["container", a["container"], "--label", a["name"], "--kind", a.get("kind", "other")] + flags(a, {"sheet": "--sheet", "where": "--where"})
+    if act == "add":
+        return ["add", a["container"], a["item"]] + mods + flags(a, {"name": "--name", "note": "--note", "charges": "--charges",
+                                                                    "equipped": "--equipped", "why": "--why"})
+    if act == "remove":
+        return ["remove", a["container"], a["item"], "--why", a["why"]] + flags(a, {"qty": "--qty"})
+    if act == "move":
+        return ["move", a.get("amount") or a["item"], "--from", a["from"], "--to", a["to"]] + flags(a, {"qty": "--qty"})
+    if act in ("equip", "unequip"):
+        return [act, a["container"], a["item"]]
+    if act == "use":
+        return ["use", a["container"], a["item"]] + flags(a, {"charges": "--charges"})
+    if act == "pay":
+        return ["pay", a["container"], a["amount"]] + flags(a, {"why": "--why", "to": "--to"})
+    if act == "receive":
+        return ["receive", a["container"], a["amount"]] + flags(a, {"why": "--why"})
+    if act == "price":
+        return ["price", a["item"]] + mods
+    if act == "shop":
+        return ["shop", a["shop"]]
+    if act == "buy":
+        return ["buy", a["shop"], a["item"], "--by", a["by"]] + flags(a, {"to": "--to", "qty": "--qty", "price": "--price", "why": "--why"})
+    if act == "sell":
+        return ["sell", a["shop"], a["container"], a["item"]] + flags(a, {"qty": "--qty", "price": "--price", "why": "--why"})
+    return [act]   # render, check
+
+
+TOOLS.append(Tool(
+    "gear", "The party's possessions and money (players/inventory.json, by container: each character, the party stash). "
+    "Every change logs itself and updates the sheets' gear sections; never edit gear or money by hand. Actions: show [container]; "
+    "add (loot, gifts) / remove (lost, used up otherwise: why); move an item or an amount between containers; equip / unequip; "
+    "use (a consumable, or charges); pay (amount, why; or to another container) / receive (amount, why); price (cost and sale "
+    "value of an item); shop (a shop's stock, DM view); buy (shop, item, by: the buyer's container; to: where it goes); sell "
+    "(shop, container, item: half price, full for trade goods, up to the shop's purchase limit); container (a new one: container "
+    "= its key, name = its label, kind, sheet or where); init (once per campaign); check.",
+    {"action": S("what", ["show", "container", "add", "remove", "move", "equip", "unequip", "use", "pay", "receive", "price", "shop",
+                          "buy", "sell", "init", "render", "check"]),
+     "container": S("a character ('ilvan'), 'stash', or another container"), "item": S("an item: slug, name, or part of one"),
+     "qty": I("how many pieces"), "mw": B("masterwork"), "plus": I("enhancement bonus +1…+5 (includes masterwork)"),
+     "size": S("made for this size", ["small", "medium", "large"]), "name": S("add: a name of its own"),
+     "note": S("add: a note"), "charges": I("add: charges left; use: charges spent"), "equipped": B("add: worn or wielded"),
+     "why": S("what for / where from (required for remove, pay without to, receive; and a price other than the list's)"),
+     "amount": S('money: "25 gp", "12 gp 5 sp"'), "from": S("move: from container"), "to": S("move/pay/buy: to container"),
+     "shop": S("a shop in dm/shops/ (slug or name)"), "by": S("buy: the paying container"),
+     "price": {"type": "number", "description": "buy/sell: a price in gp other than the rules' (haggling); needs why"},
+     "where": S("init / container: what and where it is (a chest in the Arcaneum, a packhorse)"),
+     "kind": S("container: its kind", ["character", "stash", "other"]), "sheet": S("container: a new character's sheet")},
+    ["action"], _gear, script="gear"))
 BY_NAME = {t.name: t for t in TOOLS}
 BATCHABLE = [t.name for t in TOOLS if t.script == "combat"]
 TOOLS.append(Tool(
@@ -405,7 +466,7 @@ class ToolError(Exception):
 
 def _run_script(script: str, argv: list[str]) -> tuple[bool, str]:
     """Run a script's main() in-process, capturing its output. Returns (ok, text)."""
-    main = {"combat": combat.main, "roll": roll.main, "world": world.main}[script]
+    main = {"combat": combat.main, "roll": roll.main, "world": world.main, "gear": gear.main}[script]
     out, err = io.StringIO(), io.StringIO()
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):

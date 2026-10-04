@@ -15,6 +15,7 @@
       "Bash(python3 scripts/roll.py:*)",
       "Bash(python3 scripts/combat.py:*)",
       "Bash(python3 scripts/world.py:*)",
+      "Bash(python3 scripts/gear.py:*)",
       "mcp__dm"
     ]
   },

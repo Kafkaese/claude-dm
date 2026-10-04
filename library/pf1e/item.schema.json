@@ -1,0 +1,43 @@
+{
+  "$comment": "One item in library/pf1e/items/<slug>.json (or a campaign's own in campaigns/<c>/dm/items/<slug>.json). scripts/gear.py reads it for prices, weights and what a shop buys. Base items only: masterwork, enhancement (+1…) and size are modifiers on an inventory entry, priced by the rules (library/pf1e/rules/equipment-economy.md).",
+  "type": "object",
+  "required": ["name", "category", "price", "weight", "source"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {"type": "string", "description": "the item's name as players know it"},
+    "category": {"enum": ["weapon", "armor", "shield", "ammunition", "gear", "tool", "alchemical", "potion", "oil", "scroll", "wand", "staff", "rod", "ring", "wondrous", "trade-good", "gem", "art", "mount", "vehicle", "other"]},
+    "price": {"type": "number", "minimum": 0, "description": "in gp per unit (0.1 = 1 sp, 0.01 = 1 cp), for the Medium version"},
+    "unit": {"type": "integer", "minimum": 1, "description": "how many pieces the price and weight are for (arrows: 20); default 1"},
+    "weight": {"type": "number", "minimum": 0, "description": "in lbs per unit, Medium version"},
+    "sells_full": {"type": "boolean", "description": "sells at full value (trade goods, gems, art objects); default: half"},
+    "charges": {"type": "integer", "minimum": 1, "description": "maximum charges (a wand: 50); a sale is prorated by the charges left"},
+    "consumable": {"type": "boolean", "description": "used up when used (potions, scrolls, alchemical items): `use` removes one"},
+    "weapon": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "proficiency": {"enum": ["simple", "martial", "exotic"]},
+        "use": {"enum": ["unarmed", "light", "one-handed", "two-handed", "ranged"]},
+        "damage_s": {"type": "string"}, "damage_m": {"type": "string"},
+        "critical": {"type": "string", "description": "e.g. '19-20/x2'"},
+        "range": {"type": "integer", "minimum": 0, "description": "range increment in ft"},
+        "type": {"type": "string", "description": "B, P, S (or combinations)"},
+        "special": {"type": "array", "items": {"type": "string"}},
+        "ammunition": {"type": "string", "description": "the ammunition it fires (arrows, bolts, bullets)"}
+      }
+    },
+    "armor": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "kind": {"enum": ["light", "medium", "heavy", "shield"]},
+        "bonus": {"type": "integer"}, "max_dex": {"type": ["integer", "null"]},
+        "check_penalty": {"type": "integer", "maximum": 0}, "spell_failure": {"type": "integer", "minimum": 0},
+        "speed_30": {"type": "integer"}, "speed_20": {"type": "integer"}
+      }
+    },
+    "slot": {"type": "string", "description": "magic item slot (belt, head, ring, …)"},
+    "cl": {"type": "integer", "minimum": 0},
+    "aura": {"type": "string"},
+    "notes": {"type": "string", "description": "what it does, briefly"},
+    "source": {"type": "string", "description": "where the numbers come from (an allowed site's URL, or 'campaign')"}
+  }
+}

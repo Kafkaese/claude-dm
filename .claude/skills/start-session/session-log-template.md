@@ -29,7 +29,7 @@ Grid fights run through the combat tools, and `combat_end` appends each fight's 
 - **Standing orders:**
 
 ## Changes
-- **Loot & gold:**
+- **Loot & gold:** (the `gear` tool logs every change under "Gear & money"; sum it up here)
 - **XP / milestones:** (encounters defeated with CR, story awards)
 - **PC HP / resources / conditions at session end:**
 - **NPCs met / attitudes changed:**

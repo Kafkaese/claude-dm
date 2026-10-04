@@ -1,0 +1,30 @@
+{
+  "$comment": "campaigns/<c>/dm/shops/<slug>.json: one shop. The DM decides what it stocks (fitting the settlement: library/pf1e/rules/equipment-economy.md, base value); scripts/gear.py sells from the stock at its prices and buys what it deals in, up to the settlement's purchase limit per item.",
+  "type": "object",
+  "required": ["name", "stock"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {"type": "string", "description": "as the players know it: 'Ossa Fennick's smithy'"},
+    "settlement": {"type": "string"},
+    "purchase_limit": {"type": "number", "minimum": 0, "description": "the most it pays for any single item the party sells, in gp (the settlement's purchase limit)"},
+    "buys": {"anyOf": [{"enum": ["all", "none"]}, {"type": "array", "items": {"type": "string"}}],
+             "description": "item categories it buys from the party (default: the categories it stocks)"},
+    "markup": {"type": "number", "minimum": 0, "description": "price factor when the party buys (default 1: list price)"},
+    "stock": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["item"], "additionalProperties": false,
+        "properties": {
+          "item": {"type": "string", "description": "the item's slug"},
+          "qty": {"type": ["integer", "null"], "minimum": 0, "description": "pieces in stock; null or missing = as many as wanted"},
+          "masterwork": {"type": "boolean"},
+          "enhancement": {"type": "integer", "minimum": 1, "maximum": 5},
+          "size": {"enum": ["small", "medium", "large"]},
+          "charges": {"type": "integer", "minimum": 0},
+          "price": {"type": "number", "minimum": 0, "description": "this shop's price per piece in gp, if it isn't the list price"}
+        }
+      }
+    },
+    "notes": {"type": "string", "description": "DM notes: who runs it, haggling, what it's out of"}
+  }
+}
