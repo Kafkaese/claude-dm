@@ -2,11 +2,10 @@
 """web.py: Claude DM in the browser (local only).
 
   python3 web.py                  open the browser on the campaign picker (continue, new session, new campaign)
-  python3 web.py --campaign SLUG  skip the picker: continue that campaign's last conversation
-  python3 web.py --resume [ID]    skip the picker: continue the last (or a given) conversation
   python3 web.py --effort high    think harder (slower); default is medium
   python3 web.py --port 8765 --no-browser --model <alias> --debug
 
+A launcher only: choosing, continuing and switching campaigns all happen in the page.
 Serves web/index.html on http://127.0.0.1:<port>. Only the DM's words reach the page;
 tool calls stay hidden. During a fight, a side panel shows the map, initiative and the
 combat log. Type :effort low|medium|high or :debug in the chat to change settings; switch
@@ -28,10 +27,10 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from typing import Any
 
-from dm_engine import (EFFORTS, REPO, CombatRunner, Engine, with_recap, campaign_for_session, campaign_title, is_campaign, remember_campaign, combat_snapshot, combat_state,
+from dm_engine import (EFFORTS, REPO, CombatRunner, Engine, with_recap, campaign_title, is_campaign, remember_campaign, combat_snapshot, combat_state,
                        end_fight, fight_over, fight_over_prompt,
                        is_go_signal, list_campaigns, run_combat_step, slugify, step_due,
-                       last_combat_events, last_session, load_history,
+                       last_combat_events, load_history,
                        FLUSH_PROMPT, WISHES_QUESTION, close_prompt, session_in_progress, write_transcript)
 
 WEB = REPO / "web"
@@ -591,45 +590,27 @@ def make_handler(hub: Hub) -> type[BaseHTTPRequestHandler]:
 def main() -> None:
     """Command-line entry point: start the engine and serve the page on 127.0.0.1."""
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--resume", nargs="?", const="last", help="continue the last session, or a given session ID")
     ap.add_argument("--model", help="model alias or ID (default: your Claude Code default)")
     ap.add_argument("--effort", default="medium", choices=EFFORTS)
     ap.add_argument("--runner-model", help="model for the combat runner (NPC turns); default: the DM's model")
     ap.add_argument("--runner-effort", default="low", choices=EFFORTS, help="thinking effort for NPC turns (default low)")
-    ap.add_argument("--campaign", help="skip the picker: continue this campaign")
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-browser", action="store_true")
     ap.add_argument("--debug", action="store_true")
     args = ap.parse_args()
 
-    resume = last_session() if args.resume == "last" else args.resume
     hub = Hub(None)
     engine = Engine(hub.on_event, model=args.model, effort=args.effort, debug=args.debug, record_session=True)
     hub.engine = engine
     hub.runner_model, hub.runner_effort = args.runner_model or args.model, args.runner_effort
     hub.combat = {"active": False}   # shown once the DM engages combat in this session (Hub.fight)
     # No campaign yet: the page opens the picker, and the DM process starts once one is chosen,
-    # locked to it. --resume / --campaign choose up front.
-    if resume:
-        history = load_history(resume)
-        camp = campaign_for_session(resume, history)
-        if not camp:
-            raise SystemExit(f"Don't know which campaign session {resume} plays; start without --resume and pick it.")
-        hub.campaign_arg, hub.history = camp, history
-        engine.campaign = camp
-        engine.start(resume=resume)
-        hub.resume_fight()
-    elif args.campaign:
-        if not is_campaign(args.campaign):
-            raise SystemExit(f"No campaign '{args.campaign}'.")
-        hub.open_campaign(args.campaign, "continue")
+    # locked to it.
 
     server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(hub))
     server.daemon_threads = True
     url = f"http://127.0.0.1:{args.port}/"
     print(f"Claude DM is running at {url}  (Ctrl-C to stop)")
-    if resume:
-        print(f"Resuming session {resume}.")
     if not args.no_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
     try:
@@ -642,7 +623,7 @@ def main() -> None:
             hub.runner.stop()
         server.shutdown()
         if engine.session_id:
-            print(f"Session saved. Continue with: python3 web.py --resume")
+            print("Session saved. Continue it from the campaign picker next time.")
 
 
 if __name__ == "__main__":

@@ -168,10 +168,9 @@ class CampaignTracking(CampaignCase):
         real = next(p.name for p in (E.REPO / "campaigns").iterdir() if E.is_campaign(p.name))
         E.remember_campaign("sid-1", real)
         E.remember_campaign("sid-2", self.slug)              # a test folder is never recorded
-        self.assertEqual(E.campaign_for_session("sid-1"), real)
-        self.assertIsNone(E.campaign_for_session("sid-2"))
-        hist = [{"role": "player", "text": f"/start-session {real}"}, {"role": "dm", "text": "Welcome back."}]
-        self.assertEqual(E.campaign_for_session("unknown", hist), real)
+        recorded = json.loads(E.SESSION_CAMPAIGNS.read_text())
+        self.assertEqual(recorded.get("sid-1"), real)
+        self.assertNotIn("sid-2", recorded)
 
     def test_web_hub_needs_a_chosen_campaign(self) -> None:
         import web

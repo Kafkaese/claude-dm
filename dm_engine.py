@@ -113,19 +113,12 @@ def flavor(tool_name: str | None, sub: bool) -> str:
 
 
 def save_session(sid: str | None) -> None:
-    """Remember a session id in .play/last-session and append it to .play/sessions.log."""
+    """Append a session id to .play/sessions.log (the picker's "continue" finds a campaign's latest there)."""
     if not sid:
         return
     STATE.mkdir(exist_ok=True)
-    (STATE / "last-session").write_text(sid)
     with (STATE / "sessions.log").open("a") as f:
         f.write(f"{time.strftime('%Y-%m-%d %H:%M')} {sid}\n")
-
-
-def last_session() -> str | None:
-    """The id of the most recently saved session, or None."""
-    f = STATE / "last-session"
-    return f.read_text().strip() if f.exists() else None
 
 
 # ---------- telemetry ----------
@@ -331,9 +324,9 @@ class Engine:
             model: model alias or id for `claude --model`, or None for the default.
             effort: thinking effort for `claude --effort`.
             debug: also emit debug events for tools and subagents.
-            record_session: remember the session as the one `--resume` continues (.play/last-session).
+            record_session: log the session (.play/sessions.log), so the picker can continue it.
                 Only the real interface (web.py) sets it; tests and scripts must not, or
-                `--resume` would pick up their throwaway conversations.
+                the picker would offer their throwaway conversations.
             role: "dm" (the full DM: Claude Code's prompt, tools, skills and the project) or "runner"
                 (the combat runner: a lean process with only `system_prompt` and the dm tools).
             system_prompt: the runner's whole system prompt.
@@ -726,7 +719,7 @@ def is_campaign(name: str | None) -> bool:
 
 
 def remember_campaign(session_id: str | None, campaign: str | None) -> None:
-    """Record which campaign a session plays (.play/session-campaigns.json), so --resume finds it again."""
+    """Record which campaign a session plays (.play/session-campaigns.json), so the picker can continue it."""
     if not session_id or not is_campaign(campaign):
         return
     try:
@@ -737,23 +730,6 @@ def remember_campaign(session_id: str | None, campaign: str | None) -> None:
         data[session_id] = campaign
         STATE.mkdir(exist_ok=True)
         SESSION_CAMPAIGNS.write_text(json.dumps(data, indent=1))
-
-
-def campaign_for_session(session_id: str | None, history: list[dict[str, str]] | None = None) -> str | None:
-    """The campaign a resumed session plays: the recorded one, else the last `/start-session <slug>` in its
-    chat history, else None (the caller falls back to the most recently played campaign)."""
-    if session_id and SESSION_CAMPAIGNS.exists():
-        try:
-            camp = json.loads(SESSION_CAMPAIGNS.read_text()).get(session_id)
-        except ValueError:
-            camp = None
-        if is_campaign(camp):
-            return camp
-    for m in reversed(history or []):
-        found = re.match(r"^/start-session\s+(\S+)", m.get("text", "")) if m.get("role") == "player" else None
-        if found and is_campaign(found.group(1)):
-            return found.group(1)
-    return None
 
 
 def active_campaign(explicit: str | None = None) -> str | None:

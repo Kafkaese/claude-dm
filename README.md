@@ -5,7 +5,6 @@ A setup for running Pathfinder campaigns with Claude as the Dungeon Master. See 
 Play happens in the browser:
 ```
 python3 web.py                   # opens http://127.0.0.1:8765 on the campaign picker
-python3 web.py --campaign SLUG   # skip the picker: continue that campaign
 python3 web.py --effort high     # think harder (slower); default is medium
 python3 web.py --debug           # also show tool calls and subagents (for testing)
 ```
