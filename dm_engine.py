@@ -69,7 +69,8 @@ WRAPPER_PROMPT = """You are running inside Claude DM's player-facing web interfa
     - Describe NPC behavior, not their minds: "Mordent gives no sign that anything has changed", never "Mordent doesn't know that you know".
     - Never name a lead, flaw, culprit or connection the character hasn't found, not even as an open question: "you couldn't tell whether the circle was drawn correctly", never "the ritual circle's flaw".
     - No loaded framing that confirms a hidden truth ("whether it was anything but an accident", "the real culprit"). A failed investigation reports what was checked and what it showed, not that something was missed.
-- COMBAT (details: combat.md; the combat tools' descriptions have the options):
+- COMBAT (details: library/general/table-rules/combat.md; the combat tools' descriptions have the options):
+  - /start-session doesn't load combat.md: read it when a fight starts, right after the message that calls the fight (with the setup, while the player rolls initiative), unless you've read it in this conversation since the last compaction.
   - The script does all the rule math (modifiers, AoOs, maneuvers, light and vision, durations, dying). Never compute modifiers, count squares or roll attacks yourself. NPCs: combat_attack with `with` (a profile attack); PCs: the player's rolls (combat_attack with `total`, plus `damage` if they gave it; a hit without it waits for their damage: ask, then combat_damage).
   - THE PLAYER ROLLS ALL OF THE PC'S DICE: attacks, damage, healing (a cure spell's 1d8+N), saves, checks. Never call dice_roll for the PC and never make up a PC's number, also not after a tool error: ask for it.
   - Light and vision follow the table's own house rule (library/pf1e/house-rules/vision-and-light.md: e.g. not seeing an attacker in darkness denies the Dex bonus). The script implements it on purpose: don't "correct" it against the Core Rulebook.
@@ -301,6 +302,7 @@ class Engine:
     COMPACT_AT = 120_000   # context tokens per call above which the conversation gets compacted between turns
     COMPACT_AFTER_FIGHT_AT = 100_000   # lower right after a fight: its tool calls and logs are dead weight then
     context_tokens = 0
+    combat_rules_read = False   # combat.md is read when a fight starts, not with the session's table rules
 
     def compact_if_large(self, after_fight: bool = False) -> bool:
         """Between turns: if the conversation has grown past COMPACT_AT tokens of context (or
@@ -318,6 +320,7 @@ class Engine:
             self.release(publish=False)
         if ok:
             self.context_tokens = 0
+            self.combat_rules_read = False   # compaction drops what the DM read
         return ok
 
     def __init__(self, on_event: EventHandler, model: str | None = None, effort: str = 'medium', debug: bool = False,
@@ -493,6 +496,7 @@ class Engine:
         self.done.set()
         self.session_id = None
         self._cost_seen = 0.0
+        self.combat_rules_read = False
         self.start()
 
     def set_effort(self, level: str) -> None:
@@ -644,6 +648,8 @@ class Engine:
             for c in content:
                 if c.get("type") == "tool_use" and is_combat_tool(c.get("name", ""), c.get("input") or {}):
                     self.combat_engaged = True
+                if c.get("type") == "tool_use" and reads_combat_rules(c.get("name", ""), c.get("input") or {}):
+                    self.combat_rules_read = True
             texts = [c.get("text", "") for c in content if c.get("type") == "text"]
             tel = self._tel
             if tel is not None:
@@ -1447,10 +1453,24 @@ def turn_line(st: dict[str, Any] | None) -> str:
     return f"Now: round {st.get('round')}, {c['name']}'s turn{fresh}. Actions left (from the script): {left}."
 
 
-def with_recap(text: str, recap: str, log_lines: list[str], st: dict[str, Any] | None = None) -> str:
+COMBAT_RULES = "library/general/table-rules/combat.md"
+
+
+def reads_combat_rules(name: str, inp: dict[str, Any]) -> bool:
+    """Whether a tool call reads the combat table rules (Read, or a shell command naming the file)."""
+    target = str(inp.get("file_path") or "") if name == "Read" else str(inp.get("command") or "") if name == "Bash" else ""
+    return COMBAT_RULES in target
+
+
+def with_recap(text: str, recap: str, log_lines: list[str], st: dict[str, Any] | None = None,
+               rules_unread: bool = False) -> str:
     """The player's message for the main DM, with what happened in combat since its last reply in
-    front (the chat shows only the player's text, live and in reloaded history), and whose turn it is."""
+    front (the chat shows only the player's text, live and in reloaded history), and whose turn it is.
+    rules_unread: a fight is on and the DM hasn't read combat.md in this conversation: remind it."""
     now = turn_line(st)
+    if rules_unread:
+        now = (f"A fight is on and you haven't read {COMBAT_RULES} in this conversation (or since it was "
+               f"compacted): read it now, before you resolve anything.\n" + now)
     if not recap and not log_lines and not now:
         return text
     body = (f"While you were waiting, the combat runner played these turns (the player saw this narration):\n{recap}\n"

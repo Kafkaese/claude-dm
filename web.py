@@ -304,7 +304,8 @@ class Hub:
         lines = [f"R{e.get('round', '?')} {e.get('text', '')}" for e in events[self.log_mark:]]
         self.log_mark = len(events)
         recap = self.runner.take_recap() if self.runner else ""
-        return with_recap(text, recap, lines if recap else [], st)
+        return with_recap(text, recap, lines if recap else [], st,
+                          rules_unread=bool(st) and self.eng.combat_engaged and not self.eng.combat_rules_read)
 
     def _get_runner(self, camp: str) -> CombatRunner:
         """The combat runner for this campaign (a new one when the campaign changes)."""

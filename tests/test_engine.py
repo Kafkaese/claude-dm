@@ -588,3 +588,27 @@ class ClosingSession(CampaignCase):
         self.assertFalse(hub.closing)
         self.assertIn("No session is in progress", hub.history[-1]["text"])
         self.assertEqual(sent, [])
+
+
+class CombatRulesOnDemand(CampaignCase):
+    """combat.md is read when a fight starts; until the DM has read it, messages in a fight remind it."""
+
+    def test_reminder_until_read(self) -> None:
+        self.new(blank="8x6")
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=20)
+        self.add("g1", "Gob", "F2", GOBLIN, init=10)
+        st = self.state()
+        self.assertIn(E.COMBAT_RULES, E.with_recap("I roll 17", "", [], st, rules_unread=True))
+        self.assertNotIn(E.COMBAT_RULES, E.with_recap("I roll 17", "", [], st))
+        self.assertEqual(E.player_part(E.with_recap("I roll 17", "", [], st, rules_unread=True)), "I roll 17")
+        self.assertTrue(E.reads_combat_rules("Read", {"file_path": str(E.REPO / E.COMBAT_RULES)}))
+        self.assertTrue(E.reads_combat_rules("Bash", {"command": f"sed -n '1,80p' {E.COMBAT_RULES}"}))
+        self.assertFalse(E.reads_combat_rules("Read", {"file_path": "library/general/table-rules/combat-prep.md"}))
+
+    def test_compaction_forgets_it(self) -> None:
+        eng = E.Engine(lambda ev: None)
+        eng.alive = lambda: True                                    # type: ignore[method-assign]
+        eng.send = lambda text: True                                # type: ignore[method-assign]
+        eng.combat_rules_read, eng.context_tokens = True, 200_000
+        self.assertTrue(eng.compact_if_large())
+        self.assertFalse(eng.combat_rules_read)

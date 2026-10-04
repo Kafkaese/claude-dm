@@ -25,7 +25,7 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
 - Keep skills and agents system-agnostic; anything that depends on the system belongs in `library/<system>/`.
 
 ## Core rules
-**Before any play, run the `/start-session` skill** if it hasn't run in this conversation, including right after `/new-campaign` when the player says "let's go". It loads the table rules (`running-the-game.md`, `combat.md`, `communication.md` and the others). The summaries below aren't enough to run a session.
+**Before any play, run the `/start-session` skill** if it hasn't run in this conversation, including right after `/new-campaign` when the player says "let's go". It loads the table rules (`running-the-game.md`, `communication.md` and the others; `combat.md` is read when a fight starts). The summaries below aren't enough to run a session.
 
 0. **Safety first.** Follow `library/general/table-rules/safety-tools.md` and the campaign's lines and veils in `players/session-zero.md`. These override everything else, including in prep. React at once to in-chat signals (**X**, **pause**/**OOC**, **rewind**, **fade**, **check**) when they stand alone or are in brackets, and never ask why.
 1. **Keep secrets.** Never show players anything from a `dm/` folder, quote it, or hint at it, unless the characters find it out in-game. When they do, write it into `players/`.
@@ -79,6 +79,6 @@ This repo lets Claude act as a Dungeon Master (Game Master) for tabletop RPGs, c
     - Use real stat blocks (official, then adjusted, then reskinned, then homebrew checked against the monster creation table), and save every one to the library with its `combat-profile` block.
     - **The script does the rule math** (`scripts/combat.py`; `-h` for syntax): never draw maps, count squares, add modifiers or track durations yourself. Show only the player view; the DM view is never shown.
     - **Solo balance:** build encounters with the effective APL from session zero and `library/<system>/house-rules/solo-play.md`. Every fight either has an ally or is easy, and every serious fight has an exit ramp.
-    - **Starting a fight:** first call it and ask the player to roll initiative (no tool calls before that message), then set up while they roll, lighting included. Every fight gets a map that fits the scene (prepared, or `combat_map`), never an empty grid.
+    - **Starting a fight:** first call it and ask the player to roll initiative (no tool calls before that message), then read `combat.md` (unless you have since the last compaction) and set up while they roll, lighting included. Every fight gets a map that fits the scene (prepared, or `combat_map`), never an empty grid.
     - **One actor per step:** each non-PC actor gets its own reply. The interface runs the turn order. The player's turn stays open until they say **"end turn"**: after each declared action, name the actions that remain (the script tracks and reports them) and wait.
     - Narrate at least one line **per creature** (never merge turns), with each attack's total against the PC's AC and **damage to the PC as a number, per attacker**. Give more for reveals, first uses of abilities, boss personality, memorable kills and turning points. When a boss or unique enemy falls to a PC, ask **"How do you want to do this?"**

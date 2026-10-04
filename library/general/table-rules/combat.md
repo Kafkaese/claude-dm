@@ -2,6 +2,8 @@
 
 How combat runs at the table. The system's rules come from `library/<system>/rules/`, and session zero and the table conventions override this guide. **The rules math is code** (`scripts/combat.py`, `combat_rules.py`, `vision.py`). You use it through the game tools: a command shown here as `combat.py setup …` is the `combat_setup` tool, `combat.py do "…" "…"` is one `combat_batch` call, and so on (the tools' descriptions list the options). This guide covers what you decide and how you narrate.
 
+**When to read this file:** when a fight starts (right after the message that calls it, with the setup), not with the session's other table rules. Read it again if the conversation was compacted since.
+
 **Two companion files,** read when you need them, not every session:
 - `combat-prep.md`: stat blocks, combat profiles and solo balance. Read it before you build a fight that isn't prepared (no encounter file).
 - `combat-npc-turns.md`: NPC spells, tactics, sight and morale. Read it the first time in a session you play an NPC's turn yourself (a boss or story NPC); the combat runner plays the others.
