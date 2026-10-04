@@ -27,7 +27,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 from typing import Any
 
-from dm_engine import (EFFORTS, REPO, CombatRunner, Engine, with_recap, campaign_title, is_campaign, remember_campaign, combat_snapshot, combat_state,
+from dm_engine import (EFFORTS, REPO, CombatRunner, Engine, PlayerTurnRunner, with_recap, campaign_title, is_campaign, remember_campaign, combat_snapshot, combat_state,
                        end_fight, fight_over, fight_over_prompt,
                        is_go_signal, list_campaigns, run_combat_step, slugify, step_due,
                        last_combat_events, load_history,
@@ -47,6 +47,9 @@ class Hub:
         self.runner: CombatRunner | None = None   # plays the NPC steps in its own small context
         self.runner_model: str | None = None
         self.runner_effort = "low"
+        self.pc_runner: PlayerTurnRunner | None = None   # resolves the player's turns in a fight, also small
+        self.dm_model: str | None = None                  # the player's turns use the DM's model…
+        self.pc_effort = "medium"                         # …at medium effort
         self.log_mark = 0   # combat-log lines the main DM has already been told about
         self.lock = threading.RLock()
         self.subs: list[queue.Queue[dict[str, Any]]] = []
@@ -246,9 +249,7 @@ class Hub:
             finally:
                 self.eng.release(publish=False)
         transcript = write_transcript(camp, nn, self.history)
-        if self.runner:
-            self.runner.stop()
-            self.runner = None
+        self._stop_runners()
         self.eng.new_session()   # same campaign lock, a fresh and small context
         with self.lock:
             self.turn_dm = None
@@ -269,9 +270,12 @@ class Hub:
         leaves a combat step due (the player ended their turn in the same message, or a fight was
         just set up with the PC first), the step runs right after."""
         camp = self.campaign()
-        if camp and self.eng.combat_engaged and combat_state(camp):
+        st = combat_state(camp) if camp and self.eng.combat_engaged else None
+        if st and camp:
             self._get_runner(camp).heard(text)   # allies hear what the PC says (no process starts here)
-        ok = self._exchange(self._with_recap(text))
+        ok = st is not None and self._player_turn(text, st)
+        if not ok:   # not a player turn in a fight, or the player-turn runner handed it back
+            ok = self._exchange(self._with_recap(text))
         self.refresh_combat()
         if ok and self.eng.combat_engaged and step_due(self.campaign(), text):
             self._step()
@@ -305,6 +309,51 @@ class Hub:
         recap = self.runner.take_recap() if self.runner else ""
         return with_recap(text, recap, lines if recap else [], st,
                           rules_unread=bool(st) and self.eng.combat_engaged and not self.eng.combat_rules_read)
+
+    def _player_turn(self, text: str, st: dict[str, Any]) -> bool:
+        """During a fight, on the player's turn (or when the script waits for their roll): the
+        player-turn runner resolves the message. Returns False when the main DM must take it: not
+        the player's turn, a [bracket] or /command, or the runner handed it back."""
+        camp = self.campaign()
+        cur = next((t for t in st.get("tokens", []) if t["token"] == st.get("turn")), None)
+        mine = bool(cur and cur["side"] == "pc") or bool(st.get("awaiting"))
+        if not camp or not mine or text.lstrip().startswith(("[", "/")):
+            return False
+        npc = self._get_runner(camp)
+        runner = self._get_pc_runner(camp, st)
+        ok, narration = runner.play(text, st, npc.recent)
+        with self.lock:
+            self.turn_dm = None
+        if narration is None:
+            if not ok:
+                runner.stop()
+                self.pc_runner = None
+            return False
+        npc.note_player(text, narration)
+        return True
+
+    def _get_pc_runner(self, camp: str, st: dict[str, Any]) -> PlayerTurnRunner:
+        """The player-turn runner for this fight (a new one for another campaign)."""
+        if self.pc_runner is None or self.pc_runner.campaign != camp:
+            if self.pc_runner:
+                self.pc_runner.stop()
+
+            def after() -> None:
+                with self.lock:
+                    self.turn_dm = None
+                self.refresh_combat()
+
+            self.pc_runner = PlayerTurnRunner(self.on_event, camp, st, model=self.dm_model, effort=self.pc_effort,
+                                              after_send=after)
+        self.pc_runner.engine.telemetry_session = self.eng.session_id
+        return self.pc_runner
+
+    def _stop_runners(self) -> None:
+        """Stop both combat runners (a fight ended, a session closed, a campaign switch)."""
+        for r in (self.runner, self.pc_runner):
+            if r:
+                r.stop()
+        self.runner = self.pc_runner = None
 
     def _get_runner(self, camp: str) -> CombatRunner:
         """The combat runner for this campaign (a new one when the campaign changes)."""
@@ -383,9 +432,7 @@ class Hub:
             self.system(f"Ending the session of {campaign_title(old)} first…")
             self.close_session("skip (the player is switching to another campaign)")
         self.closing = False
-        if self.runner:
-            self.runner.stop()
-            self.runner = None
+        self._stop_runners()
         resume = None
         if mode == "continue":
             resume = next((c["session"] for c in list_campaigns() if c["slug"] == slug), None)
@@ -429,9 +476,7 @@ class Hub:
         except RuntimeError as e:
             self.system(f"The fight looks over, but ending it failed: {e}")
             return
-        if self.runner:
-            self.runner.stop()
-            self.runner = None
+        self._stop_runners()
         self.refresh_combat()   # the panel closes with the "fight is over" card
         self._exchange(fight_over_prompt(why, report))
         self.refresh_combat()
@@ -603,6 +648,7 @@ def main() -> None:
     engine = Engine(hub.on_event, model=args.model, effort=args.effort, debug=args.debug, record_session=True)
     hub.engine = engine
     hub.runner_model, hub.runner_effort = args.runner_model or args.model, args.runner_effort
+    hub.dm_model = args.model
     hub.combat = {"active": False}   # shown once the DM engages combat in this session (Hub.fight)
     # No campaign yet: the page opens the picker, and the DM process starts once one is chosen,
     # locked to it.
@@ -619,8 +665,7 @@ def main() -> None:
         pass
     finally:
         engine.stop()
-        if hub.runner:
-            hub.runner.stop()
+        hub._stop_runners()
         server.shutdown()
         if engine.session_id:
             print("Session saved. Continue it from the campaign picker next time.")

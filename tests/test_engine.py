@@ -611,3 +611,84 @@ class CombatRulesOnDemand(CampaignCase):
         eng.combat_rules_read, eng.context_tokens = True, 200_000
         self.assertTrue(eng.compact_if_large())
         self.assertFalse(eng.combat_rules_read)
+
+
+class PlayerTurns(CampaignCase):
+    """In a fight, the player's turns go to the lean player-turn runner; everything else, and what it
+    hands back, goes to the main DM."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write("players/characters/corin.md", "# Corin\nSpells: daze, light.\n")
+        self.new(blank="8x6")
+        self.add("C", "Corin", "B2", PC_PROFILE, "pc", 20, "--ref", f"campaigns/{self.slug}/players/characters/corin.md")
+        self.add("g1", "Gob", "F2", GOBLIN, init=10)
+        self.run_cmd("next")                                    # Corin's turn
+
+    def hub(self, reply: str | None) -> tuple[Any, list[str], list[str]]:
+        import web
+        hub = web.Hub(self.slug)
+        hub.engine = E.Engine(lambda ev: None)
+        hub.engine.combat_engaged = True
+        to_dm: list[str] = []
+        to_runner: list[str] = []
+        hub._exchange = lambda text: to_dm.append(text) or True   # type: ignore[method-assign]
+
+        class Fake:
+            campaign = self.slug
+            def play(self, text: str, st: dict, recent: list) -> tuple[bool, str | None]:
+                to_runner.append(text)
+                return True, reply
+            def stop(self) -> None:
+                pass
+        hub._get_pc_runner = lambda camp, st: Fake()             # type: ignore[method-assign]
+        return hub, to_dm, to_runner
+
+    def test_routing(self) -> None:
+        hub, to_dm, to_runner = self.hub("Hit: the goblin reels. You still have a move action.")
+        hub._run_turn("I attack g1, 17 to hit, 6 damage")
+        self.assertEqual((len(to_runner), to_dm), (1, []))    # resolved without the main DM
+        self.assertIn("I attack g1", hub.runner.take_recap())  # and the main DM hears it later
+        hub._run_turn("[Use the optional flanking rule from now on]")
+        self.assertEqual(len(to_runner), 1)                   # brackets: the main DM
+        self.assertEqual(len(to_dm), 1)
+
+    def test_handed_back(self) -> None:
+        hub, to_dm, to_runner = self.hub(None)
+        hub._run_turn('"Drop your blade and I\'ll let you live," I tell the goblin.')
+        self.assertEqual(len(to_runner), 1)
+        self.assertEqual(len(to_dm), 1)
+        self.assertIn("I'll let you live", to_dm[0])
+
+    def test_not_the_players_turn(self) -> None:
+        self.run_cmd("next")                                    # the goblin's turn
+        hub, to_dm, to_runner = self.hub("ok")
+        hub._run_turn("What does the goblin look like?")
+        self.assertEqual((to_runner, len(to_dm)), ([], 1))
+
+    def test_runner_hides_the_hand_back_and_starts_each_turn_fresh(self) -> None:
+        shown: list[dict] = []
+        st = self.state()
+        r = E.PlayerTurnRunner(lambda ev: shown.append(ev), self.slug, st)
+        self.assertIn("Spells: daze", r.engine.system_prompt or "")
+        replies = [E.ESCALATE, "Hit, 6 damage. You still have a move action.", "You step back."]
+        fresh: list[int] = []
+        r.engine.alive = lambda: True                                 # type: ignore[method-assign]
+        r.engine.new_session = lambda: fresh.append(1)                # type: ignore[method-assign]
+
+        def send(prompt: str) -> bool:
+            self.assertIn("The player says:", prompt)
+            r.engine.emit(type="text_start")
+            r.engine.emit(type="text", delta=replies.pop(0))
+            return True
+        r.engine.send = send                                          # type: ignore[method-assign]
+        self.assertEqual(r.play("I tell him to surrender", st, []), (True, None))
+        self.assertEqual(shown, [])                                   # the hand-back is never shown
+        ok, text = r.play("I attack g1, 17, 6 damage", st, [])
+        self.assertEqual(text, "Hit, 6 damage. You still have a move action.")
+        self.assertTrue(any(ev.get("delta") == text for ev in shown))
+        self.assertEqual(fresh, [])
+        st2 = dict(st, round=2)
+        r.play("I step back", st2, [])
+        self.assertEqual(fresh, [1])                                  # a new turn: a fresh conversation
+        self.assertEqual(E.exchange_kind(r.player_frame("x", st, [])), "player-turn")

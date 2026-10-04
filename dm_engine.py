@@ -79,6 +79,7 @@ WRAPPER_PROMPT = """You are running inside Claude DM's player-facing web interfa
   - YOU ARE IN THE INTERFACE. When a combat tool says the interface runs the turns, that's this interface: never tell the player to run anything, just follow the tool's advice.
   - Setup: a prepared encounter (combat_encounters action=list) is ONE combat_setup call once the player's initiative is in. Otherwise: every combatant needs a valid combat profile (add one from the stat block first; a PC's sheet must pass the PC schema, so ask the player for missing values). Decide the lighting as part of the encounter. PC tokens use the first letter of the name (Corin → C). After setup, narrate the opening, give the initiative order and stop: the interface starts the turns right after your reply (an enemy that's first plays at once). If the player declares actions before their turn comes, tell them who acts first; their turn follows.
   - THE COMBAT RUNNER plays most NPC turns: a separate, lean process the interface hands each enemy's step to (it saves most of the tokens). You then get "[Interface recap: …]" in front of the player's next message: what it narrated and the combat log. Treat that as what happened; the player saw it. Creatures you play yourself (a boss, a story NPC: `dm_plays` in the encounter, or combat_add main_dm) still come to you as combat steps; the first time in a session, read library/general/table-rules/combat-npc-turns.md (their spells, tactics, sight, morale).
+  - THE PLAYER'S TURNS in a fight go to a second lean process too: it resolves the actions they declare (with their rolls) and narrates them; that shows up in the same recap. It hands you what isn't a combat action (parley, threats and questions to NPCs, lore or rules questions, stunts that need a DC, out-of-character remarks), so a player message during their turn that reaches you is one of those: handle it, and resolve any actions it also declares. [Bracketed] messages always come to you.
   - THE INTERFACE RUNS THE TURN ORDER. Never run `next` (it's refused). A bracketed "[Combat step …]" message names ONE actor, what it can see, and its tactical options (squares, the roll it needs there, what provokes; combat_options with area for area effects): resolve exactly that actor in ONE combat_batch call, narrate only that actor, and stop. Play it by its nature and what it sees. A hidden actor's step: reply "…" unless it gets revealed.
   - SUBMIT WHAT THE PLAYER DECLARED, EXACTLY: never judge yourself whether an action is legal or already used up, the script does. The "Now: round N, …" line in the bracket is the truth about whose turn it is (on the PC's turn: what's left; earlier turns don't count). When it says it's NOT the player's turn, the player is talking between other creatures' turns: answer, but don't resolve their character's actions or hand them the turn. If a tool REFUSES the declared action (e.g. a 5-foot step that costs 10 ft), tell the player plainly why and ask what they do instead. Never substitute another action for them (no full move instead of a refused step).
   - To explain why an NPC did something, show its logged briefing: combat_info what=briefing token=… (round=N). Never move tokens back and forth to recreate an earlier position.
@@ -236,6 +237,8 @@ def exchange_kind(text: str) -> str:
     t = text.lstrip()
     if t.startswith("[Combat step"):
         return "combat-hidden" if "hasn't noticed" in t[:400] else "combat-step"
+    if t.startswith("[Player's turn"):
+        return "player-turn"
     if t.startswith("[The player is switching"):
         return "switch"
     if t.startswith("[The fight is over"):
@@ -377,6 +380,11 @@ class Engine:
         """Keep the DM's text back until release(), e.g. while a hidden actor's turn is resolved."""
         with self.lock:
             self._held = []
+
+    def held_text(self) -> str:
+        """The text held back so far (without releasing it)."""
+        with self.lock:
+            return "".join(ev.get("delta", "") for ev in self._held or [] if ev["type"] == "text")
 
     def release(self, publish: bool, after_tools: bool = False) -> str:
         """Stop holding text; show what was held back if `publish`, else drop it. With after_tools,
@@ -1305,9 +1313,9 @@ Narration rules (strict):
 - Respect the table's lines and veils below."""
 
 
-def runner_system_prompt(campaign: str) -> str:
-    """RUNNER_PROMPT plus the campaign's table: tone, DM voice, conventions and safety lines from
-    players/session-zero.md (player-facing, so nothing secret)."""
+def runner_system_prompt(campaign: str, base: str = RUNNER_PROMPT) -> str:
+    """A runner prompt (RUNNER_PROMPT, or PC_TURN_PROMPT) plus the campaign's table: tone, DM voice,
+    conventions and safety lines from players/session-zero.md (player-facing, so nothing secret)."""
     path = REPO / "campaigns" / campaign / "players" / "session-zero.md"
     keep = []
     if path.exists():
@@ -1317,7 +1325,7 @@ def runner_system_prompt(campaign: str) -> str:
             if any(k in title.lower() for k in ("tone", "style", "safety", "convention", "dm voice")):
                 keep.append(f"## {title}\n{m.group(2).strip()}")
     table = "\n\n".join(keep)[:6000]
-    return RUNNER_PROMPT + (f"\n\nThis campaign's table (session zero):\n{table}" if table else "")
+    return base + (f"\n\nThis campaign's table (session zero):\n{table}" if table else "")
 
 
 class CombatRunner:
@@ -1390,6 +1398,12 @@ class CombatRunner:
         if by_runner:
             self.recap.append(f"{name}: {text}")
 
+    def note_player(self, said: str, narration: str) -> None:
+        """Remember a player's declaration and how the player-turn runner resolved it (for the recap)."""
+        line = f"The player: {said.strip()[:300]}\n  → {narration}"
+        self.recent = (self.recent + [line])[-6:]
+        self.recap.append(line)
+
     def take_recap(self) -> str:
         """The recap for the main DM (and forget it): what the runner narrated since the last time."""
         out, self.recap = "\n".join(self.recap), []
@@ -1398,6 +1412,91 @@ class CombatRunner:
     def stop(self) -> None:
         """Stop the runner's process."""
         self.engine.stop()
+
+
+# ---------- the player's turns in a fight ----------
+# During a fight, the player's messages on their turn (and answers to the script's questions) go to
+# a second lean process instead of the main DM: it reads ~25k tokens per call instead of the whole
+# session. Anything that isn't resolving the character's combat actions goes back to the main DM:
+# the runner answers only ESCALATE, which is never shown.
+ESCALATE = "[[DM]]"
+
+PC_TURN_PROMPT = f"""You are the combat assistant of a tabletop DM interface (Pathfinder 1e). During a fight you resolve what the PLAYER declares for their character (the PC) on their turn, with the dm tools, and narrate the result. The player sees only the text you write; tool calls stay hidden. The player's character sheet is below.
+
+Each message gives the turn's context (whose turn, the actions left, an open question from the script, the recent narration) and then what the player says.
+1. Resolve exactly what the player declared, in as few calls as possible (several actions: one combat_batch). Use THEIR numbers: combat_attack with total (and damage if they gave it; a hit without damage waits: ask for it, then combat_damage), combat_maneuver and combat_save with total, combat_move (5-foot step, charge, withdraw, run via its options), combat_cast for their spells (the effect comes from the library or the call; targets' saves are rolled by the tools), combat_ability, combat_act for actions without their own tool (draw a weapon, stand up, a potion, total defense), combat_wield and combat_pickup, combat_undo when they correct a roll they already gave (then enter the corrected one), combat_endturn when they end the turn ("end turn", "done", "that's it", or together with their actions). The tools do all the rule math.
+2. THE PLAYER ROLLS ALL OF THE PC'S DICE. Never call dice_roll for the PC and never make up or assume a PC's number (attack, damage, healing, save, check), also not after a tool error: ask for it.
+3. Submit actions exactly as declared: the script judges legality and action economy. If a tool refuses, say plainly why and ask what they do instead. Never substitute another action, and don't retry a refused call unchanged. Never use override except for a feat or ability that changes the rules (Spring Attack, Quick Draw) when the sheet has it.
+4. Then narrate the result in 1-3 lines (more for a crit, a kill or a spectacular moment), say which actions are left (from the tool's report), and STOP. Don't play anyone else's turn, don't run combat_next, never end the turn yourself, and never write the PC's words, thoughts or actions beyond what the player declared.
+5. When a result sets a question (an attack of opportunity, a save, a concentration or stabilization check), ask the player for that roll. The context shows an open question; the player's message may answer it.
+6. When a unique, named or boss enemy drops from the PC's attack, stop before describing it and ask "How do you want to do this?"; the player's next message describes the finish, and you narrate it.
+7. HAND BACK TO THE DM: reply with exactly {ESCALATE} and nothing else (no tool call, no other text) when the message is anything other than resolving the character's actions in this fight: talking with an NPC beyond a short battle cry (parley, threats, questions, surrender terms), questions about the world, lore, the story or a rule you aren't certain of, a stunt or skill use that needs a DC set (Bluff, Intimidate, Acrobatics past the basics), out-of-character remarks, or anything the sheet and tools don't cover.
+
+Narration rules (strict):
+- Address the PC as "you". Never state an enemy's AC, attack bonus, HP or saves; say "hit", "miss", "bloodied". No game terms in NPCs' mouths.
+- Match the tool results and the combat log; never contradict a number.
+- Highlight names the characters know: people in **bold**, places in ***bold italic***, spells and items in *italic*.
+- Write nothing before your tool calls; only the narration after them.
+- Respect the table's lines and veils below."""
+
+
+def pc_sheets(campaign: str, st: dict[str, Any]) -> str:
+    """The character sheets of the fight's PCs (their `ref`), for the player-turn runner."""
+    out = []
+    for t in st.get("tokens", []):
+        ref = t.get("ref") if t.get("side") == "pc" else None
+        if not ref:
+            continue
+        for p in (REPO / ref, REPO / "campaigns" / campaign / ref):
+            if p.is_file() and "/dm/" not in str(p):   # player-facing sheets only
+                out.append(f"### {t['name']} ({t['token']})\n{p.read_text(encoding='utf-8')[:9000]}")
+                break
+    return "\n\n".join(out)
+
+
+class PlayerTurnRunner(CombatRunner):
+    """Resolves the player's declared actions during a fight in its own lean process (PC_TURN_PROMPT,
+    with the PCs' sheets). A new player turn starts a fresh conversation; within a turn it keeps one,
+    so "and then I step back" knows what came before."""
+
+    RESET_EVERY = 12
+
+    def __init__(self, on_event: EventHandler, campaign: str, st: dict[str, Any], model: str | None = None,
+                 effort: str = "medium", after_send: Callable[[], None] | None = None) -> None:
+        super().__init__(on_event, campaign, model=model, effort=effort, after_send=after_send)
+        sheets = pc_sheets(campaign, st)
+        prompt = runner_system_prompt(campaign, PC_TURN_PROMPT) + (f"\n\nThe player's character sheet:\n{sheets}" if sheets else "")
+        self.engine = Engine(on_event, model=model, effort=effort, role="runner", system_prompt=prompt, campaign=campaign)
+        self.turn_key: tuple[Any, Any] | None = None
+
+    def player_frame(self, text: str, st: dict[str, Any], recent: list[str]) -> str:
+        """The message for one player declaration: the turn's context, then the player's words."""
+        parts = [f"[Player's turn context] Campaign: {self.campaign} (pass campaign={self.campaign} on your first tool call).",
+                 turn_line(st)]
+        if st.get("awaiting"):
+            parts.append(f"Open question from the script: {st['awaiting']}")
+        if recent:
+            parts.append("Recent narration (for continuity; don't repeat it):\n" + "\n".join(recent[-4:]))
+        return "\n".join(p for p in parts if p) + "\n\nThe player says:\n" + text
+
+    def play(self, text: str, st: dict[str, Any], recent: list[str]) -> tuple[bool, str | None]:
+        """Resolve one player message. Returns (ok, the narration shown), with None for the narration
+        when it handed the message back to the main DM (nothing is shown then)."""
+        key = (st.get("round"), st.get("turn"))
+        if self.turn_key is not None and key != self.turn_key and self.engine.alive():
+            self.engine.new_session()   # a new turn: start clean (the context line has what's left)
+            self.steps = 0
+        self.turn_key = key
+        self.engine.hold()
+        handed_back, shown = False, ""
+        try:
+            ok = self.send(self.player_frame(text, st, recent))
+        finally:
+            handed_back = ESCALATE in self.engine.held_text()
+            shown = self.engine.release(publish=not handed_back, after_tools=True)
+        if not ok or handed_back:
+            return ok, None
+        return True, shown.strip()
 
 
 def turn_line(st: dict[str, Any] | None) -> str:
@@ -1449,7 +1548,8 @@ def with_recap(text: str, recap: str, log_lines: list[str], st: dict[str, Any] |
                f"compacted): read it now, before you resolve anything.\n" + now)
     if not recap and not log_lines and not now:
         return text
-    body = (f"While you were waiting, the combat runner played these turns (the player saw this narration):\n{recap}\n"
+    body = (f"While you were waiting, the combat runner played these turns and resolved the player's declared actions "
+            f"(the player saw this narration):\n{recap}\n"
             if recap else "")
     if log_lines:
         body += "Combat log since your last reply:\n" + "\n".join(log_lines[-20:]) + "\n"
