@@ -528,12 +528,14 @@ class Compaction(CampaignCase):
         eng = E.Engine(lambda ev: shown.append(ev))
         sent: list[str] = []
         eng.alive = lambda: True                                    # type: ignore[method-assign]
-        eng.send = lambda text: sent.append(text) or True           # type: ignore[method-assign]
+        labels: list[str] = []
+        eng.send = lambda text, label="thinking": sent.append(text) or labels.append(label) or True   # type: ignore[method-assign]
         eng.context_tokens = 90_000
         self.assertFalse(eng.compact_if_large())
         eng.context_tokens = 180_000
         self.assertTrue(eng.compact_if_large())
         self.assertTrue(sent[0].startswith("/compact "))
+        self.assertIn("tidying the DM's notes", labels[0])            # the player sees what's going on, not "thinking"
         self.assertEqual(eng.context_tokens, 0)
         self.assertIsNone(E.player_part(sent[0]))                    # never shown as the player's message
         self.assertEqual(E.exchange_kind(sent[0]), "command:compact")
@@ -542,7 +544,7 @@ class Compaction(CampaignCase):
         import web
         eng = E.Engine(lambda ev: None)
         eng.alive = lambda: True                                    # type: ignore[method-assign]
-        eng.send = lambda text: True                                # type: ignore[method-assign]
+        eng.send = lambda text, label="thinking": True              # type: ignore[method-assign]
         eng.context_tokens = 110_000
         self.assertFalse(eng.compact_if_large())                    # below the general threshold
         self.assertTrue(eng.compact_if_large(after_fight=True))     # a scene break: compact now
@@ -632,7 +634,7 @@ class CombatRulesOnDemand(CampaignCase):
     def test_compaction_forgets_it(self) -> None:
         eng = E.Engine(lambda ev: None)
         eng.alive = lambda: True                                    # type: ignore[method-assign]
-        eng.send = lambda text: True                                # type: ignore[method-assign]
+        eng.send = lambda text, label="thinking": True              # type: ignore[method-assign]
         eng.combat_rules_read, eng.context_tokens = True, 200_000
         self.assertTrue(eng.compact_if_large())
         self.assertFalse(eng.combat_rules_read)
@@ -771,3 +773,53 @@ class ReviewFixesEngine(CampaignCase):
             finally:
                 E.transcript_path = old                               # type: ignore[assignment]
         self.assertEqual([m["text"] for m in h], ["/start-session x", "I draw my blade"])
+
+
+class DebugInCombat(CampaignCase):
+    """Debug mode reaches the combat runners (tagged), shows what the interface sent them and what
+    was held back, and the interface's own routing decisions."""
+
+    def test_runner_lines(self) -> None:
+        lines: list[str] = []
+        r = E.PlayerTurnRunner(lambda ev: lines.append(ev.get("line", "")) if ev["type"] == "debug" else None,
+                               self.slug, {"tokens": []})
+        r.engine.debug = True
+        r.engine.dbg("[tool] mcp__dm__combat_attack")
+        self.assertEqual(lines[-1], "{player-turn runner} [tool] mcp__dm__combat_attack")
+        r.engine.hold()
+        r.engine.emit(type="text", delta="secret thinking")
+        r.engine.release(publish=False)
+        self.assertIn("[not shown] secret thinking", lines[-1])
+
+    def test_sent_briefings_and_toggle(self) -> None:
+        import web
+        lines: list[str] = []
+        eng = E.Engine(lambda ev: lines.append(ev.get("line", "")) if ev["type"] == "debug" else None, role="runner")
+        eng.debug = True
+
+        class Proc:
+            def poll(self) -> None:
+                return None
+
+            class stdin:                                               # noqa: N801 - a stand-in
+                @staticmethod
+                def write(s: str) -> None:
+                    raise BrokenPipeError
+
+                @staticmethod
+                def flush() -> None:
+                    pass
+        eng.proc = Proc()                                              # type: ignore[assignment]
+        try:
+            eng.send("[Combat step, sent by the interface] plans…")
+        except BrokenPipeError:
+            pass
+        self.assertTrue(any(l.startswith("{runner} [→ sent] [Combat step") for l in lines), lines)
+        hub = web.Hub(self.slug)
+        hub.engine = E.Engine(lambda ev: None)
+        runner = hub._get_runner(self.slug)
+        self.assertFalse(runner.engine.debug)
+        hub.command(":debug")
+        self.assertTrue(runner.engine.debug)                           # follows the toggle
+        hub.dbg("message → the main DM")
+        self.assertEqual(hub.history[-1], {"role": "debug", "text": "{interface} message → the main DM"})

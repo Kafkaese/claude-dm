@@ -306,8 +306,12 @@ class Hub:
         camp = self.campaign()
         st = combat_state(camp) if camp and self.eng.combat_engaged else None
         if st and not after_fight and self.eng.context_tokens < self.eng.COMPACT_IN_FIGHT_AT:
+            if self.eng.context_tokens >= self.eng.COMPACT_AT:
+                self.dbg(f"compaction deferred to the fight's end ({self.eng.context_tokens // 1000}k tokens a call)")
             return
-        self.eng.compact_if_large(after_fight)
+        tokens = self.eng.context_tokens
+        if self.eng.compact_if_large(after_fight):
+            self.dbg(f"compacted the DM's conversation (was {tokens // 1000}k tokens a call)")
 
     def _with_recap(self, text: str) -> str:
         """The player's message for the main DM, with what the combat runner played since its last
@@ -330,13 +334,16 @@ class Hub:
         cur = next((t for t in st.get("tokens", []) if t["token"] == st.get("turn")), None)
         mine = bool(cur and cur["side"] == "pc") or bool(st.get("awaiting"))
         if not camp or not mine or text.lstrip().startswith(("[", "/")):
+            self.dbg("message → the main DM (" + ("a [bracket] or /command" if mine else "not the player's turn") + ")")
             return False
+        self.dbg("message → the player-turn runner (the player's turn" + (", answering a question" if st.get("awaiting") else "") + ")")
         npc = self._get_runner(camp)
         runner = self._get_pc_runner(camp, st)
         ok, narration = runner.play(text, st, npc.recent)
         with self.lock:
             self.turn_dm = None
         if narration is None:
+            self.dbg("handed back: the main DM takes this message" if ok else "the player-turn runner failed: the main DM takes it")
             if not ok:
                 runner.stop()
                 self.pc_runner = None
@@ -360,6 +367,7 @@ class Hub:
             self.pc_runner = PlayerTurnRunner(self.on_event, camp, st, model=self.dm_model, effort=self.pc_effort,
                                               after_send=after)
         self.pc_runner.engine.telemetry_session = self.eng.session_id
+        self.pc_runner.engine.debug = self.eng.debug
         return self.pc_runner
 
     def _stop_runners(self) -> None:
@@ -382,6 +390,7 @@ class Hub:
 
             self.runner = CombatRunner(self.on_event, camp, model=self.runner_model, effort=self.runner_effort, after_send=after)
         self.runner.engine.telemetry_session = self.eng.session_id
+        self.runner.engine.debug = self.eng.debug   # follows the :debug toggle
         return self.runner
 
     def _step(self) -> None:
@@ -504,6 +513,7 @@ class Hub:
         except RuntimeError as e:
             self.system(f"The fight looks over, but ending it failed: {e}")
             return False
+        self.dbg(f"fight over ({why}): combat_end ran, the main DM narrates the aftermath")
         self._stop_runners()
         self.refresh_combat()   # the panel closes with the "fight is over" card
         self._exchange(fight_over_prompt(why, report, said))
@@ -532,6 +542,13 @@ class Hub:
             for ev in ({"type": "text_start", "new": True}, {"type": "text", "delta": text}, {"type": "turn_end"}):
                 self.publish(ev)
 
+    def dbg(self, line: str) -> None:
+        """An interface debug line (debug mode only): what the interface decided, and why."""
+        if self.engine and self.engine.debug:
+            with self.lock:
+                self.history.append({"role": "debug", "text": f"{{interface}} {line}"})
+                self.publish({"type": "debug", "line": f"{{interface}} {line}"})
+
     def system(self, text: str) -> None:
         """Add a system note (not from the DM) to the chat."""
         with self.lock:
@@ -550,6 +567,9 @@ class Hub:
             return 200, "ok"
         if parts[0] == ":debug":
             self.eng.debug = not self.eng.debug
+            for r in (self.runner, self.pc_runner):
+                if r:
+                    r.engine.debug = self.eng.debug
             self.system(f"Debug {'on' if self.eng.debug else 'off'}.")
             self.publish({"type": "settings", "effort": self.eng.effort, "debug": self.eng.debug})
             return 200, "ok"

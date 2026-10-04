@@ -6,7 +6,7 @@ Play happens in the browser:
 ```
 python3 web.py                   # opens http://127.0.0.1:8765 on the campaign picker
 python3 web.py --effort high     # think harder (slower); default is medium
-python3 web.py --debug           # also show tool calls and subagents (for testing)
+python3 web.py --debug           # also show tool calls, subagents, the combat runners and the interface's decisions (for testing)
 ```
 The page opens on a campaign picker: continue a campaign's last conversation, start its next session, or create a new campaign. Each session is locked to its campaign, so nothing crosses over between campaigns.
 

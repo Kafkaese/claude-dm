@@ -309,10 +309,9 @@ class Engine:
         limit = self.COMPACT_AFTER_FIGHT_AT if after_fight else self.COMPACT_AT
         if self.role != "dm" or self.context_tokens < limit or not self.alive() or self.busy:
             return False
-        self.emit(type="status", label="tidying the DM's notes")
         self.hold()
         try:
-            ok = self.send(COMPACT_PROMPT)
+            ok = self.send(COMPACT_PROMPT, label="tidying the DM's notes (this can take a minute or two)")
         finally:
             self.release(publish=False)
         if ok:
@@ -349,6 +348,8 @@ class Engine:
         self.model = model
         self.effort = effort
         self.debug = debug
+        self.debug_tag = "" if role == "dm" else "runner"   # whose lines these are (set by the runners)
+        self._tool_names: dict[str, str] = {}              # tool_use id → name (debug: how much of a result to show)
         self.proc: subprocess.Popen[str] | None = None
         self.session_id: str | None = None
         self.stderr_lines: list[str] = []
@@ -367,6 +368,11 @@ class Engine:
         self.streamed: set[str | None] = set()
         self.current_msg = None
         self.in_text = False
+
+    def dbg(self, line: str) -> None:
+        """A debug line (only in debug mode), tagged with the process it comes from."""
+        if self.debug:
+            self.emit(type="debug", line=(f"{{{self.debug_tag}}} " if self.debug_tag else "") + line)
 
     def emit(self, **ev: Any) -> None:
         """Send an event to the frontend; errors in the handler never reach the reader thread.
@@ -419,6 +425,10 @@ class Engine:
             for ev in held:
                 if ev["type"] != "_tool":
                     self._send_event(ev)
+        elif self.debug:
+            dropped = "".join(ev.get("delta", "") for ev in held if ev["type"] == "text").strip()
+            if dropped:
+                self.dbg(f"[not shown] {dropped[:2000]}")
         return "".join(ev.get("delta", "") for ev in held if ev["type"] == "text") if publish else ""
 
     def _send_event(self, ev: dict[str, Any]) -> None:
@@ -471,8 +481,7 @@ class Engine:
         assert proc.stderr is not None
         for line in proc.stderr:
             self.stderr_lines.append(line.rstrip())
-            if self.debug:
-                self.emit(type="debug", line=f"[stderr] {line.rstrip()}")
+            self.dbg(f"[stderr] {line.rstrip()}")
 
     def alive(self) -> bool:
         """Whether the claude process is running."""
@@ -521,18 +530,21 @@ class Engine:
         self.restart()
 
     # --- turns ---
-    def send(self, text: str) -> bool:
-        """Send one player message and block until its reply is complete. False if the process died."""
+    def send(self, text: str, label: str = "thinking") -> bool:
+        """Send one player message and block until its reply is complete. False if the process died.
+        `label`: the status line the player sees while it runs."""
         proc = self.proc
         if proc is None or proc.poll() is not None or proc.stdin is None:
             return False
+        if self.debug and (self.role == "runner" or is_interface_message(text) or text.lstrip().startswith(RECAP_PREFIX)):
+            self.dbg(f"[→ sent] {text[:6000]}")   # what the interface told it (step briefings, recaps): hidden otherwise
         with self.lock:
             self.done.clear()
             self.waiting, self.armed = True, False
             self._reset()
             self._tel = {"start": time.time(), "kind": exchange_kind(text), "chars_in": len(text),
                          "tools": {}, "sub_tools": 0, "chars_out": 0}
-            self.emit(type="status", label="thinking")
+            self.emit(type="status", label=label)
         proc.stdin.write(json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n")
         proc.stdin.flush()
         self.last_event, told = time.time(), 0
@@ -642,8 +654,7 @@ class Engine:
                     if top and self._held is not None:
                         self._held.append({"type": "_tool"})   # text before this is the DM thinking out loud
                     self.emit(type="status", label=flavor(block.get("name"), not top))
-                    if self.debug:
-                        self.emit(type="debug", line=f"[tool{'' if top else ' (sub)'}] {block.get('name')}")
+                    self.dbg(f"[tool{'' if top else ' (sub)'}] {block.get('name')}")
             elif et == "content_block_delta" and top:
                 d = e.get("delta", {})
                 if d.get("type") == "text_delta":
@@ -682,11 +693,13 @@ class Engine:
                 self.emit(type="text", delta="\n".join(texts))
                 self._text_end()
             elif self.debug and not top and texts:
-                self.emit(type="debug", line=f"[subagent] {' '.join(texts)[:400]}")
-            if self.debug:
-                for c in content:
-                    if c.get("type") == "tool_use":
-                        self.emit(type="debug", line=f"[input] {json.dumps(c.get('input'))[:300]}")
+                self.dbg(f"[subagent] {' '.join(texts)[:400]}")
+            for c in content:
+                if c.get("type") == "tool_use":
+                    self._tool_names[str(c.get("id"))] = str(c.get("name", ""))
+                    if self.debug:
+                        game = str(c.get("name", "")).startswith("mcp__dm__")
+                        self.dbg(f"[input] {json.dumps(c.get('input'))[:2000 if game else 300]}")
         elif t == "user":
             for c in (m.get("message", {}).get("content") or []):
                 if not (isinstance(c, dict) and c.get("type") == "tool_result"):
@@ -697,7 +710,10 @@ class Engine:
                 if rec is not None and (c.get("is_error") or "combat error:" in text or "Traceback" in text):
                     rec["error"] = _error_line(body)
                 if self.debug:
-                    self.emit(type="debug", line=f"[result] {text[:300]}")
+                    if isinstance(body, list):   # content blocks: show their text, not the JSON around it
+                        text = "\n".join(str(b.get("text", "")) for b in body if isinstance(b, dict)) or text
+                    game = self._tool_names.get(str(c.get("tool_use_id")), "").startswith("mcp__dm__")
+                    self.dbg(f"[result] {text[:4000 if game else 300]}")
         elif t == "result":
             self._text_end()
             self.emit(type="status", label=None)
@@ -1372,6 +1388,7 @@ class CombatRunner:
         self.campaign = campaign
         self.engine = Engine(on_event, model=model, effort=effort, role="runner",
                              system_prompt=runner_system_prompt(campaign), campaign=campaign)
+        self.engine.debug_tag = "NPC runner"
         self.after_send = after_send
         self.steps = 0
         self.recent: list[str] = []   # the last narrations, for continuity
@@ -1493,6 +1510,7 @@ class PlayerTurnRunner(CombatRunner):
         sheets = pc_sheets(campaign, st)
         prompt = runner_system_prompt(campaign, PC_TURN_PROMPT) + (f"\n\nThe player's character sheet:\n{sheets}" if sheets else "")
         self.engine = Engine(on_event, model=model, effort=effort, role="runner", system_prompt=prompt, campaign=campaign)
+        self.engine.debug_tag = "player-turn runner"
         self.turn_key: tuple[Any, Any] | None = None
 
     def player_frame(self, text: str, st: dict[str, Any], recent: list[str]) -> str:
@@ -1523,6 +1541,8 @@ class PlayerTurnRunner(CombatRunner):
             handed_back = ESCALATE in self.engine.held_text() and not self.engine.held_acted()
             self.engine.scrub_held(ESCALATE)
             shown = self.engine.release(publish=not handed_back, after_tools=True)
+        if handed_back:
+            self.engine.dbg("[handed back to the DM]")
         if not ok or handed_back:
             return ok, None
         return True, shown.strip()
