@@ -1453,3 +1453,39 @@ class FirstAid(CampaignCase):
         combat.save(self.slug, st)
         self.assertTrue(combat.needs_first_aid(combat.token(self.state(), "k1")))   # first aid still helps
         self.assertIn("Stable but unaided: Kovan", self.run_cmd("end"))
+
+
+class SheetHp(CampaignCase):
+    """HP outside a fight: the sheet's HP line, logged; in a fight it's combat_hp's job."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write("players/characters/ilvan.md", "# Ilvan Kest — Fetchling Sorcerer 1\n- **HP:** -9 / 8\n")
+        self.write("dm/session-log/session-01.md", "# Session 01\n## Log\n-\n\n## Changes\n")
+
+    def hp_line(self) -> str:
+        return (self.dir / "players/characters/ilvan.md").read_text().splitlines()[1]
+
+    def test_heal_hurt_set(self) -> None:
+        out = self.run_cmd("sheet-hp", "ilvan", "+9", "--why", "cure light wounds")
+        self.assertIn("Ilvan Kest -9 → 0/8 (cure light wounds): disabled", out)
+        self.assertEqual(self.hp_line(), "- **HP:** 0 / 8")
+        self.run_cmd("sheet-hp", "Ilvan", "+20", "--why", "a week's rest")
+        self.assertEqual(self.hp_line(), "- **HP:** 8 / 8")              # capped at max
+        self.run_cmd("sheet-hp", "ilvan", "-3", "--why", "fell")
+        self.run_cmd("sheet-hp", "ilvan", "=2", "--why", "ruling")
+        self.assertEqual(self.hp_line(), "- **HP:** 2 / 8")
+        log = (self.dir / "dm/session-log/session-01.md").read_text()
+        self.assertIn("- HP: Ilvan Kest 8 → 5/8 (fell)", log)
+        self.assertLess(log.index("(fell)"), log.index("## Changes"))
+
+    def test_refused_in_a_fight(self) -> None:
+        self.new(blank="8x6")
+        self.add("I", "Ilvan", "B2", PC_PROFILE, "pc", 10, "--ref", f"campaigns/{self.slug}/players/characters/ilvan.md")
+        self.assertIn("use combat_hp", self.fail_cmd("sheet-hp", "ilvan", "+5", "--why", "potion"))
+
+    def test_mcp_tool(self) -> None:
+        import mcp_server as M
+        ok, text = M.Server().call("character_hp", {"campaign": self.slug, "character": "ilvan", "change": "-1", "why": "trap"})
+        self.assertTrue(ok, text)
+        self.assertEqual(self.hp_line(), "- **HP:** -10 / 8")

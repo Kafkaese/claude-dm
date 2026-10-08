@@ -15,6 +15,13 @@ Read these files:
 - `dm/threads.md`, `dm/timeline.md` and `dm/world.md`, plus `library/general/table-rules/living-world.md`
 - `dm/characters/` for PC hooks and abilities to plan around
 
+## Working efficiently
+Every step you take re-reads everything you've read so far, so the number of steps is what makes this job expensive. Keep it small:
+- **Read in batches:** request all the files you need for a stage in one turn (several Read calls at once), not one file per turn. Read long files by section (`grep -n '^#'` first) when you need only part of them.
+- **One edit per file:** collect all changes to a file and make them in one Edit (or rewrite it with Write when most of it changes), instead of a string of small edits.
+- **Edit in batches:** make the edits to different files in the same turn when they don't depend on each other.
+- Don't re-read a file you just wrote or edited.
+
 ## Tasks you may get
 
 ### Advance the world
@@ -24,6 +31,12 @@ Decide what NPCs, factions and villains did since the last session, based on the
 - Update `dm/state.md`, under "Off-screen developments" and "Clocks & timers".
 - Update the affected `dm/npcs/`, `dm/factions/` and `dm/locations/` files.
 - Consequences should follow logically from play and match the lethality and consequence settings from session zero.
+
+### Light prep (after a short session)
+When the caller asks for a **light prep** (little in-game time passed, and the last prep's main scenes are still ahead), don't redo the full pass. Read only the session log, `dm/state.md`, the last prep file, and the threads and world entries the session touched. Then, in as few steps as possible:
+- Advance only the clocks, agendas and heat that the session or the time passed actually touched.
+- Rewrite the last prep as `dm/session-prep/session-NN-prep.md` for the coming session: keep the unused scenes, secrets and encounters, drop what was used up, adjust the strong start to where play stopped, and add what the session made necessary (a new NPC the party met, a new lead).
+- Note anything that needs the full pass next time ("For next prep" in the session log).
 
 ### Prep the next session
 Write `dm/session-prep/session-NN-prep.md`:

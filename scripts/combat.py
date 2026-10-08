@@ -93,6 +93,9 @@ Play
   save TOKEN fort|ref|will --dc N [--total N]
                                   NPC: rolled from the profile. PC: the player's total. Resolves a
                                   pending area-effect save for that token, if there is one
+  sheet-hp CHARACTER +N|-N|=N --why "…"
+                                  a character's HP outside a fight (healing, rest, a trap): the sheet's
+                                  HP line, logged in the live log (in a fight: hp)
   first-aid HEALER TARGET [--total N]
                                   a Heal check (DC 15, standard action, provokes) on a dying creature next
                                   to the healer: success makes it stable with help (NPCs roll skills.heal)
@@ -5061,6 +5064,58 @@ def cmd_end(args: Args, st: State) -> str:
     return "\n".join(out)
 
 
+HP_LINE = re.compile(r"(\*\*HP:\*\*\s*)(-?\d+)(\s*/\s*)(\d+)")
+
+
+def cmd_sheet_hp(args: Args) -> int:
+    """A character's HP outside a fight (healing, rest, a fall, a trap): changes the sheet's HP line
+    and logs it in the live session log. In a fight, combat_hp does it (and combat_end writes it back)."""
+    camp_dir = PROJECT / "campaigns" / args.campaign
+    want = args.character.lower()
+    sheets = [p for p in sorted((camp_dir / "players" / "characters").glob("*.md")) if p.name.lower() != "readme.md"]
+    hits = [p for p in sheets if want in p.stem or want in p.read_text(encoding="utf-8").splitlines()[0].lower()]
+    if len(hits) != 1:
+        print(f"combat error: {'several characters match' if hits else 'no character'} {args.character!r} "
+              f"(sheets: {', '.join(p.stem for p in sheets)})", file=sys.stderr)
+        return 1
+    sheet = hits[0]
+    st = load(args.campaign) if state_path(args.campaign).exists() else None
+    rel = str(sheet.relative_to(PROJECT))
+    if st and any((t.get("ref") or "").endswith(rel.split("campaigns/" + args.campaign + "/")[-1]) and not t.get("removed")
+                  for t in st.get("tokens", [])):
+        print(f"combat error: {sheet.stem} is in the fight: use combat_hp (combat_end writes the HP back to the sheet)", file=sys.stderr)
+        return 1
+    text = sheet.read_text(encoding="utf-8")
+    m = HP_LINE.search(text)
+    if not m:
+        print(f"combat error: no '**HP:** N / MAX' line on {sheet.name}", file=sys.stderr)
+        return 1
+    cur, mx = int(m.group(2)), int(m.group(4))
+    ch = args.change.strip()
+    try:
+        new = int(ch[1:]) if ch.startswith("=") else cur + int(ch)
+    except ValueError:
+        print(f"combat error: the change is +N, -N or =N, not {ch!r}", file=sys.stderr)
+        return 1
+    new = min(new, mx)
+    sheet.write_text(text[:m.start()] + f"{m.group(1)}{new}{m.group(3)}{mx}" + text[m.end():], encoding="utf-8")
+    state = ("unconscious and dying unless stable" if new < 0 else "disabled (conscious, a single action)" if new == 0
+             else "at full HP" if new == mx else "hurt")
+    name = text.splitlines()[0].lstrip("# ").split("—")[0].strip()
+    line = f"HP: {name} {cur} → {new}/{mx} ({args.why})"
+    logs = sorted((camp_dir / "dm" / "session-log").glob("session-*.md"))
+    played = re.search(r"\*\*Sessions played:\*\*\s*(\d+)", (camp_dir / "campaign.md").read_text(encoding="utf-8"))
+    live = camp_dir / "dm" / "session-log" / f"session-{(int(played.group(1)) if played else 0) + 1:02d}.md"
+    if logs and live.exists():
+        log_text = live.read_text(encoding="utf-8")
+        lm = re.search(r"^## Log[^\n]*\n(.*?)(?=^## |\Z)", log_text, re.S | re.M)
+        if lm:
+            body = lm.group(1).rstrip("\n")
+            live.write_text(log_text[:lm.start(1)] + body + f"\n- {line}\n\n" + log_text[lm.end(1):], encoding="utf-8")
+    print(f"{line}: {state}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Command-line entry point. Returns the process exit code."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -5110,6 +5165,8 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--step", action="store_true", help="a 5-foot step (no AoO)")
     m.add_argument("--no-aoo", action="store_true", help="don't roll NPC attacks of opportunity")
     sb = sub.add_parser("stabilize"); sb.add_argument("token"); sb.add_argument("--total", type=int)
+    sh = sub.add_parser("sheet-hp"); sh.add_argument("character"); sh.add_argument("change", help="+N, -N or =N")
+    sh.add_argument("--why", required=True)
     fa = sub.add_parser("first-aid"); fa.add_argument("token"); fa.add_argument("target")
     fa.add_argument("--total", type=int, help="a PC healer's Heal check (the player's roll)")
     fa.add_argument("--out-of-turn", action="store_true"); fa.add_argument("--override", action="store_true")
@@ -5235,6 +5292,8 @@ def main(argv: list[str] | None = None) -> int:
                 "actions": lambda a, st: action_status(st, token(st, a.token)).strip(), "options": cmd_options}
     if args.command == "profile":
         return cmd_profile(args)
+    if args.command == "sheet-hp":
+        return cmd_sheet_hp(args)
     if args.command == "do":
         import shlex
         for c in args.cmds:

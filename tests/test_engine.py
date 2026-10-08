@@ -597,6 +597,8 @@ class ClosingSession(CampaignCase):
                 self.assertIn("/end-session skill for campaign", sent[2])
                 self.assertIn('"More rooftop chases"', sent[2])
                 self.assertIn("Start at Step 2", sent[2])
+                self.assertIn("No fight is in progress", sent[2])          # so the close doesn't go looking for one
+                self.assertIn("A fight is still in progress", E.close_prompt(self.slug, 1, "", None, fight=True))
                 transcript = Path(d) / "transcripts" / f"{self.slug}-session-01.md"
                 self.assertIn(str(transcript), sent[2])
                 text = transcript.read_text()

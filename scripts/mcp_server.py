@@ -281,6 +281,11 @@ TOOLS: list[Tool] = [
     Tool("combat_stabilize", "A dying creature's stabilization check (a PC's total is required; NPCs roll).",
          {"token": S(TOK), "total": I("PC: the player's total")}, ["token"],
          lambda a: ["stabilize", a["token"]] + flags(a, {"total": "--total"})),
+    Tool("character_hp", "A character's HP OUTSIDE a fight (healing between fights, a rest, a fall, a trap): changes the sheet's "
+         "HP line (capped at max) and logs it. Never edit the HP line by hand. In a fight use combat_hp.",
+         {"character": S("the character (name or part of it)"), "change": S("+N (healed), -N (hurt) or =N (set)"),
+          "why": S("what happened: 'cure light wounds', 'night's rest', 'fell into the ravine'")},
+         ["character", "change", "why"], lambda a: ["sheet-hp", a["character"], a["change"], "--why", a["why"]]),
     Tool("combat_first_aid", "First aid: a Heal check (DC 15, a standard action that provokes) on a dying creature next to the "
          "healer. Success makes it stable with help (no more HP loss). NPCs roll their Heal modifier; a PC healer's check is the "
          "player's roll (total). Fails cleanly if the target isn't dying or is already stable with help.",

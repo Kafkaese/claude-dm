@@ -253,7 +253,7 @@ class Hub:
         self.eng.new_session()   # same campaign lock, a fresh and small context
         with self.lock:
             self.turn_dm = None
-        ok = self._exchange(close_prompt(camp, nn, wishes, transcript))
+        ok = self._exchange(close_prompt(camp, nn, wishes, transcript, fight=bool(combat_state(camp))))
         self._pin_campaign()   # "continue" now picks up the closing conversation
         return ok
 

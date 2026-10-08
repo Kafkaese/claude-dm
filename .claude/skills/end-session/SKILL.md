@@ -8,6 +8,8 @@ argument-hint: "[campaign]"
 
 Use the campaign that was just played, or `$ARGUMENTS`. `NN` is the current session number, and its live log is at `dm/session-log/session-NN.md`.
 
+**Work in batches:** read the files a step needs in one turn, put all changes to a file into one Edit, and make independent edits in the same turn. Every extra step re-reads the whole conversation.
+
 If the session stops mid-scene (including mid-combat), that's fine. Record the exact situation, including enemy HP and initiative, so play can resume there.
 
 **In the web interface** the session is closed in a fresh conversation, to save tokens. The interface asks Step 1 itself, has the playing DM bring the live log up to date, and then starts this skill with the player's answer and a player-visible transcript (`.play/transcripts/`). So work from the files: the live log, `dm/` files and the combat tools, plus the transcript for the recap. Then start at Step 2.
@@ -43,7 +45,7 @@ Then delegate to the **continuity-checker** agent (wait for the result: `run_in_
 - If it reports a problem with a locked fact that **needs raising OOC**, raise it now, briefly and honestly, e.g. *"(OOC: I realized I contradicted myself about when the fire started. The earlier version stands / let's say X instead. Okay?)"*. Record the outcome as locked.
 
 ## Step 5: Behind the screen
-Delegate to the **dm-scribe** agent (wait for the result: `run_in_background: false`): "campaign `<slug>`: session NN just ended; act on the continuity report's 'For next prep' section, advance the world, then prep session NN+1". Tell the player "I'll prepare next session behind the screen." Relay only the agent's spoiler-free confirmation.
+Delegate to the **dm-scribe** agent (wait for the result: `run_in_background: false`): "campaign `<slug>`: session NN just ended; act on the continuity report's 'For next prep' section, advance the world, then prep session NN+1". **Ask for a light prep** ("…then do a light prep of session NN+1") when less than one in-game day passed this session and the last prep's main scenes are still ahead; a full prep otherwise, and always after a session that opened a new location, thread or arc. The light prep costs a fraction of the full one. Tell the player "I'll prepare next session behind the screen." Relay only the agent's spoiler-free confirmation.
 
 ## Step 6: Close
 - Show the player recap. It's theirs to read.

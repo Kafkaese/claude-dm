@@ -51,6 +51,7 @@ Everything the party owns is in `players/inventory.json`, and only the `gear` to
 - **Loot and rewards:** `gear add` (items) and `gear receive` (coins), into the character who takes them or the stash. Item files must exist: look them up first (`lookup`; the researcher saves `library/<system>/items/<slug>.json`). A campaign's own item (a unique blade, a letter): `dm/items/<slug>.json`.
 - **Spending:** `gear pay` for services, rooms, bribes, tolls (with why); `gear use` when a consumable is used up or a wand spends charges.
 - **Shops:** when the party visits a shop for the first time, write `dm/shops/<slug>.json`: what it plausibly stocks for the settlement (its base value: items at or below it are 75% likely available; `equipment-economy.md`), the settlement's purchase limit, and what it buys. Then `gear buy` / `gear sell` do the rest: prices, half-price sales, the purchase limit, stock counts. Haggling or a special deal is a DM decision: give the price and why.
+- **HP outside a fight:** `character_hp` (+N, -N, =N, with why): healing between fights, a night's rest, a fall, a trap. It updates the sheet's HP line and logs it. In a fight, `combat_hp`; `combat_end` writes the HP back.
 - **Moving things:** `gear move` between characters and the stash, money included ("25 gp"). The stash is wherever the campaign says it is (a chest, a packhorse); give it a `where`.
 
 ## Combat end
