@@ -1244,6 +1244,68 @@ def _sight(camp: str, st: dict[str, Any], tok: str) -> str:
             "close in until it can see it, or bring light; don't hold back or defend against nothing):\n" + r.stdout.strip())
 
 
+# Who's who, for the narration: the runners only see numbers, and invented armour ("glances off her
+# armour" on an unarmoured monk) breaks the fiction. Built from the sheets (race / class), the
+# inventory (what's worn), the stat blocks' Gear line, and what's in hand right now.
+CAST_NOTE = ("Who's who, for the narration (describe only this gear: no armor listed means none; never invent "
+             "armor, shields or weapons; a hidden creature isn't described until it's revealed):")
+
+
+def _ref_text(ref: str) -> str:
+    p = REPO / ref
+    try:
+        return p.read_text(encoding="utf-8") if p.is_file() else ""
+    except OSError:
+        return ""
+
+
+def cast_list(st: dict[str, Any]) -> str:
+    """One line per combatant: what it is, what it wears, what it holds."""
+    cm = _combat_module()
+    camp = next((Path(t["ref"]).parts[1] for t in st.get("tokens", []) if str(t.get("ref") or "").startswith("campaigns/")), None)
+    inv: dict[str, Any] = {}
+    gear_mod = None
+    if camp and (REPO / "campaigns" / camp / "players" / "inventory.json").exists():
+        try:
+            gear_mod = _gear_module()
+            inv = gear_mod.load_inv(camp)
+        except Exception:
+            gear_mod, inv = None, {}
+    lines = [CAST_NOTE]
+    for t in st.get("tokens", []):
+        if t.get("removed"):
+            continue
+        text = _ref_text(str(t.get("ref") or ""))
+        what = ""
+        m = re.search(r"\*\*Race / Class / Level:\*\*\s*([^\n]+)", text)
+        if m:
+            what = " ".join(m.group(1).split(" / ")[:2])
+        elif text.startswith("# ") and text.count("```combat-profile") == 1:   # a file of several profiles: its title isn't this one
+            what = re.sub(r"\s*\(CR [^)]*\)", "", text.splitlines()[0][2:]).strip()
+        wears = ""
+        sheet = str(t.get("ref") or "").split(f"campaigns/{camp}/", 1)[-1] if camp else ""
+        owner = next((c for c in (inv.get("containers") or {}).values() if c.get("sheet") == sheet), None)
+        if owner is not None and gear_mod is not None:
+            worn = [gear_mod.entry_label(camp, dict(e, qty=1)) for e in owner["items"] if e.get("equipped")
+                    and gear_mod.load_item(camp, e["item"])["category"] in ("armor", "shield")]
+            wears = "wears " + (", ".join(worn) if worn else "no armor")
+        elif text.count("```combat-profile") == 1:
+            g = re.search(r"^\*\*Gear\*\*\s*([^\n]+)", text, re.M)
+            if g:
+                wears = f"gear its stat block lists (the scene decides what's actually there): {g.group(1).strip()[:220]}"
+        held = cm.wielding(t) if cm.tracks_weapons(t) else []
+        hands = "in hand: " + (", ".join(held) if held else "nothing (unarmed or spells)")
+        carries = ""
+        if owner is not None and gear_mod is not None:
+            stowed = [gear_mod.entry_label(camp, dict(e, qty=1)) for e in owner["items"]
+                      if gear_mod.load_item(camp, e["item"])["category"] == "weapon"
+                      and gear_mod.load_item(camp, e["item"])["name"].lower() not in [h.lower() for h in held]]
+            carries = ("carries (stowed): " + ", ".join(stowed)) if stowed else ""
+        bits = [b for b in (what, wears, hands, carries) if b]
+        lines.append(f"- {t['name']} ({t['token']}, {t['side']}{', HIDDEN' if t.get('hidden') else ''}): " + " · ".join(bits))
+    return "\n".join(lines)
+
+
 def _step_context(st: dict[str, Any], c: dict[str, Any]) -> str:
     """What the DM needs to play the actor without looking things up: its attacks, spells and
     speed, and where everyone is (DM data; the player never sees this message)."""
@@ -1292,6 +1354,10 @@ def _step_context(st: dict[str, Any], c: dict[str, Any]) -> str:
         lines.append(f"(tactical options unavailable: {e})")
     lines.append(f"{c['token']} is at {cm.fmt_pos(c['x'], c['y'])} ({c['hp']}/{c['max_hp']} HP"
                  + (f", {', '.join(cm.R.labels(c, st))}" if cm.R.conditions(c) else "") + "). Others: " + "; ".join(pos))
+    try:
+        lines.append(cast_list(st))
+    except Exception as e:   # never block a step on the helper
+        lines.append(f"(who's who unavailable: {e})")
     return "\n".join(lines)
 
 
@@ -1466,6 +1532,7 @@ Narration rules (strict):
 - Address the player's character as "you". Never write what the PC says, does, thinks or feels.
 - Each attack on the PC: its total against the PC's AC and the damage as a number ("17 vs your AC 16, hit, 6 damage"). Never state an enemy's AC, HP or bonuses; say "hit", "miss", "bloodied".
 - Match the combat log the tools return; never contradict a number.
+- Describe people only with what the briefing's "Who's who" list gives them: their kind, the armor they wear ("no armor" means none: a blow can't glance off it) and what's in their hands. Never invent armor, shields or weapons.
 - Highlight names the characters know: people in **bold**, places in ***bold italic***, spells and items in *italic*.
 - A first use of a special ability, a reveal, or a turning point gets 2-4 vivid sentences; otherwise one line per action.
 - A hidden creature that stays unnoticed: reply only "…".
@@ -1596,6 +1663,7 @@ Each message gives the turn's context (whose turn, the actions left, an open que
 Narration rules (strict):
 - Address the PC as "you". Never state an enemy's AC, attack bonus, HP or saves; say "hit", "miss", "bloodied". No game terms in NPCs' mouths.
 - Match the tool results and the combat log; never contradict a number.
+- Describe people only with what the "Who's who" list gives them: their kind, the armor they wear ("no armor" means none) and what's in their hands. Never invent armor, shields or weapons.
 - Highlight names the characters know: people in **bold**, places in ***bold italic***, spells and items in *italic*.
 - Write nothing before your tool calls; only the narration after them.
 - Respect the table's lines and veils below."""
@@ -1637,6 +1705,10 @@ class PlayerTurnRunner(CombatRunner):
                  turn_line(st)]
         if st.get("awaiting"):
             parts.append(f"Open question from the script: {st['awaiting']}")
+        try:
+            parts.append(cast_list(st))
+        except Exception:
+            pass
         if recent:
             parts.append("Recent narration (for continuity; don't repeat it):\n" + "\n".join(recent[-4:]))
         return "\n".join(p for p in parts if p) + "\n\nThe player says:\n" + text

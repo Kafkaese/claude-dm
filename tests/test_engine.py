@@ -920,3 +920,35 @@ class StashTab(CampaignCase):
         self.assertIn("## Gear\n**Coins:** 5 gp", doc)
         self.assertIn("| Rope | 1 | 10 lb | 1 gp |", doc)
         self.assertLess(doc.index("## Gear\n**Coins:** no coins"), doc.index("raised"))   # added before the backstory
+
+
+class CastList(CampaignCase):
+    """The runners' who's-who: kind, worn armor (or explicitly none), what's in hand and what's stowed."""
+
+    def test_party_and_enemies(self) -> None:
+        import json
+        self.write("players/characters/brenna.md", "# Brenna\n- **Race / Class / Level:** Dwarf / Monk / 1\n")
+        self.write("players/characters/kovan.md", "# Kovan\n- **Race / Class / Level:** Half-Orc / Slayer / 1\n")
+        self.write("dm/npcs/thug.md", "# Thug (CR 1/2)\n**Gear** leather armor, club\n```combat-profile\n{}\n```\n")
+        for slug, d in (("breastplate", {"name": "Breastplate", "category": "armor", "price": 200, "weight": 30, "source": "t"}),
+                        ("kukri", {"name": "Kukri", "category": "weapon", "price": 8, "weight": 2, "source": "t"})):
+            self.write(f"dm/items/{slug}.json", json.dumps(d))
+        self.write("players/inventory.json", json.dumps({"containers": {
+            "brenna": {"label": "Brenna", "kind": "character", "sheet": "players/characters/brenna.md", "coins": {}, "items": []},
+            "kovan": {"label": "Kovan", "kind": "character", "sheet": "players/characters/kovan.md", "coins": {},
+                      "items": [{"item": "breastplate", "qty": 1, "equipped": True}, {"item": "kukri", "qty": 1}]}}}))
+        bow = {"composite longbow": {"bonus": 5, "damage": "1d8+2", "type": "ranged", "range": 110},
+               "kukri": {"bonus": 5, "damage": "1d4+2", "type": "melee", "ability": "dex"}}
+        self.new(blank="8x6")
+        rel = f"campaigns/{self.slug}/"
+        self.add("B", "Brenna", "B2", dict(GOBLIN, attacks={"unarmed strike": {"bonus": 3, "damage": "1d6", "type": "melee"}}), "ally", 10,
+                 "--ref", rel + "players/characters/brenna.md")
+        self.add("K", "Kovan", "C2", dict(GOBLIN, attacks=bow, wielding=["composite longbow"]), "ally", 9,
+                 "--ref", rel + "players/characters/kovan.md")
+        self.add("t1", "Thug", "F2", GOBLIN, "enemy", 5, "--ref", rel + "dm/npcs/thug.md")
+        text = E.cast_list(self.state())
+        self.assertIn("- Brenna (B, ally): Dwarf Monk · wears no armor · in hand: nothing", text)
+        self.assertIn("Kovan (K, ally): Half-Orc Slayer · wears Breastplate · in hand: composite longbow · carries (stowed): Kukri", text)
+        self.assertIn("Thug (t1, enemy): Thug · gear its stat block lists", text)
+        self.assertIn("leather armor, club", text)
+        self.assertIn(text, E._step_context(self.state(), next(t for t in self.state()["tokens"] if t["token"] == "t1")))
