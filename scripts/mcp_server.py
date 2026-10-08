@@ -392,7 +392,7 @@ INSTRUCTIONS = ("Claude DM's game tools: combat (combat_*), dice (dice_roll), wo
 def _gear(a: Args) -> list[str]:
     """The gear tool's arguments as a gear.py command line."""
     act = a["action"]
-    mods = flags(a, {"qty": "--qty", "mw": "--mw", "plus": "--plus", "size": "--size"})
+    mods = flags(a, {"qty": "--qty", "mw": "--mw", "plus": "--plus", "size": "--size", "str_rating": "--str-rating"})
     if act == "init":
         return ["init"] + flags(a, {"where": "--where"})
     if act == "show":
@@ -408,6 +408,8 @@ def _gear(a: Args) -> list[str]:
         return ["move", a.get("amount") or a["item"], "--from", a["from"], "--to", a["to"]] + flags(a, {"qty": "--qty"})
     if act in ("equip", "unequip"):
         return [act, a["container"], a["item"]]
+    if act == "where":
+        return ["where", a["container"], a["where"]]
     if act == "use":
         return ["use", a["container"], a["item"]] + flags(a, {"charges": "--charges"})
     if act == "pay":
@@ -432,12 +434,13 @@ TOOLS.append(Tool(
     "use (a consumable, or charges); pay (amount, why; or to another container) / receive (amount, why); price (cost and sale "
     "value of an item); shop (a shop's stock, DM view); buy (shop, item, by: the buyer's container; to: where it goes); sell "
     "(shop, container, item: half price, full for trade goods, up to the shop's purchase limit); container (a new one: container "
-    "= its key, name = its label, kind, sheet or where); init (once per campaign); check.",
-    {"action": S("what", ["show", "container", "add", "remove", "move", "equip", "unequip", "use", "pay", "receive", "price", "shop",
+    "= its key, name = its label, kind, sheet or where); where (a container's place changed); init (once per campaign); check.",
+    {"action": S("what", ["show", "container", "where", "add", "remove", "move", "equip", "unequip", "use", "pay", "receive", "price", "shop",
                           "buy", "sell", "init", "render", "check"]),
      "container": S("a character ('ilvan'), 'stash', or another container"), "item": S("an item: slug, name, or part of one"),
      "qty": I("how many pieces"), "mw": B("masterwork"), "plus": I("enhancement bonus +1…+5 (includes masterwork)"),
-     "size": S("made for this size", ["small", "medium", "large"]), "name": S("add: a name of its own"),
+     "size": S("made for this size", ["small", "medium", "large"]), "str_rating": I("a composite bow's Strength rating"),
+     "name": S("add: a name of its own"),
      "note": S("add: a note"), "charges": I("add: charges left; use: charges spent"), "equipped": B("add: worn or wielded"),
      "why": S("what for / where from (required for remove, pay without to, receive; and a price other than the list's)"),
      "amount": S('money: "25 gp", "12 gp 5 sp"'), "from": S("move: from container"), "to": S("move/pay/buy: to container"),

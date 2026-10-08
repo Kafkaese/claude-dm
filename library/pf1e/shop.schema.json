@@ -19,6 +19,7 @@
           "qty": {"type": ["integer", "null"], "minimum": 0, "description": "pieces in stock; null or missing = as many as wanted"},
           "masterwork": {"type": "boolean"},
           "enhancement": {"type": "integer", "minimum": 1, "maximum": 5},
+          "str_rating": {"type": "integer", "minimum": 1},
           "size": {"enum": ["small", "medium", "large"]},
           "charges": {"type": "integer", "minimum": 0},
           "price": {"type": "number", "minimum": 0, "description": "this shop's price per piece in gp, if it isn't the list price"}

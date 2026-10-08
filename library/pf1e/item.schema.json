@@ -9,6 +9,7 @@
     "price": {"type": "number", "minimum": 0, "description": "in gp per unit (0.1 = 1 sp, 0.01 = 1 cp), for the Medium version"},
     "unit": {"type": "integer", "minimum": 1, "description": "how many pieces the price and weight are for (arrows: 20); default 1"},
     "weight": {"type": "number", "minimum": 0, "description": "in lbs per unit, Medium version"},
+    "str_rating_price": {"type": "number", "minimum": 0, "description": "composite bows: the extra price in gp per point of Strength rating"},
     "sells_full": {"type": "boolean", "description": "sells at full value (trade goods, gems, art objects); default: half"},
     "charges": {"type": "integer", "minimum": 1, "description": "maximum charges (a wand: 50); a sale is prorated by the charges left"},
     "consumable": {"type": "boolean", "description": "used up when used (potions, scrolls, alchemical items): `use` removes one"},

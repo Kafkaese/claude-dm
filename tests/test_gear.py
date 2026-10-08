@@ -21,6 +21,8 @@ ITEMS = {
                               "source": "test"},
     "garnet": {"name": "Garnet", "category": "gem", "price": 100, "weight": 0, "source": "test"},
     "backpack": {"name": "Backpack", "category": "gear", "price": 2, "weight": 2, "source": "test"},
+    "composite-longbow": {"name": "Composite longbow", "category": "weapon", "price": 100, "weight": 3, "str_rating_price": 100,
+                          "source": "test"},
 }
 SHEET = """# Corin — Human Fighter 1
 ## Combat profile
@@ -77,6 +79,8 @@ class Basics(GearCase):
         self.assertEqual(set(self.inv()["containers"]), {"stash", "corin", "mira", "horse"})
         self.assertIn(gear.MARK_BEGIN, (self.dir / "players/characters/mira.md").read_text())
         self.assertIn("Bessie", (self.dir / "players/party.md").read_text())
+        self.g("where", "stash", "a locked chest at the Gull & Lantern")
+        self.assertEqual(self.inv()["containers"]["stash"]["where"], "a locked chest at the Gull & Lantern")
 
     def test_money(self) -> None:
         self.g("receive", "stash", "100 gp", "--why", "bounty")
@@ -128,6 +132,7 @@ class Prices(GearCase):
         self.assertIn("costs 1 gp, sells for 5 sp · 3 lbs", self.g("price", "arrows", "--qty", "20"))
         self.assertIn("2 lbs", self.g("price", "longsword", "--size", "small"))
         self.assertIn("sells for 100 gp", self.g("price", "garnet"))                           # gems: full value
+        self.assertIn("Composite longbow (+2 Str): costs 300 gp", self.g("price", "composite longbow", "--str-rating", "2"))
         item, e = ITEMS["wand-of-magic-missile"], {"item": "wand", "qty": 1, "charges": 25}
         self.assertEqual(gear.sale_value_cp(item, e), 18750)                                   # half of half
         self.assertEqual(gear.sale_value_cp(ITEMS["longsword"], {"item": "x", "qty": 1, "broken": True}), 562)
