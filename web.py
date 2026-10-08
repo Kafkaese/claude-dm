@@ -31,7 +31,7 @@ from dm_engine import (EFFORTS, REPO, CombatRunner, Engine, PlayerTurnRunner, wi
                        end_fight, fight_over, fight_over_prompt,
                        is_go_signal, list_campaigns, run_combat_step, slugify, step_due,
                        last_combat_events, load_history,
-                       FLUSH_PROMPT, WISHES_QUESTION, close_prompt, session_in_progress, session_start_bundle,
+                       FLUSH_PROMPT, WISHES_QUESTION, close_prompt, session_in_progress, session_start_bundle, stash_markdown,
                        write_transcript)
 
 WEB = REPO / "web"
@@ -616,6 +616,8 @@ def player_doc(camp: str | None, name: str) -> dict[str, str] | None:
         title = "Character"
     elif name == "party":
         files, title = [base / "party.md"], "Party notes"
+    elif name == "stash":
+        return {"title": "Party stash", "markdown": stash_markdown(str(camp))}
     elif name == "handouts":
         files = sorted(p for p in (base / "handouts").glob("*.md") if p.name != "README.md")
         title = "Handouts"

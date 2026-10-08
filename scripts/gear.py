@@ -8,13 +8,13 @@ modifiers (masterwork, +1…+5, size, broken, charges). Prices, sale values and 
 rules in library/pf1e/rules/equipment-economy.md: buying at the shop's price, selling at half
 (trade goods, gems and art at full; wands by their charges left; broken items at 75%), up to the
 settlement's purchase limit per item. Every change logs itself to the live session log and
-rewrites the generated gear sections of the sheets and party.md.
+rewrites the generated gear sections of the sheets (the stash shows in the web UI's Party stash tab).
 
 Usage: python3 scripts/gear.py -c CAMPAIGN COMMAND [args]
 
   init [--where "a chest in the Arcaneum"]
                            create inventory.json: the party stash and one container per character
-                           sheet, and add the generated-gear markers to the sheets and party.md
+                           sheet, and add the generated-gear markers to the sheets
   container KEY --label "…" --kind character|stash|other [--sheet players/characters/x.md] [--where "…"]
                            a new container: a new character, a packhorse, a hidden cache
   where CONTAINER "TEXT"   where a container is now (the stash moves to a new inn, the packhorse is sold)
@@ -142,6 +142,17 @@ def parse_amount(text: str) -> int:
     if not parts or rest:
         raise GearError(f"can't read the amount '{text}' (e.g. \"25 gp\", \"12 gp 5 sp\", \"3.5 gp\")")
     return round(sum(float(n) * COIN_CP[c] for n, c in parts))
+
+
+def parse_coins(text: str) -> dict[str, int] | None:
+    """'1 pp 3 gp' → {'pp': 1, 'gp': 3}: the coins as given (None for fractions like '3.5 gp')."""
+    parse_amount(text)   # validates
+    out: dict[str, int] = {}
+    for n, c in re.findall(r"(\d+(?:\.\d+)?)\s*(pp|gp|sp|cp)\b", text.lower()):
+        if "." in n:
+            return None
+        out[c] = out.get(c, 0) + int(n)
+    return out
 
 
 def coins_cp(coins: dict[str, int]) -> int:
@@ -437,32 +448,65 @@ def replace_marked(text: str, body: str) -> str | None:
 
 
 def render(camp: str, inv: Inv) -> list[str]:
-    """Rewrite the generated gear sections: each character sheet's, and the stash's in party.md."""
+    """Rewrite the generated gear sections of the character sheets (the stash shows in the UI's tab)."""
     notes = []
     for key, c in inv["containers"].items():
-        if c["kind"] == "character" and c.get("sheet"):
-            p = camp_dir(camp) / c["sheet"]
-        elif c["kind"] != "character":
-            p = camp_dir(camp) / "players" / "party.md"
-        else:
-            continue
+        if c["kind"] != "character" or not c.get("sheet"):
+            continue   # the stash and other places: the UI's Party stash tab (stash_markdown)
+        p = camp_dir(camp) / c["sheet"]
         if not p.exists():
             continue
         text = p.read_text(encoding="utf-8")
-        if c["kind"] == "character":
-            body = "\n".join(describe(camp, key, c, dm=False)[1:])
-            new = replace_marked(text, body)
-        else:   # all non-character containers share party.md's block
-            others = [(k, x) for k, x in inv["containers"].items() if x["kind"] != "character"]
-            if others[0][0] != key:
-                continue
-            body = "\n\n".join("\n".join(describe(camp, k, x, dm=False)) for k, x in others)
-            new = replace_marked(text, body)
+        new = replace_marked(text, "\n".join(describe(camp, key, c, dm=False)[1:]))
         if new is None:
             notes.append(f"no gear markers in {p.relative_to(PROJECT)}: run init, or add {MARK_BEGIN} … {MARK_END}")
         elif new != text:
             p.write_text(new, encoding="utf-8")
     return notes
+
+
+# The UI's "Party stash" tab: the non-character containers, coins first, then the gear by kind.
+SECTIONS = (("Weapons & ammunition", ("weapon", "ammunition")), ("Armor & shields", ("armor", "shield")),
+            ("Magic items", ("wand", "staff", "rod", "ring", "wondrous")),
+            ("Consumables", ("potion", "oil", "scroll", "alchemical")), ("Gear & tools", ("gear", "tool")),
+            ("Valuables", ("trade-good", "gem", "art")), ("Mounts & vehicles", ("mount", "vehicle")), ("Other", ("other",)))
+
+
+def section_of(item: dict[str, Any]) -> str:
+    """Which stash section an item goes in (consumable gear like torches and rations: Consumables)."""
+    if item.get("consumable") and item["category"] in ("gear", "tool"):
+        return "Consumables"
+    return next((title for title, cats in SECTIONS if item["category"] in cats), "Other")
+
+
+def stash_markdown(camp: str) -> str:
+    """The party's shared possessions (every container that isn't a character) as Markdown: where it is,
+    the coins, then a table per kind of item with count, weight, value and note."""
+    if not inv_path(camp).exists():
+        return "*No inventory yet.*"
+    inv = load_inv(camp)
+    out = []
+    for c in (c for c in inv["containers"].values() if c["kind"] != "character"):
+        out.append(f"## {c['label']}" + (f"\n*{c['where']}*" if c.get("where") else ""))
+        total = coins_cp(c["coins"])
+        out.append(f"**Coins:** {fmt_coins(c['coins'])}" + (f" (worth {fmt_cp(total)})" if c["coins"].get("pp") or
+                                                            len([v for v in c["coins"].values() if v]) > 1 else ""))
+        rows: dict[str, list[str]] = {}
+        value = 0
+        for e in c["items"]:
+            item = load_item(camp, e["item"])
+            worth = unit_price_cp(item, e) * e["qty"]
+            value += worth
+            label = entry_label(camp, dict(e, qty=1))
+            rows.setdefault(section_of(item), []).append(
+                f"| {label} | {e['qty']} | {unit_weight(item, e) * e['qty']:g} lb | {fmt_cp(worth)} | {e.get('note', '')} |")
+        for title, _cats in SECTIONS:
+            if rows.get(title):
+                out.append(f"### {title}\n| Item | Qty | Weight | Value | Note |\n|---|---|---|---|---|\n" + "\n".join(rows[title]))
+        if not c["items"]:
+            out.append("*No items.*")
+        out.append(f"**Total weight:** {weight_of(camp, c):.1f} lb · **Items worth:** {fmt_cp(value)} (list price)")
+    return "\n\n".join(out) or "*Nothing in the party stash.*"
 
 
 def add_markers(path: Path, heading: str) -> bool:
@@ -555,8 +599,6 @@ def cmd_init(camp: str, args: argparse.Namespace) -> str:
                                      "coins": {}, "items": []}
         if add_markers(p, "## Gear"):
             out.append(f"  markers added under ## Gear in {p.name}")
-    if add_markers(camp_dir(camp) / "players" / "party.md", "## Gold & shared loot"):
-        out.append("  markers added in party.md")
     save_inv(camp, inv)
     render(camp, inv)
     return "\n".join([f"inventory created with containers: {', '.join(inv['containers'])}"] + out)
@@ -684,7 +726,12 @@ def mutate(camp: str, args: argparse.Namespace) -> str:
         if not args.why:
             raise GearError("say where the money comes from: --why \"…\"")
         cp = parse_amount(args.amount)
-        give_money(c, cp)
+        coins = parse_coins(args.amount)
+        if coins:   # the coins as found: 1 pp stays a platinum piece
+            for k, v in coins.items():
+                c["coins"][k] = c["coins"].get(k, 0) + v
+        else:
+            give_money(c, cp)
         msg = f"{c['label']} receives {fmt_cp(cp)}{why}"
     elif cmd == "buy":
         path, shop = load_shop(camp, args.shop)

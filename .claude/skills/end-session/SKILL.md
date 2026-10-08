@@ -31,7 +31,7 @@ Write these yourself. They only contain what the player knows:
    - Include **only what the characters experienced or learned.** No hidden rolls, no NPC motives they didn't discover, no off-screen events.
    - End with open questions and leads, as the characters see them. Phrase them neutrally, and never name a lead, flaw or connection the characters haven't found (the journal test in "Player knowledge vs. DM knowledge", `running-the-game.md`).
    - Highlight names as in `communication.md`, so the recap works as a reference.
-2. **`players/party.md`:** quests, allies, enemies, and things learned. Loot and gold are already in the inventory (the `gear` tool rewrote the stash section during play): check with `gear show` that nothing is missing, and add it with the tool if it is.
+2. **`players/party.md`:** quests, allies, enemies, and things learned. Loot and gold are already in the inventory (the `gear` tool kept it during play; the player sees the stash in the interface's Party stash tab): check with `gear show` that nothing is missing, and add it with the tool if it is.
 3. **`players/characters/*`:** the XP award, current HP and conditions. Gear and consumables are kept by the `gear` tool (their sections are generated). Add a changelog line for each. Tell the player the award and whether anyone can level up. For milestones, give the reason only if it's player-safe.
 4. **`campaign.md`:** increment "Sessions played" and update the party level.
 5. **Safety:** if lines or veils changed, update `players/session-zero.md`.

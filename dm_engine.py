@@ -69,7 +69,7 @@ WRAPPER_PROMPT = """You are running inside Claude DM's player-facing web interfa
     - Describe NPC behavior, not their minds: "Mordent gives no sign that anything has changed", never "Mordent doesn't know that you know".
     - Never name a lead, flaw, culprit or connection the character hasn't found, not even as an open question: "you couldn't tell whether the circle was drawn correctly", never "the ritual circle's flaw".
     - No loaded framing that confirms a hidden truth ("whether it was anything but an accident", "the real culprit"). A failed investigation reports what was checked and what it showed, not that something was missed.
-- POSSESSIONS AND MONEY go through the gear tool only (loot: add / receive; spending: pay, use; shopping: buy / sell at a shop in dm/shops/, written when the party first visits it; moving things: move). It logs every change and rewrites the sheets' gear sections and the stash in party.md: never edit those by hand. Details: dm-procedures.md, "Gear, money and shops". HP outside a fight (healing, rest, a trap) goes through character_hp, never by editing the sheet's HP line.
+- POSSESSIONS AND MONEY go through the gear tool only (loot: add / receive; spending: pay, use; shopping: buy / sell at a shop in dm/shops/, written when the party first visits it; moving things: move). It logs every change and rewrites the sheets' gear sections (the party stash shows in the player's Party stash tab): never edit those by hand. Details: dm-procedures.md, "Gear, money and shops". HP outside a fight (healing, rest, a trap) goes through character_hp, never by editing the sheet's HP line.
 - COMBAT (details: library/general/table-rules/combat.md; the combat tools' descriptions have the options):
   - /start-session doesn't load combat.md: read it when a fight starts, right after the message that calls the fight (with the setup, while the player rolls initiative), unless you've read it in this conversation since the last compaction.
   - The script does all the rule math (modifiers, AoOs, maneuvers, light and vision, durations, dying). Never compute modifiers, count squares or roll attacks yourself. NPCs: combat_attack with `with` (a profile attack); PCs: the player's rolls (combat_attack with `total`, plus `damage` if they gave it; a hit without it waits for their damage: ask, then combat_damage).
@@ -821,6 +821,18 @@ def _combat_module() -> ModuleType:
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def stash_markdown(camp: str) -> str:
+    """The party stash (every container that isn't a character) as Markdown, for the UI's Party stash tab."""
+    spec = importlib.util.spec_from_file_location("gear", REPO / "scripts" / "gear.py")
+    assert spec is not None and spec.loader is not None
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    try:
+        return str(mod.stash_markdown(camp))
+    except mod.GearError as e:
+        return f"*The stash can't be shown: {e}*"
 
 
 SESSION_CAMPAIGNS = STATE / "session-campaigns.json"

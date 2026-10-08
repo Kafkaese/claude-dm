@@ -894,3 +894,12 @@ class SessionStartBundle(CampaignCase):
         self.assertIn("the party reached the bridge", msg)
         self.assertNotIn("created the live log", msg)
         self.assertIn("**Status:** planning", (self.dir / "campaign.md").read_text())   # untouched on a resume
+
+
+class StashTab(CampaignCase):
+    def test_party_stash_doc(self) -> None:
+        import web
+        self.write("players/party.md", "# Party\n")
+        doc = web.player_doc(self.slug, "stash")
+        self.assertEqual(doc, {"title": "Party stash", "markdown": "*No inventory yet.*"})
+        self.assertIsNotNone(web.player_doc(self.slug, "party"))
