@@ -825,3 +825,32 @@ class DebugInCombat(CampaignCase):
         self.assertTrue(runner.engine.debug)                           # follows the toggle
         hub.dbg("message → the main DM")
         self.assertEqual(hub.history[-1], {"role": "debug", "text": "{interface} message → the main DM"})
+
+
+class QueueDuringCompaction(CampaignCase):
+    """While the DM's conversation is compacted after a reply, the chat stays open: messages typed
+    meanwhile are queued and sent, in order, right after."""
+
+    def test_message_waits_for_the_compaction(self) -> None:
+        import web
+        hub = web.Hub(self.slug)
+        hub.engine = E.Engine(lambda ev: None)
+        sent: list[str] = []
+        hub._exchange = lambda text: sent.append(text) or True       # type: ignore[method-assign]
+        busy: list[bool] = []
+        hub.publish = lambda ev: busy.append(ev["busy"]) if ev["type"] == "busy" else None   # type: ignore[method-assign]
+        during: list[tuple[int, str]] = []
+
+        def compact(after_fight: bool = False) -> bool:
+            if not during:                                             # the player types while it runs
+                during.append(hub.send("Second message"))
+                during.append(hub.send("Third message"))
+            return True
+        hub.engine.compact_if_large = compact                          # type: ignore[method-assign]
+        self.assertEqual(hub.send("First message")[0], 202)
+        hub.worker.join(5)
+        self.assertEqual(during, [(202, "queued"), (202, "queued")])
+        self.assertEqual(sent, ["First message", "Second message", "Third message"])
+        self.assertEqual(busy[:2], [True, False])                      # the chat opened before the compaction
+        self.assertFalse(hub.compacting)
+        self.assertEqual(hub.queue, [])

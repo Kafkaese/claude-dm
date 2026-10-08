@@ -63,6 +63,8 @@ class Hub:
         self.shown_campaign: str | None = None     # the campaign the page's title shows
         self.closing = False                       # /end-session asked the stars & wishes; the next message answers
         self.fight_ended = False                   # a fight ended during this turn (compaction threshold)
+        self.compacting = False                    # the worker is tidying up after a reply: the chat is open
+        self.queue: list[tuple[str, bool]] = []    # (message, is a go signal) typed meanwhile, played afterwards
 
     @property
     def eng(self) -> Engine:
@@ -189,15 +191,19 @@ class Hub:
         if parts[0] == "/end-session" or self.closing:
             return self._close_input(text)
         with self.lock:
-            if self.busy():
+            if self.busy() and not self.compacting:
                 return 409, "The DM is still busy."
             self.history.append({"role": "player", "text": text})
             self.turn_dm = None
             self.publish({"type": "player", "text": text})
-            self.publish({"type": "busy", "busy": True})
             st = combat_state(self.campaign()) if self.eng.combat_engaged else None
             step = bool(st and not st.get("awaiting") and is_go_signal(text, st))
-            self.worker = threading.Thread(target=self._run_step if step else self._run_turn, args=(text,), daemon=True)
+            if self.compacting:   # the DM is tidying its notes: the message goes out right after
+                self.queue.append((text, step))
+                self.dbg("message queued until the compaction is done")
+                return 202, "queued"
+            self.publish({"type": "busy", "busy": True})
+            self.worker = threading.Thread(target=self._work, args=(text, step), daemon=True)
             self.worker.start()
         return 202, "ok"
 
@@ -265,16 +271,46 @@ class Hub:
         """After a reply: record which campaign this conversation plays (for continuing it later)."""
         remember_campaign(self.engine.session_id if self.engine else None, self.campaign_arg)
 
-    def _run_turn(self, text: str) -> None:
-        """Worker thread: send the message to the engine and wait for the reply. If that reply
-        leaves a combat step due (the player ended their turn in the same message, or a fight was
-        just set up with the PC first), the step runs right after."""
-        camp = self.campaign()
-        if self.end_fight_if_over(said=text):   # a finished fight: the player's message (or End combat) ends it
-            self._compact()
+    def _work(self, text: str, step: bool) -> None:
+        """Worker thread: the turn (or combat step); then, with the chat already open again, a
+        compaction if one is due. Messages typed during it wait in the queue and are played right
+        after, in order, by this same worker."""
+        while True:
+            if step:
+                self._step()
+                self.announce_fight_over()
+            else:
+                self._turn(text)
             self._pin_campaign()
             self.refresh_campaign()
-            self.publish({"type": "busy", "busy": False})
+            with self.lock:
+                self.compacting = True
+                self.publish({"type": "busy", "busy": False})
+            try:
+                self._compact()
+            except Exception as e:   # a failed compaction must not lose the queued messages
+                self.system(f"Tidying the DM's notes failed ({e}); going on without it.")
+            with self.lock:
+                self.compacting = False
+                if not self.queue:
+                    return
+                text, step = self.queue.pop(0)
+                self.publish({"type": "busy", "busy": True})
+
+    def _run_turn(self, text: str) -> None:
+        """A player message, start to finish (as a worker would run it)."""
+        self._work(text, False)
+
+    def _run_step(self, text: str) -> None:
+        """A go signal ("next", "end turn"): one engine-driven combat step, start to finish."""
+        self._work(text, True)
+
+    def _turn(self, text: str) -> None:
+        """Send the message to the engine and wait for the reply. If that reply leaves a combat step
+        due (the player ended their turn in the same message, or a fight was just set up with the PC
+        first), the step runs right after."""
+        camp = self.campaign()
+        if self.end_fight_if_over(said=text):   # a finished fight: the player's message (or End combat) ends it
             return
         st = combat_state(camp) if camp and self.eng.combat_engaged else None
         if st and camp:
@@ -286,17 +322,6 @@ class Hub:
         if ok and self.eng.combat_engaged and step_due(self.campaign(), text):
             self._step()
         self.announce_fight_over()
-        self._compact()
-        self._pin_campaign()
-        self.refresh_campaign()
-        self.publish({"type": "busy", "busy": False})
-
-    def _run_step(self, text: str) -> None:
-        """Worker thread for a go signal ("next", "end turn"): one engine-driven combat step."""
-        self._step()
-        self.announce_fight_over()
-        self._compact()
-        self.publish({"type": "busy", "busy": False})
 
     def _compact(self) -> None:
         """Between turns: compact the conversation when it's large, sooner right after a fight. Not

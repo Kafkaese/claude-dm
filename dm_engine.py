@@ -315,7 +315,7 @@ class Engine:
             return False
         self.hold()
         try:
-            ok = self.send(COMPACT_PROMPT, label="tidying the DM's notes (this can take a minute or two)")
+            ok = self.send(COMPACT_PROMPT, label="tidying the DM's notes (a minute or two; you can keep typing, your message goes out right after)")
         finally:
             self.release(publish=False)
         if ok:
