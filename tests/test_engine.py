@@ -903,3 +903,20 @@ class StashTab(CampaignCase):
         doc = web.player_doc(self.slug, "stash")
         self.assertEqual(doc, {"title": "Party stash", "markdown": "*No inventory yet.*"})
         self.assertIsNotNone(web.player_doc(self.slug, "party"))
+
+    def test_character_tab_shows_generated_gear(self) -> None:
+        import json
+        import web
+        self.write("players/characters/corin.md", "# Corin\n## Gear\n<!-- gear:begin x -->\nold\n<!-- gear:end -->\n## Backstory\nborn\n")
+        self.write("players/characters/mira.md", "# Mira\n## Backstory\nraised\n")
+        self.write("dm/items/rope.json", json.dumps({"name": "Rope", "category": "gear", "price": 1, "weight": 10, "source": "t"}))
+        self.write("players/inventory.json", json.dumps({"containers": {
+            "corin": {"label": "Corin", "kind": "character", "sheet": "players/characters/corin.md", "coins": {"gp": 5},
+                      "items": [{"item": "rope", "qty": 1}]},
+            "mira": {"label": "Mira", "kind": "character", "sheet": "players/characters/mira.md", "coins": {}, "items": []}}}))
+        doc = web.player_doc(self.slug, "character")["markdown"]
+        self.assertNotIn("<!--", doc)
+        self.assertNotIn("old", doc)
+        self.assertIn("## Gear\n**Coins:** 5 gp", doc)
+        self.assertIn("| Rope | 1 | 10 lb | 1 gp |", doc)
+        self.assertLess(doc.index("## Gear\n**Coins:** no coins"), doc.index("raised"))   # added before the backstory

@@ -68,16 +68,14 @@ class Basics(GearCase):
         self.assertEqual(set(cs), {"stash", "corin"})
         self.assertEqual(cs["corin"]["label"], "Corin")
         self.assertEqual(cs["stash"]["where"], "a chest at the Cormorant's Rest")
-        sheet = (self.dir / "players/characters/corin.md").read_text()
-        self.assertIn(gear.MARK_BEGIN, sheet)
-        self.assertIn("an old note the player wrote", sheet)          # existing prose stays
-        self.assertNotIn(gear.MARK_BEGIN, (self.dir / "players/party.md").read_text())   # the stash is the UI's tab
+        self.assertEqual((self.dir / "players/characters/corin.md").read_text(), SHEET)   # sheets aren't touched
+        self.assertNotIn("<!--", (self.dir / "players/party.md").read_text())
         self.assertIn("exists already", self.g("init", ok=False))
         self.write("players/characters/mira.md", "# Mira\n## Gear\n")
         self.g("container", "mira", "--label", "Mira", "--kind", "character", "--sheet", "players/characters/mira.md")
         self.g("container", "horse", "--label", "Packhorse", "--kind", "other", "--where", "Bessie, the party's mule")
         self.assertEqual(set(self.inv()["containers"]), {"stash", "corin", "mira", "horse"})
-        self.assertIn(gear.MARK_BEGIN, (self.dir / "players/characters/mira.md").read_text())
+        self.assertEqual(self.inv()["containers"]["mira"]["sheet"], "players/characters/mira.md")
         self.assertIn("Bessie", gear.stash_markdown(self.slug))
         self.g("where", "stash", "a locked chest at the Gull & Lantern")
         self.assertEqual(self.inv()["containers"]["stash"]["where"], "a locked chest at the Gull & Lantern")
@@ -187,11 +185,12 @@ class Rendering(GearCase):
         self.g("add", "stash", "longsword", "--note", "spare")
         self.g("add", "stash", "potion of cure light wounds")
         self.g("receive", "stash", "1 pp 3 gp", "--why", "loot")
-        sheet = (self.dir / "players/characters/corin.md").read_text()
-        block = sheet.split(gear.MARK_BEGIN)[1].split(gear.MARK_END)[0]
-        self.assertIn("Studded leather (equipped)", block)
-        self.assertIn("Coins: 12 gp", block)
-        self.assertIn("Load: light (Str 14", block)
+        self.assertEqual((self.dir / "players/characters/corin.md").read_text(), SHEET)   # never written
+        block = gear.character_gear_markdown(self.slug, "players/characters/corin.md")
+        self.assertIn("| Studded leather (equipped) | 1 | 20 lb | 25 gp |", block)
+        self.assertTrue(block.startswith("**Coins:** 12 gp"))
+        self.assertIn("**Load:** light (Str 14", block)
+        self.assertIsNone(gear.character_gear_markdown(self.slug, "players/characters/nobody.md"))
         party = (self.dir / "players/party.md").read_text()
         self.assertEqual(party, "# Party\n## Gold & shared loot\n- old prose\n\n## Quests\n")   # untouched
         view = gear.stash_markdown(self.slug)

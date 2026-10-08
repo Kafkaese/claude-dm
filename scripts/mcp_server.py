@@ -429,19 +429,19 @@ def _gear(a: Args) -> list[str]:
         return ["buy", a["shop"], a["item"], "--by", a["by"]] + flags(a, {"to": "--to", "qty": "--qty", "price": "--price", "why": "--why"})
     if act == "sell":
         return ["sell", a["shop"], a["container"], a["item"]] + flags(a, {"qty": "--qty", "price": "--price", "why": "--why"})
-    return [act]   # render, check
+    return [act]   # check
 
 
 TOOLS.append(Tool(
     "gear", "The party's possessions and money (players/inventory.json, by container: each character, the party stash). "
-    "Every change logs itself and updates the sheets' gear sections; never edit gear or money by hand. Actions: show [container]; "
+    "Every change logs itself; the player sees it in the interface's Character and Party stash tabs (the sheets have no gear list); never edit gear or money by hand. Actions: show [container]; "
     "add (loot, gifts) / remove (lost, used up otherwise: why); move an item or an amount between containers; equip / unequip; "
     "use (a consumable, or charges); pay (amount, why; or to another container) / receive (amount, why); price (cost and sale "
     "value of an item); shop (a shop's stock, DM view); buy (shop, item, by: the buyer's container; to: where it goes); sell "
     "(shop, container, item: half price, full for trade goods, up to the shop's purchase limit); container (a new one: container "
     "= its key, name = its label, kind, sheet or where); where (a container's place changed); init (once per campaign); check.",
     {"action": S("what", ["show", "container", "where", "add", "remove", "move", "equip", "unequip", "use", "pay", "receive", "price", "shop",
-                          "buy", "sell", "init", "render", "check"]),
+                          "buy", "sell", "init", "check"]),
      "container": S("a character ('ilvan'), 'stash', or another container"), "item": S("an item: slug, name, or part of one"),
      "qty": I("how many pieces"), "mw": B("masterwork"), "plus": I("enhancement bonus +1…+5 (includes masterwork)"),
      "size": S("made for this size", ["small", "medium", "large"]), "str_rating": I("a composite bow's Strength rating"),
