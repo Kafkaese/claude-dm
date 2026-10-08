@@ -176,10 +176,15 @@ def t_field(g: Grid, rng: random.Random, density: str) -> Built:
     return party, lane, [], ["Farmland: crops and tall grass, hedgerows and fences, a cart lane through it."]
 
 
-def t_river(g: Grid, rng: random.Random, density: str) -> Built:
+def t_river(g: Grid, rng: random.Random, density: str, opts: dict[str, Any] | None = None) -> Built:
+    """A river north to south with a bridge or ford. Options: width (2-12 squares of deep water),
+    boat (a flatboat's deck in the water at the crossing: under the bridge, or by the ford)."""
+    opts = opts or {}
     w, h = len(g[0]), len(g)
-    xs = wander(rng, w // 2 - 1, h, 4, w - 7, 0.3)
-    width = rng.randint(2, 3)
+    width = int(opts.get("width") or rng.randint(2, 3))
+    if not 2 <= width <= min(12, w - 6):
+        raise MapError(f"river width must be 2-{min(12, w - 6)} squares on a map {w} wide")
+    xs = wander(rng, max(3, w // 2 - width // 2), h, 3, max(3, w - width - 3), 0.3)
     river = {(x + k, y) for y, x in enumerate(xs) for k in range(width)}
     for x, y in river:
         g[y][x] = "W"
@@ -195,10 +200,21 @@ def t_river(g: Grid, rng: random.Random, density: str) -> Built:
     path = {(x, cy) for x in range(w)}
     keep = path | {(x, y) for x, y in river} | {(xs[y] - 1, y) for y in range(h)} | {(xs[y] + width, y) for y in range(h)}
     vegetation(g, rng, density, keep=keep, scale=MAP_SCALE * 0.7)
+    notes = [f"A river runs north to south, {width} squares wide; a {crossing} crosses it on row {cy + 1}. Deep water needs swimming."]
+    if opts.get("boat"):   # a flatboat: deck squares (floor) in the deep water, along the current
+        bw = max(1, min(3, width - 1 if width > 2 else 2))
+        top = max(0, min(h - 5, cy - 2))
+        bx = xs[cy] + (width - bw) // 2
+        deck = [(x, y) for y in range(top, top + 5) for x in range(bx, bx + bw)]
+        for x, y in deck:
+            if g[y][x] in ("W", "~", "="):
+                g[y][x] = "."
+        notes.append(f"A flatboat's deck ({bw}x5 squares) lies in the water at {fmt(deck[0])}-{fmt(deck[-1])}"
+                     + (", under the bridge" if crossing == "bridge" else "") + ": its squares are floor.")
     party = [(1, cy), (2, cy), (1, cy + 1)]
     for x, y in party:
         put(g, x, y, ".")
-    return party, path, [], [f"A river runs north to south; a {crossing} crosses it on row {cy + 1}. Deep water needs swimming."]
+    return party, path, [], notes
 
 
 def t_village(g: Grid, rng: random.Random, density: str) -> Built:
@@ -389,8 +405,11 @@ def ambush_spots(g: Grid, path: set[Square], party: list[Square], n: int = 8) ->
     return picked
 
 
+OPTIONS = {"river": ("width", "boat")}   # template options (the rest take none)
+
+
 def generate(template: str, size: str | None = None, seed: int | None = None, density: str = "medium",
-             time: str | None = None) -> dict[str, Any]:
+             time: str | None = None, opts: dict[str, Any] | None = None) -> dict[str, Any]:
     """Build a map. Returns {grid (list of row strings), ambient, party, ambush, lights, notes, seed, template}.
 
     Raises:
@@ -414,7 +433,13 @@ def generate(template: str, size: str | None = None, seed: int | None = None, de
     seed = seed if seed is not None else random.randrange(10 ** 6)
     rng = random.Random(seed)
     g = blank(w, h)
-    party, path, lights, notes = build(g, rng, density)
+    opts = {k: v for k, v in (opts or {}).items() if v not in (None, False)}
+    unknown = set(opts) - set(OPTIONS.get(template, ()))
+    if unknown:
+        raise MapError(f"the {template} template takes no option {', '.join(sorted(unknown))} "
+                       f"(options: {', '.join(OPTIONS.get(template, ())) or 'none'})")
+    party, path, lights, notes = (build(g, rng, density, opts) if template in OPTIONS   # type: ignore[call-arg]
+                                  else build(g, rng, density))
     ambient = INSIDE_LIGHT.get(template, "normal") if time == "inside" else TIME_LIGHT[time]
     return {"template": template, "seed": seed, "grid": ["".join(r) for r in g], "ambient": ambient,
             "party": party, "ambush": ambush_spots(g, path, party), "lights": lights, "notes": notes,

@@ -155,9 +155,19 @@ TOOLS: list[Tool] = [
           "size": S('"WxH", at most 26 wide (default per template)'), "seed": I("reproduce a map"),
           "density": S("vegetation (forest table)", ["sparse", "medium", "dense"]),
           "time": S("outdoor light (default day; camp: night)", ["day", "dusk", "night", "inside"]),
-          "name": S("file name (default template-seed)"), "start": B("begin the encounter on it"), "force": B("replace an existing file/encounter")},
+          "name": S("file name (default template-seed)"), "start": B("begin the encounter on it"), "force": B("replace an existing file/encounter"),
+          "replace": B("swap it in under the RUNNING fight: tokens, turn order, HP and conditions stay (tokens on blocked squares move)"),
+          "width": I("river: width of the deep water in squares (2-12)"), "boat": B("river: a flatboat's deck in the water at the crossing")},
          ["template"], lambda a: ["map", a["template"]] + flags(a, {"size": "--size", "seed": "--seed", "density": "--density",
-                                                                    "time": "--time", "name": "--name", "start": "--start", "force": "--force"})),
+                                                                    "time": "--time", "name": "--name", "start": "--start", "force": "--force",
+                                                                    "replace": "--replace", "width": "--width", "boat": "--boat"})),
+    Tool("combat_terrain", "Paint terrain onto the running fight's map so it fits the scene: a boat's deck in a river, a wider "
+         "river, a wall, rubble, a burning hut. Each entry is AREA=TERRAIN: a square (C3=W) or a rectangle (E5:H9=.). Terrain "
+         "characters: . floor/deck, W deep water, ~ shallow water/bog, # wall, O boulder/pillar, T tree, \" light undergrowth, "
+         "& heavy undergrowth, - low wall/fence/rail, m furniture, ^ difficult, = bridge, _ pit. Tokens stay; one on a square "
+         "that became impassable moves to the nearest free one. Never restart a fight (combat_new) to fix the map.",
+         {"paint": {"type": "array", "items": {"type": "string"}, "minItems": 1, "description": 'e.g. ["J4:L8=.", "J4:L4=-"]'}},
+         ["paint"], lambda a: ["terrain"] + list(a["paint"])),
     Tool("combat_new", "Start an encounter from a map file (prepared, or from combat_map). A blank grid only for a truly featureless place.",
          {"map": S("map file, e.g. campaigns/<c>/dm/combat/maps/cave.txt"), "blank": S('blank grid "WxH", e.g. "10x8"'),
           "light": S("ambient light", ["dark", "dim", "normal", "bright"]), "force": B("replace an active encounter")},

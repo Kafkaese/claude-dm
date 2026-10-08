@@ -1608,3 +1608,49 @@ class Relief(CampaignCase):
         self.assertIn("g2", plans[0].split(" — ")[0])
         self.assertIn("takes pressure off I", plans[0])
         self.assertNotIn("takes pressure off", plans[1])
+
+
+class MapTools(CampaignCase):
+    """Fit the map to the scene without restarting the fight: river width and a boat, painting terrain,
+    and swapping the map under a running fight."""
+
+    def test_river_width_and_boat(self) -> None:
+        import mapgen
+        m = mapgen.generate("river", "24x14", seed=5, opts={"width": 6, "boat": True})
+        self.assertIn("6 squares wide", m["notes"][0])
+        self.assertTrue(any("flatboat" in n for n in m["notes"]))
+        deep = [row.count("W") for row in m["grid"]]
+        self.assertGreaterEqual(max(deep), 6)
+        with self.assertRaises(mapgen.MapError):
+            mapgen.generate("forest", opts={"boat": True})               # only the river takes it
+
+    def test_paint_terrain_keeps_the_fight(self) -> None:
+        self.new(blank="10x6")
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=20)
+        self.add("g1", "Gob", "E2", GOBLIN, init=10)
+        self.run_cmd("next")
+        out = self.run_cmd("terrain", "D1:F3=W", "E2=.")                 # water around the goblin, its own square a deck plank
+        self.assertIn("D1:F3 → W", out)
+        st = self.state()
+        self.assertEqual(st["grid"][0][3:6], "WWW")
+        self.assertEqual(st["grid"][1][4], ".")
+        self.assertEqual((st["turn"], st["round"]), ("C", 1))             # the fight goes on
+        out = self.run_cmd("terrain", "A1:C3=#")                          # a wall where Corin stands
+        self.assertIn("C moved from B2 to", out)
+        self.assertIn("unknown terrain", self.fail_cmd("terrain", "A1=Q"))
+
+    def test_replace_the_map_under_the_fight(self) -> None:
+        self.new(blank="10x6")
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=20)
+        self.add("g1", "Gob", "E2", GOBLIN, init=10)
+        self.run_cmd("next")
+        self.run_cmd("hp", "g1", "-3")
+        out = self.run_cmd("map", "river", "--size", "20x12", "--seed", "3", "--width", "4", "--boat", "--replace", "--name", "r")
+        self.assertIn("tokens, turn order, HP and conditions kept", out)
+        import combat
+        st = self.state()
+        self.assertEqual((st["w"], st["h"], st["turn"]), (20, 12, "C"))
+        self.assertEqual(combat.token(st, "g1")["hp"], 9)
+        for t in st["tokens"]:                                             # nobody stands in deep water
+            self.assertIsNotNone(combat.cost(st, t["x"], t["y"]))
+        self.assertIn("pick one", self.fail_cmd("map", "river", "--start", "--replace", "--force", "--name", "x"))

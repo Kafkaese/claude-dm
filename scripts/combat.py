@@ -150,6 +150,8 @@ Map files: one line per row, one character per square, no spaces between squares
   Y  tree in undergrowth (2, partial cover + 20%)   -  low wall / fence / log (3, cover within 30 ft)
   m  furniture (3)
 Columns are lettered A-Z (max 26 wide), rows numbered from 1.
+  terrain AREA=TERRAIN [...]      paint the current map: a square (C3=W) or rectangle (E5:H9=.); tokens on a
+                                  square that becomes impassable move to the nearest free one
   map TEMPLATE [--size 24x14] [--seed N] [--density sparse|medium|dense] [--time day|dusk|night]
        [--name NAME] [--start] [--force]
                                   generate a battle map that fits the scene, save it to dm/combat/maps/, and
@@ -1135,15 +1137,65 @@ def cmd_new(args: Args) -> str:
     return render(st, dm=True)
 
 
+def resettle(st: State) -> list[str]:
+    """After the map changed under the tokens: move every token that now stands off the map, in a wall
+    or in deep water, or on another token, to the nearest free square it can stand on. Report lines."""
+    out = []
+    for c in st["tokens"]:
+        if c.get("removed"):
+            continue
+
+        def fits(x: int, y: int) -> bool:
+            with _placed(c, (x, y)):
+                return all(cost(st, cx, cy) is not None and not occupied(st, c, cx, cy) for cx, cy in cells(c))
+        if fits(c["x"], c["y"]):
+            continue
+        spots = sorted((max(abs(x - c["x"]), abs(y - c["y"])), y, x) for y in range(st["h"]) for x in range(st["w"]))
+        spot = next(((x, y) for _d, y, x in spots if fits(x, y)), None)
+        if spot is None:
+            out.append(f"  {c['token']}: no free square left for it on this map (still at {fmt_pos(c['x'], c['y'])})")
+            continue
+        out.append(f"  {c['token']} moved from {fmt_pos(c['x'], c['y'])} to {fmt_pos(*spot)} (its square is blocked now)")
+        c["x"], c["y"] = spot
+    return out
+
+
+def cmd_terrain(args: Args, st: State) -> str:
+    """Paint terrain onto the current map: AREA=CHAR pairs, AREA a square (E5) or a rectangle (E5:H9).
+    Tokens stay put unless their square became impassable (then they move to the nearest free one)."""
+    grid = [list(r) for r in st["grid"]]
+    done = []
+    for item in args.paint:
+        if "=" not in item:
+            raise CombatError(f"paint as AREA=TERRAIN, e.g. E5:H9=. or C3=W (not {item!r})")
+        area, ch = item.rsplit("=", 1)
+        if ch not in TERRAIN:
+            raise CombatError(f"unknown terrain {ch!r}: " + ", ".join(f"{k} {v[0]}" for k, v in TERRAIN.items()))
+        a, _, b = area.partition(":")
+        (x1, y1), (x2, y2) = parse_pos(a, st), parse_pos(b or a, st)
+        for y in range(min(y1, y2), max(y1, y2) + 1):
+            for x in range(min(x1, x2), max(x1, x2) + 1):
+                grid[y][x] = ch
+        done.append(f"{area} → {ch} ({TERRAIN[ch][0]})")
+    st["grid"] = ["".join(r) for r in grid]
+    return "\n".join(["Terrain painted: " + "; ".join(done)] + resettle(st) + [render(st, dm=True)])
+
+
 def cmd_map(args: Args) -> str:
     """Generate a battle map from a template (scripts/mapgen.py), save it to dm/combat/maps/, and with
-    --start begin the encounter on it (its light sources included). Prints the map and where the
+    --start begin the encounter on it (its light sources included), or with --replace swap it in
+    under the running fight (tokens, turn order, HP and conditions kept). Prints the map and where the
     party is, the ambush spots and the lights, for placing the tokens."""
     import mapgen
+    opts = {"width": getattr(args, "width", None), "boat": getattr(args, "boat", False)}
     try:
-        m = mapgen.generate(args.template, args.size, args.seed, args.density, args.time)
+        m = mapgen.generate(args.template, args.size, args.seed, args.density, args.time, opts)
     except mapgen.MapError as e:
         raise CombatError(str(e))
+    if args.replace and args.start:
+        raise CombatError("--start begins a new encounter, --replace swaps the map under the running one: pick one")
+    if args.replace and not state_path(args.campaign).exists():
+        raise CombatError("no encounter to swap the map under: use --start")
     name = re.sub(r"[^a-z0-9-]+", "-", (args.name or f"{args.template}-{m['seed']}").lower()).strip("-")
     path = PROJECT / "campaigns" / args.campaign / "dm" / "combat" / "maps" / f"{name}.txt"
     if path.exists() and not args.force:
@@ -1153,7 +1205,17 @@ def cmd_map(args: Args) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(mapgen.to_file(m), encoding="utf-8")
     out = [f"Map {path.relative_to(PROJECT)} ({args.template}, seed {m['seed']}): " + " ".join(m["notes"])]
-    if args.start:
+    if args.replace:   # the same fight on the new ground: tokens, turn, round, HP, conditions all stay
+        st = load(args.campaign)
+        new = fresh_state(str(path), None, None)
+        st.update(w=new["w"], h=new["h"], grid=new["grid"])
+        st["light"]["ambient"], st["light"]["grid"] = new["light"]["ambient"], new["light"]["grid"]
+        for li in m["lights"]:
+            add_light(st, li["kind"], mapgen.fmt(li["at"]), None)
+        out += ["The fight goes on on the new map (tokens, turn order, HP and conditions kept)."] + resettle(st)
+        save(args.campaign, st)
+        out.append(render(st, dm=True))
+    elif args.start:
         st = fresh_state(str(path), None, None)
         for li in m["lights"]:
             add_light(st, li["kind"], mapgen.fmt(li["at"]), None)
@@ -5318,6 +5380,10 @@ def main(argv: list[str] | None = None) -> int:
     mp.add_argument("--density", default="medium", choices=["sparse", "medium", "dense"])
     mp.add_argument("--time", choices=["day", "dusk", "night", "inside"]); mp.add_argument("--name")
     mp.add_argument("--start", action="store_true", help="begin the encounter on it"); mp.add_argument("--force", action="store_true")
+    mp.add_argument("--replace", action="store_true", help="swap it in under the running fight (tokens and turn state kept)")
+    mp.add_argument("--width", type=int, help="river: deep water width in squares (2-12)")
+    mp.add_argument("--boat", action="store_true", help="river: a flatboat's deck in the water at the crossing")
+    tr = sub.add_parser("terrain"); tr.add_argument("paint", nargs="+", help="AREA=TERRAIN, e.g. E5:H9=. C3=W")
     en = sub.add_parser("encounter"); en.add_argument("action", choices=["list", "check"])
     en.add_argument("names", nargs="*", help="check: encounter names or files (default: all)")
     su = sub.add_parser("setup"); su.add_argument("name", help="encounter name (dm/combat/encounters/<name>.md) or file")
@@ -5363,7 +5429,7 @@ def main(argv: list[str] | None = None) -> int:
                 "reveal": cmd_flag, "hide": cmd_flag, "remove": cmd_flag, "end": cmd_end,
                 "attack": cmd_attack, "log": cmd_log, "events": cmd_events,
                 "ask": cmd_ask, "wield": cmd_wield, "pickup": cmd_pickup, "briefing": cmd_briefing, "damage": cmd_damage, "stabilize": cmd_stabilize, "first-aid": cmd_first_aid, "save": cmd_save, "area": cmd_area,
-                "order": cmd_order, "plan": cmd_plan, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
+                "order": cmd_order, "plan": cmd_plan, "terrain": cmd_terrain, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
                 "provoke": cmd_provoke, "endturn": cmd_endturn, "maneuver": cmd_maneuver,
                 "light": cmd_light, "sight": cmd_sight, "act": cmd_act, "surprise": cmd_surprise, "ability": cmd_ability,
                 "actions": lambda a, st: action_status(st, token(st, a.token)).strip(), "options": cmd_options}
