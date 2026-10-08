@@ -11,6 +11,8 @@ Use `$ARGUMENTS` if given. Otherwise use the only campaign whose `campaign.md` h
 
 Session number: `NN` = "Sessions played" in `campaign.md` + 1, zero-padded to two digits. If `dm/session-log/session-NN.md` already exists, this is a **resume** of an interrupted session. Continue that log and skip ahead to Step 4.
 
+**From the web interface:** its "[Session start]" message already did the mechanical steps (session number, live log, campaign status, the world's session reset, the profile check) and contains the files Step 2 and the brief need. Don't read those again or repeat what it reports as done: go straight to the brief (read further DM files only by section), the digest, and Step 3.
+
 ## Step 2: Load context
 **Read these yourself.** They're rules and player-facing files, so nothing here is a spoiler:
 - `library/general/table-rules/safety-tools.md`, `communication.md`, `running-the-game.md` (especially "Behind the screen"), `dm-procedures.md`, `continuity.md` and `living-world.md`. Not the combat rules: read `combat.md` when a fight starts (it says when to read `combat-prep.md` and `combat-npc-turns.md`)

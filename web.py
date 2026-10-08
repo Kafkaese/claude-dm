@@ -31,7 +31,8 @@ from dm_engine import (EFFORTS, REPO, CombatRunner, Engine, PlayerTurnRunner, wi
                        end_fight, fight_over, fight_over_prompt,
                        is_go_signal, list_campaigns, run_combat_step, slugify, step_due,
                        last_combat_events, load_history,
-                       FLUSH_PROMPT, WISHES_QUESTION, close_prompt, session_in_progress, write_transcript)
+                       FLUSH_PROMPT, WISHES_QUESTION, close_prompt, session_in_progress, session_start_bundle,
+                       write_transcript)
 
 WEB = REPO / "web"
 
@@ -510,7 +511,10 @@ class Hub:
         with self.lock:
             self.history.append({"role": "player", "text": text})
             self.publish({"type": "player", "text": text})
-        self._run_turn(text)
+        if mode == "new":
+            self._run_turn(text)
+        else:   # the interface does the mechanical steps and hands over the files: one message, not 26 turns
+            self._work(session_start_bundle(slug), False)
 
     over_announced: tuple[str, Any] | None = None   # the finished fight the player has been told about
 

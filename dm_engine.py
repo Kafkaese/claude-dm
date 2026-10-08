@@ -138,7 +138,7 @@ def is_combat_tool(name: str, inp: dict[str, Any]) -> bool:
 
 
 INTERFACE_PREFIXES = ("[Combat step", "[The player is switching to another campaign", "[Test setup", "[The fight is over", "/compact",
-                      "[The session is ending", "[Close the session")
+                      "[The session is ending", "[Close the session", "[Session start")
 RECAP_PREFIX = "[Interface recap"
 
 
@@ -180,6 +180,76 @@ def close_prompt(slug: str, nn: int, wishes: str, transcript: Path | None, fight
             + "\n"
             f"Step 1 is done (the interface asked). The player's answer to stars & wishes and anything to note: "
             f"\"{wishes.strip() or 'skip'}\". Start at Step 2.]")
+
+
+# The session start (web.py): the interface does /start-session's mechanical steps itself and hands the
+# DM the files it would otherwise read one turn at a time (26 turns in session 4), in ONE message.
+START_RULES = ("safety-tools", "communication", "running-the-game", "dm-procedures", "continuity", "living-world")
+START_FILE_LIMIT = 40_000   # characters per file in the bundle
+
+
+def session_start_bundle(slug: str) -> str:
+    """The first message of a fresh session: the session number, what the interface already did (live
+    log created, campaign set active, world session reset, combat profiles checked), and the files
+    /start-session's Step 2 and the brief need, so the DM reads none of them again."""
+    camp = REPO / "campaigns" / slug
+    md = (camp / "campaign.md").read_text(encoding="utf-8")
+    played = re.search(r"\*\*Sessions played:\*\*\s*(\d+)", md)
+    nn = (int(played.group(1)) if played else 0) + 1
+    log = camp / "dm" / "session-log" / f"session-{nn:02d}.md"
+    resume = log.exists()
+    done = []
+    if not resume:
+        template = (REPO / ".claude" / "skills" / "start-session" / "session-log-template.md").read_text(encoding="utf-8")
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text(template.replace("Session NN", f"Session {nn:02d}", 1)
+                       .replace("- **Real date:**", f"- **Real date:** {time.strftime('%Y-%m-%d')}", 1), encoding="utf-8")
+        done.append(f"created the live log dm/session-log/session-{nn:02d}.md from the template")
+        if re.search(r"\*\*Status:\*\*\s*(?!active)\S", md):
+            md = re.sub(r"(\*\*Status:\*\*\s*)[^\n]*", r"\g<1>active", md, count=1)
+            (camp / "campaign.md").write_text(md, encoding="utf-8")
+            done.append("set campaign.md status to active")
+        world_out = _run_script_quiet("world.py", slug, ["session"])
+        done.append(f"reset the world's session count ({world_out.strip()})")
+    sheets = sorted(p for p in (camp / "players" / "characters").glob("*.md") if p.name.lower() != "readme.md")
+    if sheets:
+        check = _run_script_quiet("combat.py", slug, ["profile", "check"] + [str(p.relative_to(REPO)) for p in sheets])
+        done.append("ran combat_profile_check on the sheets:\n" + check.strip())
+    files = [REPO / "library" / "general" / "table-rules" / f"{n}.md" for n in START_RULES]
+    files += [camp / "campaign.md", camp / "players" / "session-zero.md", camp / "players" / "party.md"]
+    recaps = sorted((camp / "players" / "recaps").glob("session-*.md"))
+    files += recaps[-1:] + sheets
+    files += [camp / "dm" / "state.md", camp / "dm" / "session-prep" / f"session-{nn:02d}-prep.md"]
+    if resume:
+        files += [log, camp / "dm" / "screen-digest.md"]
+    parts, missing = [], []
+    for p in files:
+        if not p.exists():
+            missing.append(str(p.relative_to(REPO)))
+            continue
+        text = p.read_text(encoding="utf-8")
+        cut = f"\n[… cut at {START_FILE_LIMIT} characters: read the rest by section if you need it]" if len(text) > START_FILE_LIMIT else ""
+        parts.append(f"===== {p.relative_to(REPO)} =====\n{text[:START_FILE_LIMIT]}{cut}")
+    for p in (camp / "dm" / "world.md", camp / "dm" / "threads.md"):
+        if p.exists():
+            heads = [l for l in p.read_text(encoding="utf-8").splitlines() if l.startswith("#")]
+            parts.append(f"===== {p.relative_to(REPO)} (headings only: read sections as the brief needs) =====\n" + "\n".join(heads))
+    head = (f"[Session start, from the interface: campaign `{slug}`, session {nn:02d}"
+            + (" (a RESUME of an interrupted session: continue its live log, go to Step 4)" if resume else "") + ".\n"
+            + ("Already done, don't repeat: " + "; ".join(done) + ".\n" if done else "")
+            + ("Not there: " + ", ".join(missing) + ".\n" if missing else "")
+            + "The files /start-session's Step 2 and the brief need are below, read for you: don't Read them again. "
+              "Now run the /start-session skill for this campaign (Skill tool) and follow it, skipping what's done above; "
+              "read further DM files only by section, as the brief needs. The player sees none of this message.]")
+    return head + "\n\n" + "\n\n".join(parts)
+
+
+def _run_script_quiet(script: str, slug: str, args: list[str]) -> str:
+    """Run one of the game scripts for the interface (outside the DM's play mode); its output, or the error."""
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_DM_MODE"}
+    r = subprocess.run([sys.executable, str(REPO / "scripts" / script), "-c", slug] + args,
+                       cwd=REPO, env=env, capture_output=True, text=True)
+    return (r.stdout + r.stderr).strip()
 
 
 def session_in_progress(slug: str | None) -> int | None:
@@ -251,6 +321,8 @@ def exchange_kind(text: str) -> str:
         return "close-flush"
     if t.startswith("[Close the session"):
         return "command:end-session"
+    if t.startswith("[Session start"):
+        return "command:start-session"
     if t.startswith("/"):
         return "command:" + t.split()[0][1:]
     if t.lower().rstrip(".!") in ("next", "end turn"):

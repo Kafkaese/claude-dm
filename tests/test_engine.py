@@ -854,3 +854,43 @@ class QueueDuringCompaction(CampaignCase):
         self.assertEqual(busy[:2], [True, False])                      # the chat opened before the compaction
         self.assertFalse(hub.compacting)
         self.assertEqual(hub.queue, [])
+
+
+class SessionStartBundle(CampaignCase):
+    """The interface does /start-session's mechanical steps and hands the DM the files in one message."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write("campaign.md", "# Test\n**System:** pf1e\n- **Status:** planning\n- **Sessions played:** 2\n")
+        self.write("players/session-zero.md", "# Session zero\nLines: none.\n")
+        self.write("players/party.md", "# Party\n")
+        self.write("players/recaps/session-01.md", "old recap")
+        self.write("players/recaps/session-02.md", "the latest recap")
+        self.write("players/characters/corin.md", "# Corin\n```combat-profile\n{\"kind\": \"pc\"}\n```\n")
+        self.write("dm/state.md", "# State\nThe party is at the inn.\n")
+        self.write("dm/session-prep/session-03-prep.md", "# Prep 03\nStrong start: a knock at the door.\n")
+        self.write("dm/world.md", "# World\n## Clocks\nsecret clock text\n## Triggers\n")
+
+    def test_new_session(self) -> None:
+        msg = E.session_start_bundle(self.slug)
+        self.assertTrue(msg.startswith(f"[Session start, from the interface: campaign `{self.slug}`, session 03."))
+        log = (self.dir / "dm/session-log/session-03.md").read_text()
+        self.assertTrue(log.startswith("# Session 03"))
+        self.assertIn("**Status:** active", (self.dir / "campaign.md").read_text())
+        self.assertIn("reset the world's session count", msg)
+        self.assertIn("ran combat_profile_check", msg)
+        for text in ("the latest recap", "The party is at the inn.", "Strong start: a knock", "Behind the screen"):
+            self.assertIn(text, msg)
+        self.assertNotIn("old recap", msg)                              # only the latest recap
+        self.assertIn("## Clocks", msg)
+        self.assertNotIn("secret clock text", msg)                      # world.md: headings only
+        self.assertEqual(E.exchange_kind(msg), "command:start-session")
+        self.assertIsNone(E.player_part(msg))                           # never shown as the player's message
+
+    def test_resume(self) -> None:
+        self.write("dm/session-log/session-03.md", "# Session 03\n## Log\n- the party reached the bridge\n")
+        msg = E.session_start_bundle(self.slug)
+        self.assertIn("a RESUME of an interrupted session", msg)
+        self.assertIn("the party reached the bridge", msg)
+        self.assertNotIn("created the live log", msg)
+        self.assertIn("**Status:** planning", (self.dir / "campaign.md").read_text())   # untouched on a resume

@@ -26,7 +26,7 @@ Read the files `/start-session` lists, write the digest, and get the picture str
 Roll the checks for the PCs with `dice_roll` (`hidden: true`), using the modifiers from `players/characters/` (situational ones included), against the hidden DCs or opposed rolls. Narrate only what each character notices. A failure gives nothing, or the misleading result a failure produces. Checks the player initiated ("I examine the hands") get a roll marker if session zero has them on (`running-the-game.md`, "Rolls"); reactive and system-secret checks never do.
 
 ## World turn
-At every transition, run the procedure in `living-world.md`: the `world` tool for the random-event part (transition class, settlement cooldown, session budget), plus scheduled events, clocks, reaction triggers and floating clues. Update `dm/world.md`, `dm/state.md` and the log header.
+At every transition, run the procedure in `living-world.md`: the `world` tool for the random-event part (transition class, settlement cooldown, session budget), plus scheduled events, clocks, reaction triggers and floating clues. The tool logs the turn in the live log (what else fired goes in its `note`); `dm/world.md` and `dm/state.md` are updated at close-session.
 
 ## Oracle
 For a yes/no question the records don't answer: set the odds from the established facts, roll with `dice_roll` (`oracle`), and interpret the result consistently with the records (`continuity.md`).
