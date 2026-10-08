@@ -1489,3 +1489,45 @@ class SheetHp(CampaignCase):
         ok, text = M.Server().call("character_hp", {"campaign": self.slug, "character": "ilvan", "change": "-1", "why": "trap"})
         self.assertTrue(ok, text)
         self.assertEqual(self.hp_line(), "- **HP:** -10 / 8")
+
+
+class Session5Fixes(CampaignCase):
+    """A finesse weapon ("ability": "dex") is a weapon like any other; ranged attacks provoke."""
+
+    KOVAN = dict(GOBLIN, attacks={"kukri": {"bonus": 5, "damage": "1d4+2", "crit": 18, "type": "melee", "ability": "dex"},
+                                  "composite longbow": {"bonus": 5, "damage": "1d8+2", "mult": 3, "type": "ranged", "range": 110}},
+                 wielding=["composite longbow"])
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.new(blank="10x6")
+        self.add("K", "Kovan", "B2", self.KOVAN, side="ally", init=20)
+        self.add("g1", "Guard", "C2", GOBLIN, init=10)                  # adjacent, spear in hand
+        self.run_cmd("next")
+
+    def test_finesse_weapon_must_be_drawn_and_threatens(self) -> None:
+        import combat
+        k = combat.token(self.state(), "K")
+        self.assertEqual(combat.weapons(k)["kukri"]["kind"], "weapon")
+        self.assertIn("isn't holding its kukri", self.fail_cmd("attack", "K", "g1", "--with", "kukri"))
+        self.assertFalse(combat.threatens(k, combat.token(self.state(), "g1")))   # a bow in hand threatens nothing
+        self.run_cmd("wield", "K", "kukri", "--drop", "composite longbow")
+        st = self.state()
+        self.assertTrue(combat.threatens(combat.token(st, "K"), combat.token(st, "g1")))
+        self.assertIn("kukri", self.run_cmd("options", "K").split("Details:")[0])
+
+    def test_shooting_in_melee_provokes(self) -> None:
+        import combat
+        st = self.state()
+        combat.token(st, "g1")["acted"] = True                            # not flat-footed any more
+        combat.save(self.slug, st)
+        out = self.run_cmd("attack", "K", "g1", "--with", "composite longbow")
+        self.assertIn("Attack of opportunity", out)                       # the guard's spear, before the shot
+        self.assertLess(out.index("Attack of opportunity"), out.index("composite longbow) → "))
+
+    def test_no_aoo_out_of_reach_or_for_a_ray(self) -> None:
+        self.run_cmd("move", "g1", "H2", "--out-of-turn")
+        self.assertNotIn("Attack of opportunity", self.run_cmd("attack", "K", "g1", "--with", "composite longbow"))
+        self.run_cmd("move", "g1", "C2", "--out-of-turn")
+        out = self.run_cmd("attack", "K", "g1", "--name", "ray", "--roll", "1d20+5", "--dmg", "1d3", "--touch", "--ranged", "--override")
+        self.assertNotIn("Attack of opportunity", out)                    # the casting already provoked

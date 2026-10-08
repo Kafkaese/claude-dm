@@ -879,6 +879,16 @@ def _attack(args: Args, st: State) -> str:
         a["aoo_used"] = a.get("aoo_used", 0) + 1
     if args.charge:
         R.add_condition(st, a, "charged", rounds=1)
+    # A ranged attack provokes from everyone threatening the attacker (CRB Table 8-2), once per attack
+    # action here (a threatener gets one AoO a round anyway). Not a ray's or touch spell's attack: the
+    # casting already provoked.
+    if any(e[5] == "ranged" for e in entries) and not args.aoo and not args.touch:
+        verb = "throwing" if any(e[5] == "ranged" and (weapons(a).get(e[0] or "") or {}).get("type") != "ranged"
+                                 for e in entries) else "shooting"
+        lines, _taken = provoke_aoos(st, a, reason=f"{verb} at {t['token']}")
+        out += lines
+        if a["hp"] <= 0 or not can_act(a):
+            return "\n".join(out + [f"{a['token']} goes down before the attack (no attack made)"])
     for i, e in enumerate(entries):
         if i and t["hp"] <= 0:
             out.append(f"(remaining attacks skipped: {who(t)} is down)")
@@ -2661,13 +2671,14 @@ TWO_HANDED_HINTS = ("bow", "crossbow", "great", "halberd", "glaive", "guisarme",
 
 
 def weapon_kind(name: str, w: dict[str, Any]) -> str:
-    """'natural', 'unarmed', 'ability' (a Su/Sp attack like fire bolt or a ray: always at hand, takes
-    no hands, never threatens) or 'weapon'."""
+    """'natural', 'unarmed', 'ability' (a Su/Sp attack like a ray: always at hand, takes no hands,
+    never threatens; the profile flag is "supernatural", since "ability" on an attack is the ability
+    score behind its roll) or 'weapon'."""
     n = name.lower()
     if "unarmed" in n:
         return "unarmed"
-    if w.get("ability") or (w.get("ability") is None and w.get("type") == "ranged" and w.get("touch")
-                            and any(h in n for h in ABILITY_HINTS)):
+    if w.get("supernatural") is True or (w.get("supernatural") is None and w.get("type") == "ranged" and w.get("touch")
+                                          and any(h in n for h in ABILITY_HINTS)):
         return "ability"
     if w.get("natural") or (w.get("natural") is None and any(h in n for h in NATURAL_HINTS)):
         return "natural"

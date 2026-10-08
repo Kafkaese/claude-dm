@@ -81,7 +81,7 @@
           "thrown": {"type": "boolean"},
           "hands": {"type": "integer", "minimum": 0, "maximum": 2, "description": "hands it takes to wield (bows and two-handed weapons 2; guessed from the name if left out)"},
           "natural": {"type": "boolean", "description": "a natural attack (always at hand, never drawn); guessed from the name (bite, claw, slam…) if left out"},
-          "ability": {"type": "boolean", "description": "a supernatural or spell-like attack (fire bolt, a ray): always at hand, takes no hands, never threatens; guessed for ranged touch attacks named bolt, ray, blast… if left out"},
+          "supernatural": {"type": "boolean", "description": "a supernatural or spell-like attack (a ray, a breath): always at hand, takes no hands, never threatens; guessed for ranged touch attacks named bolt, ray, blast… if left out"},
           "ammo": {"type": "integer", "minimum": 0, "description": "arrows/bolts/stones it carries, or how many of a thrown weapon (javelins); combat.py counts them"},
           "ability": {"enum": ["str", "dex", "none"], "description": "Ability behind the attack roll, if not the default (Str for melee, Dex for ranged): 'dex' with Weapon Finesse, 'none' for e.g. a touch spell cast by ability-independent means."},
           "str_damage": {"type": "number", "enum": [0, 0.5, 1, 1.5], "description": "Str multiplier on damage, if not the default (1 for melee and thrown, 0 for other ranged): 1.5 two-handed or a sole natural attack, 0.5 off-hand or secondary natural attacks, 1 composite bow."},
