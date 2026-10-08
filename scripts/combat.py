@@ -252,7 +252,17 @@ def token(st: State, tok: str) -> Token:
     for c in st["tokens"]:
         if c["token"] == tok:
             return c
-    raise CombatError(f"no token '{tok}'")
+    # a name instead of a token id ("Harl Dessick", "dessick"): exact, then a unique part
+    want = tok.strip().lower()
+    alive = [c for c in st["tokens"] if not c.get("removed")]
+    for test in (lambda c: c["name"].lower() == want, lambda c: want in c["name"].lower()):
+        hits = [c for c in alive if test(c)]
+        if len(hits) == 1:
+            return hits[0]
+        if len(hits) > 1:
+            raise CombatError(f"'{tok}' fits several: " + ", ".join(f"{c['token']} ({c['name']})" for c in hits)
+                              + ": use the token id")
+    raise CombatError(f"no token '{tok}' (tokens: " + ", ".join(f"{c['token']} {c['name']}" for c in alive) + ")")
 
 
 # ---------- geometry ----------
@@ -1830,10 +1840,22 @@ def apply_effect_data(args: Args, data: dict[str, Any] | None, c: Token, st: Sta
     if data.get("dc") and args.dc is None:
         args.dc = data["dc"]
     if data.get("touch") and data.get("target") == "one":
+        if data.get("attack") is None and c["side"] == "pc":   # a PC's touch attack is the player's roll
+            args.touch_attack = (None, "ranged" if (data.get("range") or 0) > 0 else "melee")
+            return
         if data.get("attack") is None:
             raise CombatError("this effect needs a touch attack, but its effect data has no \"attack\" bonus: "
                               "add it to the profile, or resolve it with `attack --touch` and the effect by hand")
         args.touch_attack = (data["attack"], "ranged" if (data.get("range") or 0) > 0 else "melee")
+
+
+def _rolled(args: Args, expr: str) -> tuple[int, str]:
+    """A spell's damage or healing: the player's rolled amount for a PC's spell (`amount`), else the
+    script rolls the dice. Returns (value, how)."""
+    if getattr(args, "amount", None) is not None:
+        return int(args.amount), f"the player's roll {args.amount}"
+    value, detail, _ = _roll(expr)
+    return value, detail
 
 
 def touch_attack(args: Args, st: State, c: Token, t: Token, shown: str) -> tuple[bool, int, list[str]]:
@@ -1841,13 +1863,19 @@ def touch_attack(args: Args, st: State, c: Token, t: Token, shown: str) -> tuple
     modifiers and miss chance). Returns (hit, crit multiplier, output lines)."""
     bonus, kind = args.touch_attack
     delta, ac, notes, _dm, miss = attack_mods(st, c, t, kind, True)
-    total, detail, _ = _roll(f"1d20{bonus + delta:+d}")
-    nat = _natural(detail)
+    if bonus is None:   # a PC: the player's touch attack total
+        total, detail, nat = args.total, f"the player's {args.total}", None
+        attacker_side = [n for n in notes if n.startswith(("+", "-"))]
+        if attacker_side:
+            notes = [n for n in notes if n not in attacker_side] + [f"remind the player: {', '.join(attacker_side)}"]
+    else:
+        total, detail, _ = _roll(f"1d20{bonus + delta:+d}")
+        nat = _natural(detail)
     hit = nat != 1 and (nat == 20 or total >= ac)
     mult = 1
     out = [f"  {kind} touch attack {detail} = {total} vs touch AC {ac}" + (f" ({', '.join(notes)})" if notes else "")
            + f": {'hit' if hit else 'miss'}"]
-    if hit and nat == 20:
+    if hit and nat == 20 and bonus is not None:
         conf, cdetail, _ = _roll(f"1d20{bonus + delta:+d}")
         mult = 2 if conf >= ac else 1
         out.append(f"  threat: confirm {cdetail} = {conf}: {'critical, damage dice ×2' if mult == 2 else 'no crit'}")
@@ -2016,6 +2044,13 @@ def cast_pc(args: Args, st: State, c: Token) -> str:
         apply_effect_data(args, data, c, st, args.spell)
         if args.save and args.dc is None:
             raise CombatError(f"{args.spell} allows a save: give the DC from {c['name']}'s sheet (--dc N)")
+        if getattr(args, "touch_attack", None) and args.touch_attack[0] is None and args.total is None:
+            raise CombatError(f"{args.spell} needs a touch attack: ask the player for it (d20 + their ranged/melee touch "
+                              f"bonus) and pass total N (nothing was applied)")
+        rolls = [x for x in (args.dmg, getattr(args, "heal", None)) if x]
+        if rolls and getattr(args, "amount", None) is None:
+            raise CombatError(f"the player rolls {args.spell}'s {'damage' if args.dmg else 'healing'} ({rolls[0]}): "
+                              f"ask for it and pass amount N (nothing was applied)")
         args.sr_cl = cl
         if getattr(args, "sr", None) is None:
             args.sr = True
@@ -2148,7 +2183,8 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
                                 name=name, no_slot=True, log_name=shown, cond=getattr(args, "cond", None), cond_rounds=getattr(args, "cond_rounds", None),
                                 cond_mods=getattr(args, "cond_mods", None), immunity=immunity_of(args),
                                 sr=getattr(args, "sr", False), sr_cl=getattr(args, "sr_cl", None),
-                                sr_harmless=getattr(args, "sr_harmless", False), sr_check=getattr(args, "sr_check", None))
+                                sr_harmless=getattr(args, "sr_harmless", False), sr_check=getattr(args, "sr_check", None),
+                                amount=getattr(args, "amount", None))
         out.append(cmd_area(ns, st))
     elif args.target:
         t = token(st, args.target)
@@ -2166,7 +2202,7 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
         if blocked:
             return out
         if getattr(args, "heal", None):   # cure spells and the like: roll it and heal the target
-            amount, detail, _ = _roll(args.heal)
+            amount, detail = _rolled(args, args.heal)
             before = t["hp"]
             t["hp"] = min(t.get("max_hp", t["hp"] + amount), t["hp"] + amount)
             healed(st, t, before)
@@ -2181,8 +2217,8 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
                        f"with `cond` after it")
         dmg = 0
         if args.dmg:
-            dmg, detail, _ = _roll(args.dmg)
-            if mult == 2:   # a critical touch spell: the dice twice (roll.py-style: roll again and add)
+            dmg, detail = _rolled(args, args.dmg)
+            if mult == 2 and getattr(args, "amount", None) is None:   # a critical touch spell: the dice twice
                 extra, detail2, _ = _roll(args.dmg)
                 dmg, detail = dmg + extra, f"{detail} + {detail2}"
             out.append(f"{name}: damage {args.dmg} → {detail} = {dmg}")
@@ -5066,7 +5102,7 @@ def cmd_area(args: Args, st: State) -> str:
         raise CombatError("--save needs --dc")
     name = args.name or f"the {args.shape}"
     shown_name = getattr(args, "log_name", None) or name   # what the player's log and questions say
-    dmg, detail, _ = _roll(args.dmg) if args.dmg else (0, "no damage", None)
+    dmg, detail = _rolled(args, args.dmg) if args.dmg else (0, "no damage")
     out.append(f"{name}: damage {args.dmg} → {detail} = {dmg}")
     if not any(not o.get("hidden") for o in hit):
         event(st, f"{shown_name} hits no one")
@@ -5336,6 +5372,8 @@ def main(argv: list[str] | None = None) -> int:
         cp.add_argument("--light-on", help="light/darkness spells: the creature/object carrier token")
         cp.add_argument("--rounds", type=int, help="light/darkness spells: duration in rounds (default: the fight)")
         cp.add_argument("--sr-check", type=int, help="a PC's caster level check against spell resistance (the player's d20 + CL)")
+        cp.add_argument("--total", type=int, help="a PC's touch spell: the player's touch attack total")
+        cp.add_argument("--amount", type=int, help="a PC's spell: the player's rolled damage or healing")
     sub.add_parser("spells").add_argument("token")
     pv = sub.add_parser("provoke"); pv.add_argument("token"); pv.add_argument("--reason", default="provoking")
     pv.add_argument("--no-aoo", action="store_true")

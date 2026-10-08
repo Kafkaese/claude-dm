@@ -1390,8 +1390,8 @@ class SpellResistance(CampaignCase):
         st = self.state()
         st["turn"] = "C"
         combat.save(self.slug, st)
-        self.assertIn("ask the player for a caster level check", self.fail_cmd("cast", "C", "zap", "--target", "r1", "--no-provoke"))
-        out = self.run_cmd("cast", "C", "zap", "--target", "r1", "--no-provoke", "--sr-check", "60")
+        self.assertIn("ask the player for a caster level check", self.fail_cmd("cast", "C", "zap", "--target", "r1", "--no-provoke", "--amount", "100"))
+        out = self.run_cmd("cast", "C", "zap", "--target", "r1", "--no-provoke", "--sr-check", "60", "--amount", "100")
         self.assertIn("overcome", out)
 
     def test_profile_check_flags_su_abilities_listed_as_sla(self) -> None:
@@ -1654,3 +1654,42 @@ class MapTools(CampaignCase):
         for t in st["tokens"]:                                             # nobody stands in deep water
             self.assertIsNotNone(combat.cost(st, t["x"], t["y"]))
         self.assertIn("pick one", self.fail_cmd("map", "river", "--start", "--replace", "--force", "--name", "x"))
+
+
+class PlayerCasts(CampaignCase):
+    """A PC's spell: the player rolls its touch attack and its damage or healing; targets by name."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write("spells/ray-of-frost.md", '# Ray of frost\n```spell-effect\n{"target": "one", "range": "close", "touch": true, "dmg": "1d3", "sr": true}\n```\n')
+        self.write("spells/cure-light-wounds.md", '# CLW\n```spell-effect\n{"target": "one", "range": "touch", "heal": "1d8+{min(cl,5)}", "sr": true, "sr_harmless": true}\n```\n')
+        self.new(blank="10x6")
+        self.add("I", "Ilvan", "B2", PC_PROFILE, side="pc", init=20)
+        self.add("u1", "Harl Dessick", "F2", GOBLIN, init=10)
+        self.add("a1", "Ally", "C2", GOBLIN, side="ally", init=5)
+        self.run_cmd("hp", "a1", "-5")
+        self.run_cmd("next")
+
+    def test_ray_takes_the_players_rolls(self) -> None:
+        import combat
+        self.assertIn("ask the player for it", self.fail_cmd("cast", "I", "ray of frost", "--target", "u1", "--amount", "2"))
+        self.assertIn("the player rolls", self.fail_cmd("cast", "I", "ray of frost", "--target", "u1", "--total", "20"))
+        before = combat.token(self.state(), "u1")["hp"]
+        out = self.run_cmd("cast", "I", "ray of frost", "--target", "Dessick", "--total", "20", "--amount", "2")
+        self.assertIn("the player's 20", out)
+        self.assertEqual(combat.token(self.state(), "u1")["hp"], before - 2)
+        miss = self.run_cmd("cast", "I", "ray of frost", "--target", "u1", "--total", "1", "--amount", "3", "--override")
+        self.assertIn("miss", miss)
+
+    def test_healing_is_the_players_roll(self) -> None:
+        import combat
+        self.run_cmd("move", "I", "B3", "--step")                       # next to the ally at C2
+        out = self.run_cmd("cast", "I", "cure light wounds", "--target", "Ally", "--amount", "4")
+        self.assertIn("the player's roll 4", out)
+        self.assertEqual(combat.token(self.state(), "a1")["hp"], 11)
+
+    def test_names_resolve_to_tokens(self) -> None:
+        import combat
+        self.assertEqual(combat.token(self.state(), "harl dessick")["token"], "u1")
+        self.assertEqual(combat.token(self.state(), "dessick")["token"], "u1")
+        self.assertIn("no token 'Nobody'", self.fail_cmd("hp", "Nobody", "1"))
