@@ -340,6 +340,11 @@ TOOLS: list[Tool] = [
          ["token"], lambda a: ["provoke", a["token"]] + flags(a, {"reason": "--reason", "no_aoo": "--no-aoo", "out_of_turn": "--out-of-turn"})),
     Tool("combat_init", "Change a token's initiative (delay, ready).", {"token": S(TOK), "value": {"type": "number"}},
          ["token", "value"], lambda a: ["init", a["token"], str(a["value"])]),
+    Tool("combat_plan", "The player's orders for a companion or ally (\"Brenna grapples Dessick, Kovan guards Ilvan\"): shown "
+         "at the top of its briefing every step until cleared, and its turns follow them while they make sense. Record "
+         "them whenever the player gives them, before or during a fight; clear them when done or called off.",
+         {"token": S(TOK), "orders": S("the orders, in the player's sense"), "clear": B("remove its orders")}, ["token"],
+         lambda a: ["plan", a["token"]] + ([a["orders"]] if a.get("orders") else []) + (["--clear"] if a.get("clear") else [])),
     Tool("combat_order", "A PC's standing order for attacks of opportunity.",
          {"token": S(TOK), "value": S("order", ["always", "never", "ask"])}, ["token", "value"],
          lambda a: ["order", a["token"], "aoo", a["value"]]),

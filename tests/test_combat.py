@@ -1531,3 +1531,57 @@ class Session5Fixes(CampaignCase):
         self.run_cmd("move", "g1", "C2", "--out-of-turn")
         out = self.run_cmd("attack", "K", "g1", "--name", "ray", "--roll", "1d20+5", "--dmg", "1d3", "--touch", "--ranged", "--override")
         self.assertNotIn("Attack of opportunity", out)                    # the casting already provoked
+
+
+class StartWeapons(CampaignCase):
+    """A party member starts a fight with the weapons equipped in the inventory (none: empty hands);
+    an explicit wielding wins; others keep the profile's default."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        for slug, d in (("kukri", {"name": "Kukri", "category": "weapon", "price": 8, "weight": 2, "source": "t"}),
+                        ("composite-longbow", {"name": "Composite longbow", "category": "weapon", "price": 100, "weight": 3, "source": "t"})):
+            self.write(f"dm/items/{slug}.json", json.dumps(d))
+        self.write("players/characters/kovan.md", "# Kovan\n")
+        self.write("players/characters/brenna.md", "# Brenna\n")
+        self.write("players/inventory.json", json.dumps({"containers": {
+            "kovan": {"label": "Kovan", "kind": "character", "sheet": "players/characters/kovan.md", "coins": {},
+                      "items": [{"item": "kukri", "qty": 1, "equipped": True}, {"item": "composite-longbow", "qty": 1}]},
+            "brenna": {"label": "Brenna", "kind": "character", "sheet": "players/characters/brenna.md", "coins": {}, "items": []}}}))
+        self.new(blank="10x6")
+
+    def test_from_the_inventory(self) -> None:
+        kovan = dict(GOBLIN, attacks={"kukri": {"bonus": 5, "damage": "1d4+2", "type": "melee", "ability": "dex"},
+                                      "composite longbow": {"bonus": 5, "damage": "1d8+2", "type": "ranged", "range": 110}},
+                     wielding=["composite longbow"])
+        monk = dict(GOBLIN, attacks={"unarmed strike": {"bonus": 3, "damage": "1d6", "type": "melee"},
+                                     "dart": {"bonus": 4, "damage": "1d4", "type": "ranged", "range": 20}})
+        rel = f"campaigns/{self.slug}/players/characters/"
+        self.add("K", "Kovan", "B2", kovan, "ally", 10, "--ref", rel + "kovan.md")
+        self.add("B", "Brenna", "B4", monk, "ally", 9, "--ref", rel + "brenna.md")
+        self.add("g1", "Gob", "F2", GOBLIN, "enemy", 5)
+        self.add("k2", "Kovan2", "D4", kovan, "ally", 4, "--ref", rel + "kovan.md", "--wielding", "composite longbow")
+        import combat
+        st = self.state()
+        self.assertEqual(combat.token(st, "K")["wielding"], ["kukri"])          # equipped, not the profile's bow
+        self.assertEqual(combat.token(st, "B")["wielding"], [])                 # nothing equipped: empty hands
+        self.assertEqual(combat.token(st, "g1")["wielding"], ["spear"])         # no inventory: the profile's default
+        self.assertEqual(combat.token(st, "k2")["wielding"], ["composite longbow"])   # explicit wins
+
+
+class Orders(CampaignCase):
+    def test_orders_reach_the_briefing_until_cleared(self) -> None:
+        import dm_engine as E
+        self.new(blank="10x6")
+        self.add("B", "Brenna", "B2", GOBLIN, side="ally", init=20)
+        self.add("u1", "Dessick", "D2", GOBLIN, init=10)
+        self.run_cmd("plan", "B", "grapple Dessick and keep him from the satchel")
+        brief = E._step_context(self.state(), next(t for t in self.state()["tokens"] if t["token"] == "B"))
+        self.assertTrue(brief.startswith("THE PLAYER'S ORDERS for Brenna: grapple Dessick"))
+        self.run_cmd("plan", "B", "--clear")
+        brief = E._step_context(self.state(), next(t for t in self.state()["tokens"] if t["token"] == "B"))
+        self.assertNotIn("ORDERS", brief)
+        import mcp_server as M
+        ok, text = M.Server().call("combat_plan", {"campaign": self.slug, "token": "B", "orders": "guard Ilvan"})
+        self.assertTrue(ok, text)
+        self.assertEqual(next(t for t in self.state()["tokens"] if t["token"] == "B")["plan"], "guard Ilvan")

@@ -101,6 +101,8 @@ Play
                                   to the healer: success makes it stable with help (NPCs roll skills.heal)
   stabilize TOKEN [--total N]     dying check: DC 10, minus the negative HP total (the PC's --total;
                                   NPCs roll). Failure costs 1 HP; success adds "stable"
+  plan TOKEN "ORDERS" | --clear  the player's standing orders for a companion or ally ("grapple Dessick, keep
+                                  him from the satchel"): shown at the top of its briefing until cleared
   order TOKEN aoo always|never|ask
                                   a PC's standing order for attacks of opportunity
   cast TOKEN "SPELL" [--level N] [--class X] [--defensive] [--no-provoke]
@@ -1255,6 +1257,9 @@ def cmd_add(args: Args, st: State) -> str:
             raise CombatError(f"{fmt_pos(cx, cy)} is blocked or occupied")
     st["tokens"].append(c)
     c["wielding"] = default_wielding(c)   # what it holds when the fight starts
+    held = inventory_wielding(args.campaign, c)
+    if held is not None:   # a party member: what the inventory says it has equipped (none: empty hands)
+        c["wielding"] = held
     if getattr(args, "wielding", None):
         c["wielding"] = [find_weapon(c, n.strip()) for n in args.wielding.split(",") if n.strip()]
     if not prof:
@@ -2709,6 +2714,27 @@ def wielding(c: Token) -> list[str]:
     if "wielding" not in c:
         c["wielding"] = default_wielding(c)
     return c["wielding"]
+
+
+def inventory_wielding(campaign: str, c: Token) -> list[str] | None:
+    """For a party member whose sheet has a container in players/inventory.json: its equipped weapons
+    that are attacks in its profile (an empty list: it starts with empty hands). None otherwise."""
+    ref = str(c.get("ref") or "")
+    inv_file = PROJECT / "campaigns" / campaign / "players" / "inventory.json"
+    if not ref or not inv_file.exists():
+        return None
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import gear
+        inv = json.loads(inv_file.read_text(encoding="utf-8"))
+        sheet = ref.split(f"campaigns/{campaign}/", 1)[-1]
+        box = next((x for x in inv.get("containers", {}).values() if x.get("sheet") == sheet), None)
+        if box is None:
+            return None
+        names = {gear.load_item(campaign, e["item"])["name"].lower() for e in box["items"] if e.get("equipped")}
+    except Exception:   # the inventory is a convenience here: never block adding a combatant
+        return None
+    return [n for n, w in weapons(c).items() if w["kind"] == "weapon" and n.lower() in names]
 
 
 def default_wielding(c: Token) -> list[str]:
@@ -4992,6 +5018,19 @@ def cmd_order(args: Args, st: State) -> str:
     return f"{c['token']} standing order: {args.kind} {args.value}"
 
 
+def cmd_plan(args: Args, st: State) -> str:
+    """A combatant's standing orders from the player ("Brenna grapples Dessick"): shown at the top of
+    its briefing every step, until cleared. The DM records them; the player decides them."""
+    c = token(st, args.token)
+    if args.clear:
+        c.pop("plan", None)
+        return f"{c['token']}: orders cleared"
+    if not args.text:
+        raise CombatError("give the orders' text, or --clear")
+    c["plan"] = args.text.strip()
+    return f"{c['token']} ({c['name']}) has orders: {c['plan']}"
+
+
 def cmd_init(args: Args, st: State) -> str:
     """Change a token's initiative (delay, ready)."""
     token(st, args.token)["init"] = args.value
@@ -5213,6 +5252,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("spells").add_argument("token")
     pv = sub.add_parser("provoke"); pv.add_argument("token"); pv.add_argument("--reason", default="provoking")
     pv.add_argument("--no-aoo", action="store_true")
+    pl = sub.add_parser("plan"); pl.add_argument("token"); pl.add_argument("text", nargs="?")
+    pl.add_argument("--clear", action="store_true")
     od = sub.add_parser("order"); od.add_argument("token"); od.add_argument("kind", choices=["aoo"])
     od.add_argument("value", choices=["always", "never", "ask"])
     d = sub.add_parser("dist"); d.add_argument("a"); d.add_argument("b")
@@ -5297,7 +5338,7 @@ def main(argv: list[str] | None = None) -> int:
                 "reveal": cmd_flag, "hide": cmd_flag, "remove": cmd_flag, "end": cmd_end,
                 "attack": cmd_attack, "log": cmd_log, "events": cmd_events,
                 "ask": cmd_ask, "wield": cmd_wield, "pickup": cmd_pickup, "briefing": cmd_briefing, "damage": cmd_damage, "stabilize": cmd_stabilize, "first-aid": cmd_first_aid, "save": cmd_save, "area": cmd_area,
-                "order": cmd_order, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
+                "order": cmd_order, "plan": cmd_plan, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
                 "provoke": cmd_provoke, "endturn": cmd_endturn, "maneuver": cmd_maneuver,
                 "light": cmd_light, "sight": cmd_sight, "act": cmd_act, "surprise": cmd_surprise, "ability": cmd_ability,
                 "actions": lambda a, st: action_status(st, token(st, a.token)).strip(), "options": cmd_options}

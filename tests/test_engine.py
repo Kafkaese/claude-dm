@@ -948,7 +948,8 @@ class CastList(CampaignCase):
         self.add("t1", "Thug", "F2", GOBLIN, "enemy", 5, "--ref", rel + "dm/npcs/thug.md")
         text = E.cast_list(self.state())
         self.assertIn("- Brenna (B, ally): Dwarf Monk · wears no armor · in hand: nothing", text)
-        self.assertIn("Kovan (K, ally): Half-Orc Slayer · wears Breastplate · in hand: composite longbow · carries (stowed): Kukri", text)
+        self.assertIn("Kovan (K, ally): Half-Orc Slayer · wears Breastplate · in hand: nothing (unarmed or spells) · carries (stowed): Kukri",
+                      text)   # nothing equipped in the inventory: empty hands, whatever the profile's default
         self.assertIn("Thug (t1, enemy): Thug · gear its stat block lists", text)
         self.assertIn("leather armor, club", text)
         self.assertIn(text, E._step_context(self.state(), next(t for t in self.state()["tokens"] if t["token"] == "t1")))
