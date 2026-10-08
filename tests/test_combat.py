@@ -1585,3 +1585,26 @@ class Orders(CampaignCase):
         ok, text = M.Server().call("combat_plan", {"campaign": self.slug, "token": "B", "orders": "guard Ilvan"})
         self.assertTrue(ok, text)
         self.assertEqual(next(t for t in self.state()["tokens"] if t["token"] == "B")["plan"], "guard Ilvan")
+
+
+class Relief(CampaignCase):
+    """Brenna's round 2 in session 5: two equal guards, one of them next to the PC."""
+
+    def test_the_guard_over_the_pc_comes_first(self) -> None:
+        monk = dict(GOBLIN, attacks={"unarmed strike": {"bonus": [3, 3], "damage": "1d6+2", "type": "melee"}},
+                    feats=["Improved Unarmed Strike"])
+        self.new(blank="8x6")
+        self.add("B", "Brenna", "B2", monk, side="ally", init=20)
+        self.add("I", "Ilvan", "C1", dict(PC_PROFILE, ac=13), side="pc", init=15)
+        self.add("g1", "Guard", "A3", GOBLIN, init=10)
+        self.add("g2", "Guard2", "C2", GOBLIN, init=5)                 # next to Ilvan (C1) and Brenna (B2)
+        import combat
+        st = self.state()
+        for t in st["tokens"]:
+            t["acted"] = True                                         # nobody flat-footed: equal odds on both guards
+        combat.save(self.slug, st)
+        self.run_cmd("next")
+        plans = [l for l in self.run_cmd("options", "B").split("Details:")[0].splitlines() if l.strip()[:2] in ("1.", "2.")]
+        self.assertIn("g2", plans[0].split(" — ")[0])
+        self.assertIn("takes pressure off I", plans[0])
+        self.assertNotIn("takes pressure off", plans[1])

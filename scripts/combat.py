@@ -3224,6 +3224,8 @@ def tactics_weights(st: State, c: Token) -> tuple[dict[str, float], str]:
 # move action that provokes, and it may be lost for good. Plans that drop one pay for it (in points of
 # expected damage), more when it was the creature's only melee weapon (it then threatens no one).
 DROP_COST = 1.0
+RELIEF = 0.5       # the share of a foe's threat to an ally that hitting it is worth (scaled by the HP it takes)
+RELIEF_PC = 1.5    # an ally the foe threatens counts more when it's the player's character
 DROP_LAST_MELEE = 1.5
 
 
@@ -3303,6 +3305,25 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
         how = "5-ft step to " if feet == 5 and R.sq_dist(start, sq) == 1 else f"move {feet} ft to "
         return how + fmt_pos(*sq) + ", "
 
+    # --- relief: hitting a foe that threatens an ally takes pressure off that ally. Worth what the foe
+    # would deal that ally next round (×1.5 for the PC), times the share of the foe's HP the attack takes
+    # (a likely kill relieves the most), counted at half. Breaks ties like "both guards, 14+" in favour of
+    # the one standing over the wizard.
+    relief_memo: dict[str, tuple[float, str]] = {}
+
+    def relief(t: Token) -> tuple[float, str]:
+        if t["token"] not in relief_memo:
+            best_r: tuple[float, str] = (0.0, "")
+            t_ws = [x for x in _weapons(t.get("profile") or {}, "melee", True) if at_hand(t, x[0])]
+            for o in allies:
+                if t_ws and o["hp"] >= 0 and not o.get("removed") and threatens(t, o):
+                    ev_o, _n = _attack_ev(st, t, o, t_ws, "melee")
+                    val = ev_o * (RELIEF_PC if o["side"] == "pc" else 1.0)
+                    if val > best_r[0]:
+                        best_r = (val, o["token"])
+            relief_memo[t["token"]] = best_r
+        return relief_memo[t["token"]]
+
     # --- attacks ---
     attacked: set[str] = set()   # foes with a melee attack plan this turn
     for t in attackable:
@@ -3351,10 +3372,14 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
                           f"({'/'.join(n for n, _w, _b in ws[:3])}{'…' if len(ws) > 3 else ''}: hits on {', '.join(notes[:3])})"
                           + (" [can't see it: guess its square]" if unseen else ""))
                 extra = f"gives {', '.join(gifted)} flanking" if gifted else ""
+                pressure, eased = relief(t)
+                eases = RELIEF * pressure * min(1.0, ev / max(1, t["hp"])) if pressure else 0.0
+                if eases >= 0.05:
+                    extra = ", ".join(x for x in (extra, f"takes pressure off {eased}") if x)
                 lose = drop_cost(c, dropped)
-                score = ev + flank_gift - _aoo_risk(st, c, provoked) - lose
+                score = ev + flank_gift + eases - _aoo_risk(st, c, provoked) - lose
                 if best is None or score > best[0]:
-                    best = (score, (ev, flank_gift, sq, provoked, label_, extra, lose))
+                    best = (score, (ev, flank_gift + eases, sq, provoked, label_, extra, lose))
             if best:
                 ev, gift, sq, provoked, label_, extra, lose = best[1]
                 add(kind, ev, gift, sq, provoked, label_, extra, lose=lose)
