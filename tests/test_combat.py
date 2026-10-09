@@ -771,11 +771,32 @@ class TacticsWeights(CampaignCase):
         out = self.plans("g1")
         self.assertIn("melee -3", out)
         self.assertNotIn("MORALE BREAKS", out)
-        self.run_cmd("hp", "g1", "-8")
+        self.run_cmd("hp", "g1", "-8")                           # 4/12: bloodied, but this table's enemies flee late
+        self.assertNotIn("MORALE BREAKS", self.plans("g1"))
+        self.run_cmd("hp", "g1", "-3")                           # 1/12: at most 15% of its HP
         out = self.plans("g1")
-        self.assertIn("MORALE BREAKS", out)
+        self.assertIn("MORALE BREAKS (HP 1/12): retreat +4", out)   # 20 capped: a tilt, not an order
         first = out.split("  1. ", 1)[1].splitlines()[0]
         self.assertIn("withdraw", first)
+
+    def test_morale_waits_for_most_of_the_side(self) -> None:
+        self.new(blank="12x8")
+        sheep = dict(GOBLIN, tactics={"morale": {"allies_down": 0.5, "weights": {"retreat": 3}}})
+        for i, sq in enumerate(("C4", "C6", "C2", "C7"), 1):
+            self.add(f"g{i}", f"Gob {i}", sq, sheep, init=20 - i)
+        self.add("C", "Corin", "J4", PC_PROFILE, side="pc", init=10)
+        self.run_cmd("next")
+        self.run_cmd("hp", "g2", "-20")                          # 1 of 3 others down
+        self.run_cmd("hp", "g3", "-20")                          # 2 of 3: half isn't enough here
+        self.assertNotIn("MORALE BREAKS", self.plans("g1"))
+        self.run_cmd("hp", "g4", "-20")
+        self.assertIn("MORALE BREAKS (3/3 of its side down)", self.plans("g1"))
+
+    def test_checks_warn_about_early_morale(self) -> None:
+        import combat_rules as R
+        warns = R.morale_warnings({"morale": {"hp": 0.5, "allies_down": 0.5, "weights": {"retreat": 8}}})
+        self.assertEqual(len(warns), 3)
+        self.assertEqual(R.morale_warnings({"morale": {"hp": 0.1, "allies_down": 1, "weights": {"retreat": 3}}}), [])
 
     def test_encounter_tactics_override(self) -> None:
         self.new(blank="8x6")

@@ -121,15 +121,15 @@ Each entry in `abilities` takes `"type": "su"` (default) or `"ex"`. Neither prov
 `combat.py ability TOKEN "NAME"` uses one (`--target`, `--at` or `--toward` as the effect needs).
 
 ## Tactics (personality and morale)
-The tactical options rank whole-turn plans by expected value. `tactics` adds this creature's preferences as points on top (about one point per point of expected damage: +3 is a clear preference, −3 a clear aversion). Plan kinds: `melee`, `ranged`, `spell` (offensive spells, SLAs and abilities), `buff`, `heal`, `defense` (total defense), `retreat` (withdraw).
+The tactical options rank whole-turn plans by expected value. `tactics` adds this creature's preferences as points on top (about one point per point of expected damage: +3 is a clear preference, −3 a clear aversion). Plan kinds: `melee`, `ranged`, `spell` (offensive spells, SLAs and abilities), `buff`, `heal`, `defense` (total defense), `retreat` (withdraw, head for the map edge, flee the battlefield).
 
 | Creature | Tactics |
 |---|---|
-| a cowardly kobold sniper | `"tactics": {"weights": {"ranged": 2, "melee": -3}, "morale": {"hp": 0.5, "allies_down": 0.5, "weights": {"retreat": 6}, "note": "flees toward its warren"}}` |
+| a cowardly kobold sniper | `"tactics": {"weights": {"ranged": 2, "melee": -3}, "morale": {"hp": 0.15, "allies_down": 0.75, "weights": {"retreat": 4}, "note": "flees toward its warren"}}` |
 | a berserker | `"tactics": {"weights": {"melee": 4, "defense": -4, "retreat": -6}}` |
 | a devoted healer | `"tactics": {"weights": {"heal": 3, "buff": 2}, "morale": {"allies_down": 1, "weights": {"retreat": 4, "defense": 2}, "note": "surrenders when cornered"}}` |
 
-Morale breaks at or below `hp` of its maximum HP, or when `allies_down` of its side is down (1 = all of them). Then its `weights` are added. An encounter can give a combatant its own `tactics` for that fight (it replaces the stat block's).
+Morale breaks at or below `hp` of its maximum HP, or when `allies_down` of its side is down (1 = all of them). Then its `weights` are added. This table runs morale fun first (`library/general/table-rules/combat-prep.md`, "Morale"): `hp` 0.15 at most, `allies_down` 0.75 at least, morale weights +4 at most. The script holds earlier values to that floor, and `profile check` / `encounter check` warn about them. Most creatures need no `morale` at all. An encounter can give a combatant its own `tactics` for that fight (it replaces the stat block's).
 
 ## Player characters
 **Player characters** use their own schema, `combat-profile-pc.schema.json`, in the character sheet's block (template: `library/pf1e/character-sheet.md`). It requires only what the script uses for a PC:

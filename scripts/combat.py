@@ -3431,24 +3431,26 @@ PLAN_KINDS = ("melee", "ranged", "spell", "buff", "heal", "defense", "retreat")
 
 def tactics_weights(st: State, c: Token) -> tuple[dict[str, float], str]:
     """The creature's preference weights from its profile's `tactics` (personality), plus the morale
-    weights once morale breaks (HP at or below `hp` of its maximum, or `allies_down` of its side down).
+    weights once morale breaks (HP at or below `hp` of its maximum, or `allies_down` of its side down),
+    held to the table's fun-first floor (R.MORALE_*: it breaks late, and only tilts the plans).
     Returns (weights by plan kind, a note for the report)."""
     tac = (c.get("profile") or {}).get("tactics") or {}
     weights = {k: float(v) for k, v in (tac.get("weights") or {}).items()}
     notes = [", ".join(f"{k} {v:+g}" for k, v in weights.items())] if weights else []
     mor = tac.get("morale") or {}
     why = []
-    if mor.get("hp") is not None and c["hp"] <= mor["hp"] * (c.get("max_hp") or c["hp"]):
+    if mor.get("hp") is not None and c["hp"] <= min(mor["hp"], R.MORALE_HP) * (c.get("max_hp") or c["hp"]):
         why.append(f"HP {c['hp']}/{c.get('max_hp')}")
     side = [o for o in st["tokens"] if o is not c and not o.get("removed") and o["side"] == c["side"]]
     if mor.get("allies_down") is not None and side:
         down = sum(1 for o in side if o["hp"] <= 0 or is_dead(o))
-        if down / len(side) >= mor["allies_down"]:
+        if down / len(side) >= max(mor["allies_down"], R.MORALE_ALLIES):
             why.append(f"{down}/{len(side)} of its side down")
     if why and mor.get("weights"):
-        for k, v in mor["weights"].items():
-            weights[k] = weights.get(k, 0.0) + float(v)
-        notes.append(f"MORALE BREAKS ({'; '.join(why)}): " + ", ".join(f"{k} {v:+g}" for k, v in mor["weights"].items())
+        added = {k: min(float(v), R.MORALE_WEIGHT) for k, v in mor["weights"].items()}
+        for k, v in added.items():
+            weights[k] = weights.get(k, 0.0) + v
+        notes.append(f"MORALE BREAKS ({'; '.join(why)}): " + ", ".join(f"{k} {v:+g}" for k, v in added.items())
                      + (f" — {mor['note']}" if mor.get("note") else ""))
     return weights, "; ".join(notes)
 
@@ -4899,6 +4901,8 @@ def cmd_encounter(args: Args) -> str:
         _, _, errs = plan_encounter(args.campaign, enc)
         out.append(f"{rel}: {'OK' if not errs else 'ERRORS'} ({title})")
         out += [f"  {e}" for e in errs]
+        out += [f"  warning: {w}" for c in enc.get("combatants") or [] if isinstance(c, dict)
+                for w in R.morale_warnings(c.get("tactics"), f"{c.get('token', '?')}.tactics")]
         bad += bool(errs)
     if args.action == "check" and bad:
         raise CombatError("\n".join(out))

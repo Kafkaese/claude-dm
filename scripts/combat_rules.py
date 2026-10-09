@@ -390,6 +390,33 @@ def resolve_spell_effects(p: dict[str, Any], system: str = "pf1e") -> tuple[dict
     return out, errs, warns
 
 
+# Morale, fun first (library/general/table-rules/combat-prep.md, "Morale"): enemies flee late, not as
+# soon as they're bloodied or a friend falls. Whatever a stat block or encounter says, morale breaks no
+# sooner than at MORALE_HP of its maximum HP or with MORALE_ALLIES of its side down, and the weights it
+# adds are at most MORALE_WEIGHT each (a tilt toward retreating, not an order).
+MORALE_HP = 0.15
+MORALE_ALLIES = 0.75
+MORALE_WEIGHT = 4.0
+
+
+def morale_warnings(tactics: Any, where: str = "tactics") -> list[str]:
+    """What in a `tactics` object the table's morale floor overrides (MORALE_*), as check warnings."""
+    mor = tactics.get("morale") if isinstance(tactics, dict) else None
+    if not isinstance(mor, dict):
+        return []
+    out = []
+    if isinstance(mor.get("hp"), (int, float)) and mor["hp"] > MORALE_HP:
+        out.append(f"{where}.morale.hp {mor['hp']:g}: this table breaks morale late, at {MORALE_HP:g} at most "
+                   f"(the script uses {MORALE_HP:g}); see combat-prep.md, \"Morale\"")
+    if isinstance(mor.get("allies_down"), (int, float)) and mor["allies_down"] < MORALE_ALLIES:
+        out.append(f"{where}.morale.allies_down {mor['allies_down']:g}: this table breaks morale late, at {MORALE_ALLIES:g} "
+                   f"at least (the script uses {MORALE_ALLIES:g})")
+    for k, v in (mor.get("weights") or {}).items():
+        if isinstance(v, (int, float)) and v > MORALE_WEIGHT:
+            out.append(f"{where}.morale.weights.{k} {v:g}: at most {MORALE_WEIGHT:g} (a tilt, not an order; the script caps it)")
+    return out
+
+
 def check_profile(p: Any, system: str = 'pf1e') -> tuple[list[str], list[str]]:
     """Returns (errors, warnings) for a combat profile: the schema plus checks it can't express."""
     kind = p.get("kind") if isinstance(p, dict) else None
@@ -429,6 +456,7 @@ def check_profile(p: Any, system: str = 'pf1e') -> tuple[list[str], list[str]]:
             errs.append(f"{where}.cond: {cond!r} isn't a condition the script knows, so it would do nothing. Use a known "
                         f"name ({', '.join(sorted(CONDITIONS))}), or give a custom one its modifiers in cond_mods "
                         f"(e.g. {{\"atk\": -2}}); put rulings the script can't apply in notes")
+    warns += morale_warnings(p.get("tactics"))
     for n in p.get("full_attack") or []:
         if n not in attacks:
             errs.append(f"full_attack: '{n}' isn't in attacks ({', '.join(attacks) or 'none'})")
