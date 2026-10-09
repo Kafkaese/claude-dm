@@ -22,6 +22,23 @@ Every step you take re-reads everything you've read so far, so the number of ste
 - **Edit in batches:** make the edits to different files in the same turn when they don't depend on each other.
 - Don't re-read a file you just wrote or edited.
 
+## Tool reference
+Everything you need to run the scripts is here: **don't run `-h` or read the schemas**, unless a check fails and its message isn't enough. `<c>` is the campaign slug.
+
+| Task | Command |
+|---|---|
+| Oracle (yes/no, odds set from the facts first) | `python3 scripts/roll.py -c <c> -H --oracle 70 "Does the patrol find the camp?"` |
+| Hidden dice | `python3 scripts/roll.py -c <c> -H "Guards: 1d4+1"` |
+| World pressure, budget, day | `python3 scripts/world.py -c <c> status` |
+| Battle map from a template | `python3 scripts/combat.py -c <c> map <template> --name <name> [--size 24x14] [--density sparse\|medium\|dense] [--time day\|dusk\|night\|inside]` — templates: forest-road, forest, clearing, field, river, village, tavern, cave, ruins, camp, swamp. River only: `--width N` (2-12), `--boat` (a flatboat's deck at the crossing). It saves `dm/combat/maps/<name>.txt` and prints the party squares, ambush spots and lights. Edit the file afterwards if the place needs it (terrain characters: `library/pf1e/house-rules/terrain.md`). |
+| Encounter file | `dm/combat/encounters/<name>.md`: prose plus one ```encounter block. Read `campaigns/_template/dm/combat/encounters/README.md` once per job for the format and a full example. Per combatant: `token`, `name`, `ref`, `pos`, optional `count`, `hidden`, `cr`, `wielding` (what it holds at the start), `tactics`, `dm_plays`. |
+| Check encounters | `python3 scripts/combat.py -c <c> encounter check <name> [<name> …]` (one call for all the files you wrote) |
+| Check stat blocks / sheets | `python3 scripts/combat.py -c <c> profile check <file> [<file> …]` |
+| Find a stat block | `ls library/pf1e/bestiary/ library/pf1e/npcs/ campaigns/<c>/dm/npcs/` (one call), then read the one you need |
+| Item file | `library/pf1e/items/<slug>.json` (a campaign's own: `dm/items/<slug>.json`): `{"name": "Rapier", "category": "weapon", "price": 20, "weight": 2, "source": "<allowed URL>"}`. Categories: weapon, armor, shield, ammunition, gear, tool, alchemical, potion, oil, scroll, wand, staff, rod, ring, wondrous, trade-good, gem, art, mount, vehicle, other. Optional: `unit` (arrows: 20), `consumable`, `charges`, `sells_full`, `weapon`/`armor` stats. Masterwork, +N and size are NOT separate items: shops and inventories set them per entry. |
+| Shop file | `dm/shops/<slug>.json`: `{"name": "Ossa Fennick's smithy", "settlement": "Sable's Landing", "purchase_limit": 500, "buys": ["weapon", "armor", "shield"], "stock": [{"item": "longsword", "qty": 2}, {"item": "longsword", "masterwork": true, "qty": 1}, {"item": "arrows"}], "notes": "…"}`. A stock entry without `qty` has plenty. Check: `python3 scripts/gear.py -c <c> check` (validates every shop and the items it uses) and `python3 scripts/gear.py -c <c> shop <slug>` (prices as the party will see them). |
+| What the party owns | `python3 scripts/gear.py -c <c> show` |
+
 ## Tasks you may get
 
 ### Advance the world
