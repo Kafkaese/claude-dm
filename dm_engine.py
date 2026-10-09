@@ -145,7 +145,8 @@ RECAP_PREFIX = "[Interface recap"
 
 
 COMPACT_PROMPT = ("/compact Keep what running this table needs: the campaign and session number, the current scene and "
-                  "situation, a fight in progress (round, whose turn; the combat tools have the details), of a finished fight only "
+                  "situation, any question the player still has to answer (e.g. their initiative roll for a fight just called: their "
+                  "next message is that answer), a fight in progress (round, whose turn; the combat tools have the details), of a finished fight only "
                   "its outcome (who fell or fled, injuries, loot, prisoners), what the player's "
                   "character did and said recently and what they're trying to do, NPCs met and what was said, rulings, "
                   "corrections and table preferences from this conversation, open threads touched this session, and anything "

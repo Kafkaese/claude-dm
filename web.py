@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import queue
+import re
 import threading
 import time
 import webbrowser
@@ -331,7 +332,8 @@ class Hub:
     def _compact(self) -> None:
         """Between turns: compact the conversation when it's large, sooner right after a fight. Not
         during a fight (a long wait mid-combat, and the DM would lose the rules it just read) unless
-        the context is huge: the fight's end is the better moment."""
+        the context is huge: the fight's end is the better moment. Nor while a fight is being called:
+        the player's next message is their initiative roll, and the summary would lose that."""
         after_fight, self.fight_ended = self.fight_ended, False
         camp = self.campaign()
         st = combat_state(camp) if camp and self.eng.combat_engaged else None
@@ -339,9 +341,20 @@ class Hub:
             if self.eng.context_tokens >= self.eng.COMPACT_AT:
                 self.dbg(f"compaction deferred to the fight's end ({self.eng.context_tokens // 1000}k tokens a call)")
             return
+        if not st and self.calling_fight() and self.eng.context_tokens < self.eng.COMPACT_IN_FIGHT_AT:
+            if self.eng.context_tokens >= self.eng.COMPACT_AT:   # the summary would lose the pending roll
+                self.dbg(f"compaction deferred: a fight is being called ({self.eng.context_tokens // 1000}k tokens a call)")
+            return
         tokens = self.eng.context_tokens
         if self.eng.compact_if_large(after_fight):
             self.dbg(f"compacted the DM's conversation (was {tokens // 1000}k tokens a call)")
+
+    def calling_fight(self) -> bool:
+        """Whether the DM's last reply called a fight and waits for the player's initiative roll
+        (no fight is set up yet)."""
+        with self.lock:
+            last = next((h["text"] for h in reversed(self.history) if h["role"] == "dm"), "")
+        return bool(re.search(r"\binitiative\b", last, re.I))
 
     def _with_recap(self, text: str) -> str:
         """The player's message for the main DM, with what the combat runner played since its last

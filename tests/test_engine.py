@@ -762,6 +762,20 @@ class ReviewFixesEngine(CampaignCase):
         hub._compact()
         self.assertEqual(calls, [False])                              # unless it's huge
 
+    def test_no_compaction_while_a_fight_is_called(self) -> None:
+        import web
+        hub = web.Hub(self.slug)
+        hub.engine = E.Engine(lambda ev: None)
+        calls: list[bool] = []
+        hub.engine.compact_if_large = lambda after_fight=False: calls.append(after_fight) or False   # type: ignore[method-assign]
+        hub.engine.context_tokens = 130_000
+        hub.history = [{"role": "player", "text": "I lunge at him"}, {"role": "dm", "text": "It's a fight. Roll initiative."}]
+        hub._compact()
+        self.assertEqual(calls, [])                                   # the next message is the roll: keep it in context
+        hub.history.append({"role": "dm", "text": "He backs off, hands raised."})
+        hub._compact()
+        self.assertEqual(calls, [False])
+
     def test_history_hides_compaction(self) -> None:
         lines = [{"type": "user", "message": {"content": "/start-session x"}},
                  {"type": "user", "isCompactSummary": True, "message": {"content": "This session is being continued…"}},
