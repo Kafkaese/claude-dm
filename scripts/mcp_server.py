@@ -354,6 +354,9 @@ TOOLS: list[Tool] = [
          "Use this, never override, for corrections.", {}, [], lambda a: ["undo"]),
     Tool("combat_endturn", "The player ended the PC's turn in other words, or together with their actions: the interface plays the next step.",
          {"token": S("the PC's token")}, ["token"], lambda a: ["endturn", a["token"]]),
+    Tool("combat_flee", "Flee the battlefield (house rule): a full-round action, only from the map edge, refused while an enemy threatens the creature. "
+         "It's gone at the start of its next turn, unless a hit or a grapple stops it first (a miss doesn't).",
+         {"token": S(TOK)}, ["token"], lambda a: ["flee", a["token"]]),
     Tool("combat_ask", "Set (or clear) the open question that pauses auto-combat until the player answers.",
          {"question": S("the question"), "clear": B("clear it")}, [],
          lambda a: ["ask"] + ([a["question"]] if a.get("question") else []) + (["--clear"] if a.get("clear") else [])),

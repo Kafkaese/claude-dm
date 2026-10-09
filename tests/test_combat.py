@@ -344,6 +344,61 @@ class MovementLine(CampaignCase):
         self.assertIsNone(self.line())                         # the last actor (Corin) didn't move
 
 
+class Fleeing(CampaignCase):
+    """House rule: fleeing the battlefield is a full-round action, from the map edge, not while
+    threatened; the creature is gone at the start of its next turn unless a hit or a grapple stops it
+    (a miss doesn't)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.new(blank="12x6")
+        self.add("g1", "Gob", "L2", GOBLIN, init=20)          # on the east edge
+        self.add("C", "Corin", "B2", PC_PROFILE, side="pc", init=10)
+        self.run_cmd("next")                                   # g1
+
+    def test_not_while_threatened(self) -> None:
+        self.run_cmd("move", "C", "K2", "--out-of-turn")
+        self.assertIn("threatened by C", self.fail_cmd("flee", "g1"))
+
+    def test_only_from_the_map_edge(self) -> None:
+        import combat
+        self.run_cmd("move", "g1", "F3", "--out-of-turn")
+        self.assertIn("isn't at the map edge (10 ft away)", self.fail_cmd("flee", "g1"))
+        plans = combat.tactical_options(self.state(), self.tok("g1"))
+        self.assertNotIn("flee the battlefield", plans)
+        self.assertIn("(at the map edge: it can flee from there next turn)", plans)
+
+    def test_gone_at_the_start_of_its_next_turn(self) -> None:
+        import combat
+        self.assertIn("flee the battlefield", combat.tactical_options(self.state(), self.tok("g1")))
+        out = self.run_cmd("flee", "g1")
+        self.assertIn("gone at the start of its next turn", out)
+        self.assertIn("took a full-round action", self.fail_cmd("move", "g1", "I2"))
+        self.run_cmd("next")                                   # Corin
+        self.run_cmd("attack", "C", "g1", "--total", "1", "--damage", "5", "--override")   # a miss doesn't stop it
+        self.assertIn("fleeing", [x["name"] for x in self.tok("g1")["conditions"]])
+        out = self.run_cmd("next")
+        self.assertIn("flees the battlefield", out)
+        self.assertTrue(self.tok("g1")["removed"])
+        self.assertTrue(combat.fight_over(self.state()))
+        self.assertIn("g1 Gob: fled", self.run_cmd("end"))
+
+    def test_a_hit_stops_it(self) -> None:
+        self.run_cmd("flee", "g1")
+        self.run_cmd("next")
+        out = self.run_cmd("attack", "C", "g1", "--total", "30", "--damage", "1", "--override")
+        self.assertIn("its flight is stopped", out)
+        self.run_cmd("next")
+        self.assertFalse(self.tok("g1").get("removed"))
+
+    def test_a_grapple_stops_it(self) -> None:
+        self.run_cmd("flee", "g1")
+        self.run_cmd("next")
+        self.run_cmd("move", "C", "K2", "--out-of-turn")
+        out = self.run_cmd("maneuver", "C", "g1", "grapple", "--total", "40")
+        self.assertIn("its flight is stopped", out)
+
+
 class AoOPath(CampaignCase):
     def setUp(self) -> None:
         super().setUp()

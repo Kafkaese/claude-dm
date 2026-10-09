@@ -21,4 +21,5 @@ How to play a non-player creature's turn: its spells, tactics, sight and morale.
   - Hiders move to squares where they're unseen.
   - Creatures with light sensitivity avoid bright light.
 - **Morale:** most creatures flee or surrender when the fight is clearly lost. Use the morale entry in the stat block, if it has one.
+- **Leaving the fight** is `combat_flee` (house rule, `library/pf1e/house-rules/fleeing.md`): a full-round action, only from the map edge and when no enemy threatens it, and it's gone at the start of its next turn unless a hit or a grapple stops it. A creature away from the edge or threatened withdraws toward the edge first (a turn plan offers it). The turn plans offer it when it's possible. Don't just run a creature off the map turn after turn.
 - **Report rolls truthfully** and apply the session-zero mercy policy only as agreed.

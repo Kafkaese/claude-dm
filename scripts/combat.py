@@ -138,6 +138,8 @@ Play
   init TOKEN VALUE                change initiative (delay / ready)
   reveal TOKEN / hide TOKEN       toggle visibility to the players
   remove TOKEN                    take a token off the board (fled, dismissed)
+  flee TOKEN                      flee the battlefield (house rule): a full-round action, from the map edge, not while threatened;
+                                  it's gone at the start of its next turn, unless a hit or a grapple stops it first
   end                             finish the encounter: summary + XP, archive the state
   do "CMD" ["CMD" ...]            run several commands in one call, e.g.
                                   do "move g1 D4" "hp V -6" "next" "show"
@@ -653,6 +655,8 @@ def apply_damage(c: Token, dmg: int, nonlethal: bool = False) -> tuple[int, int]
         c["nonlethal"] = c.get("nonlethal", 0) + dealt
     else:
         c["hp"] -= dealt
+    if R.remove_condition(c, "fleeing"):   # a hit stops the flight (house rule), even one DR absorbs
+        c["flight_stopped"] = "hit"
     return dealt, absorbed
 
 
@@ -1359,11 +1363,11 @@ def cmd_endturn(args: Args, st: State) -> str:
     return f"{c['name']}'s turn is over; the interface plays the next step"
 
 
-ACTOR_ARG = {"wield": "token", "pickup": "token", "ability": "token", "maneuver": "attacker", "attack": "attacker", "move": "token", "cast": "token", "sla": "token", "provoke": "token", "area": "frm", "first-aid": "token"}
+ACTOR_ARG = {"wield": "token", "pickup": "token", "ability": "token", "maneuver": "attacker", "attack": "attacker", "move": "token", "cast": "token", "sla": "token", "provoke": "token", "area": "frm", "first-aid": "token", "flee": "token"}
 
 
 UNDOABLE = ("wield", "pickup", "attack", "damage", "maneuver", "move", "save", "stabilize", "act", "provoke", "endturn", "ability",
-            "first-aid")
+            "first-aid", "flee")
 READ_ONLY = ("show", "dist", "threat", "events", "sight", "actions", "options", "spells", "ask", "briefing")
 
 
@@ -1460,7 +1464,8 @@ NO_ACTIONS = ("stunned", "dazed", "cowering")   # conditions that allow no actio
 def can_act(c: Token) -> bool:
     """Whether the creature can do anything on its turn: conscious (HP 0 or more) and not helpless,
     stunned, dazed or cowering. A turn without actions needs no decision: the engine skips it."""
-    return c["hp"] >= 0 and not R.flag(c, "helpless") and not any(R.has(c, n) for n in NO_ACTIONS)
+    return (c["hp"] >= 0 and not c.get("removed") and not R.flag(c, "helpless")
+            and not any(R.has(c, n) for n in NO_ACTIONS))
 
 
 def surprised(st: State, c: Token) -> bool:
@@ -1516,6 +1521,12 @@ def cmd_next(args: Args, st: State) -> str:
         surprise_over = bool(st.pop("surprise", None))
     st["turn"] = c["token"]
     st.pop("end_turn", None)
+    if R.has(c, "fleeing"):   # declared last turn and nothing stopped it: it's off the battlefield
+        R.remove_condition(c, "fleeing")
+        c["removed"], c["fled"], c["skipped"] = True, True, True   # the last actor's marks stay on the map
+        if not c.get("hidden"):
+            event(st, f"{who(c)} flees the battlefield")
+        return f"Round {st['round']}: {label(c)} ({c['name']}) flees the battlefield: removed (it's gone; no turn)"
     out = [f"Round {st['round']}: {label(c)} ({c['name']}) acts"] + lapsed
     if surprise_over:
         out.append("  the surprise round is over: full actions from now on")
@@ -2662,6 +2673,8 @@ def charge_action(st: State, args: Args, c: Token) -> str | None:
     cmd = args.command
     if getattr(args, "out_of_turn", False) or getattr(args, "override", False) or getattr(args, "aoo", False):
         return None
+    if cmd == "flee":
+        return "full"
     if cmd in ("cast", "sla"):
         t = getattr(args, "time", None) or "standard"
         return "full" if t in ("full", "round") else t
@@ -3877,6 +3890,22 @@ def turn_plans(st: State, c: Token, one: dict[Square, int], routes: dict[Square,
             add("retreat", 0, 0, dest, prov, (f"move {two[dest]} ft away to " if single else f"withdraw {two[dest]} ft to ")
                 + fmt_pos(*dest) + (" (out of their sight)" if out_of_sight else "") + ("" if single else " (full-round)"),
                 idle=0.0 if holding_ok else IDLE)
+        # toward the map edge, the only place it can flee the battlefield from (house rule)
+        here_edge = edge_dist(st, c)
+        exit_sq = min(two, key=lambda q: (edge_dist(st, c, q), _incoming(st, c, q, memo)))
+        if here_edge > 0 and exit_sq not in (start, dest) and edge_dist(st, c, exit_sq) < here_edge:
+            route = routes2.get(exit_sq, [start, exit_sq])
+            prov = provokers(exit_sq) if single else (path_provokers(st, c, route[1:], {}) if len(route) > 2 else [])
+            at_edge = edge_dist(st, c, exit_sq) == 0
+            add("retreat", 0, 0, exit_sq, prov, (f"move {two[exit_sq]} ft to " if single else f"withdraw {two[exit_sq]} ft to ")
+                + fmt_pos(*exit_sq) + (" (at the map edge: it can flee from there next turn)" if at_edge
+                                       else " (toward the map edge, to flee from there)") + ("" if single else " (full-round)"),
+                idle=0.0 if holding_ok else IDLE)
+    # --- flee the battlefield (house rule): only from the map edge, where no enemy threatens it; it
+    # stands there until its next turn, then it's gone (half the exposure: it won't be back for more) ---
+    if foes and not single and edge_dist(st, c) == 0 and not _threatened_by(st, c) and not R.has(c, "fleeing") and action_ok(st, c, "full") is None:
+        add("retreat", 0, 0, start, [], f"flee the battlefield (`flee {c['token']}`: full-round; gone at the start of its "
+            f"next turn unless a hit or a grapple stops it)", exposure=0.5, idle=0.0 if holding_ok else IDLE)
     plans.sort(key=lambda p: -p[0])
     return head + [f"  {i + 1}. {text}" for i, (_s, text) in enumerate(plans[:limit])]
 
@@ -5283,6 +5312,49 @@ def cmd_init(args: Args, st: State) -> str:
     return f"{args.token} initiative → {args.value:g}"
 
 
+def cmd_flee(args: Args, st: State) -> str:
+    """Flee the battlefield (house rule, library/pf1e/house-rules/fleeing.md): a full-round action,
+    only from the map edge and not while an enemy threatens it. It leaves at the start of its next turn (`next` removes it),
+    unless a hit or a grapple stops it first (flight_check). A miss doesn't."""
+    c = token(st, args.token)
+    if edge_dist(st, c):
+        raise CombatError(f"{c['token']} isn't at the map edge ({edge_dist(st, c) * 5} ft away): it can only flee the "
+                          f"battlefield from there. Move it to the edge first, then flee on a later turn")
+    foes = [o["token"] for o in st["tokens"] if (o["side"] in FRIENDLY) != (c["side"] in FRIENDLY)
+            and not o.get("removed") and threatens(o, c)]
+    if foes:
+        raise CombatError(f"{c['token']} is threatened by {', '.join(foes)}: it can't flee the battlefield from there. "
+                          f"Get clear first (a withdraw, `move … --as withdraw`), then flee on a later turn")
+    if R.has(c, "fleeing"):
+        raise CombatError(f"{c['token']} is already fleeing")
+    R.add_condition(st, c, "fleeing")
+    if not c.get("hidden"):
+        event(st, f"{who(c)} turns to flee the battlefield")
+    return (f"{c['token']} flees: gone at the start of its next turn, unless a hit or a grapple stops it first "
+            f"(a miss doesn't)")
+
+
+def edge_dist(st: State, c: Token, at: Square | None = None) -> int:
+    """How many squares the creature (at its position, or at `at`) is from the map edge: 0 on it."""
+    x, y = at or (c["x"], c["y"])
+    return min(x, y, st["w"] - (x + c["size"]), st["h"] - (y + c["size"]))
+
+
+def flight_check(st: State) -> list[str]:
+    """After every command: a fleeing creature that was hit or grappled stops fleeing. Report lines."""
+    out = []
+    for c in st["tokens"]:
+        why = c.pop("flight_stopped", None)
+        if not why and R.has(c, "fleeing") and (R.has(c, "grappled") or R.has(c, "pinned")):
+            R.remove_condition(c, "fleeing")
+            why = "grappled"
+        if why:
+            out.append(f"  {c['token']} was {why}: its flight is stopped (it stays; it may try again on its turn)")
+            if not c.get("hidden"):
+                event(st, f"{who(c)} is stopped from fleeing")
+    return out
+
+
 def cmd_flag(args: Args, st: State) -> str:
     """Reveal, hide or remove a token."""
     c = token(st, args.token)
@@ -5322,7 +5394,7 @@ def cmd_end(args: Args, st: State) -> str:
     xp = sum(XP_BY_CR.get(str(c.get("cr")), 0) for c in defeated)
     out = [f"Encounter over after {st['round']} round(s)."]
     for c in st["tokens"]:
-        status = "removed" if c.get("removed") else f"HP {c['hp']}/{c['max_hp']}"
+        status = ("fled" if c.get("fled") else "removed") if c.get("removed") else f"HP {c['hp']}/{c['max_hp']}"
         cr = f", CR {c['cr']}" if c.get("cr") else ""
         out.append(f"  {c['token']} {c['name']}: {status}{cr}")
     out.append(f"XP from defeated/removed enemies with CR: {xp} (check removed ones: fled ≠ defeated unless overcome)")
@@ -5603,6 +5675,7 @@ def main(argv: list[str] | None = None) -> int:
             fp.add_argument("--force", action="store_true", help="hide even though a PC sees it clearly")
     sub.add_parser("end")
     sub.add_parser("endturn").add_argument("token")
+    sub.add_parser("flee", help="flee the battlefield (house rule): full-round, from the map edge, not while threatened").add_argument("token")
     dp = sub.add_parser("do"); dp.add_argument("cmds", nargs="+")
     mn = sub.add_parser("maneuver"); mn.add_argument("attacker"); mn.add_argument("target")
     mn.add_argument("kind", choices=MANEUVERS)
@@ -5677,7 +5750,7 @@ def main(argv: list[str] | None = None) -> int:
                 "attack": cmd_attack, "log": cmd_log, "events": cmd_events,
                 "ask": cmd_ask, "wield": cmd_wield, "pickup": cmd_pickup, "briefing": cmd_briefing, "damage": cmd_damage, "stabilize": cmd_stabilize, "first-aid": cmd_first_aid, "save": cmd_save, "area": cmd_area,
                 "order": cmd_order, "plan": cmd_plan, "terrain": cmd_terrain, "cast": cmd_cast, "sla": cmd_sla, "spells": cmd_spells,
-                "provoke": cmd_provoke, "endturn": cmd_endturn, "maneuver": cmd_maneuver,
+                "provoke": cmd_provoke, "endturn": cmd_endturn, "flee": cmd_flee, "maneuver": cmd_maneuver,
                 "light": cmd_light, "sight": cmd_sight, "act": cmd_act, "surprise": cmd_surprise, "ability": cmd_ability,
                 "actions": lambda a, st: action_status(st, token(st, a.token)).strip(), "options": cmd_options}
     if args.command == "profile":
@@ -5734,13 +5807,13 @@ def main(argv: list[str] | None = None) -> int:
                                   f"{why}. If a feat or ability allows it, add --override")
         result = handlers[args.command](args, st)
         if cost and actor:
-            what = {"attack": f"attack {args.target}", "maneuver": f"{getattr(args, 'kind', '')} {getattr(args, 'target', '')}",
+            what = {"attack": f"attack {getattr(args, 'target', '')}", "flee": "flee the battlefield", "maneuver": f"{getattr(args, 'kind', '')} {getattr(args, 'target', '')}",
                     "cast": f"cast {getattr(args, 'spell', '')}", "sla": f"use {getattr(args, 'name', '')}",
                     "area": "area effect"}.get(args.command, args.command)
             record_action(st, actor, cost, what)
         if actor and st.get("turn") == actor["token"] and args.command in ("attack", "maneuver", "cast", "sla", "area", "move", "ability"):
             result += "\n" + action_status(st, actor)
-        ended = clean_grapples(st) + reveal_observed(st)
+        ended = clean_grapples(st) + reveal_observed(st) + flight_check(st)
         if ended:
             result += "\n" + "\n".join(ended)
         if args.command != "end":

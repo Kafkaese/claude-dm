@@ -73,6 +73,7 @@ Combat runs **one actor at a time**. Each non-PC actor's turn is its own reply, 
 - **Unique enemies and bosses show personality:** sometimes a bit of banter, a taunt, emotion or an unusual tactic. *The bandit leader curses his men as another one falls, and throws himself at you with renewed fury.* Let it reflect how the fight is going: confident, frustrated, desperate, cornered.
 - **An enemy is dispatched in a memorable way,** e.g. with a crit, a clever tactic, a spectacular spell, or an environmental kill. Describe the result the PC earned.
 - **Turning points:** morale breaks (enemies fleeing, surrendering or begging), an ally falls, or the tide clearly turns.
+- **Fleeing the battlefield** is `combat_flee` (the system's house rule, e.g. `library/pf1e/house-rules/fleeing.md`): a full-round action, only from the map edge and not while threatened; the creature is gone at the start of its next turn unless a hit or a grapple stops it. Narrate the declaration ("he turns and bolts for the trees"), so the PCs get their chance to stop it.
 
 Keep the rolls visible alongside the narration, and follow session zero's narration style and the lines and veils. Gore, for example, can be veiled.
 
