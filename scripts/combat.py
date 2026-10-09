@@ -24,6 +24,7 @@ Every action reports what's left. --override: a feat or ability changes it (Spri
                                   any other action ("draw weapon", "drink potion"); "stand up" removes
                                   prone and provokes; an immediate action off-turn takes the next swift
   move TOKEN POS --as charge|withdraw|run   movement as part of that full-round action
+                                  (a charge: --target T; straight, clear, to the closest square it can attack T from)
   actions TOKEN                   what the creature has left this turn
   undo                            take back the last command if it was the player's input (e.g. a roll
                                   they correct: forgot flanking), then enter it again. NPC rolls stand
@@ -875,8 +876,10 @@ def _attack(args: Args, st: State) -> str:
                                   + ", or attack with a ranged weapon")
     if args.charge and not args.out_of_turn and not getattr(args, "override", False) and st.get("turn") == a["token"]:
         if a.get("move_mode") != "charge" or (a.get("mode_feet") or 0) < 10:
-            raise CombatError(f"a charge moves at least 10 ft first, in a straight line: `move {a['token']} <square> --as charge`, "
-                              f"then `attack … --charge`")
+            raise CombatError(f"a charge moves at least 10 ft first, in a straight line: `move {a['token']} <square> --as charge "
+                              f"--target {t['token']}`, then `attack … --charge`")
+        if a.get("charge_at") and a["charge_at"] != t["token"]:
+            raise CombatError(f"{a['token']} charged {a['charge_at']}: the charge's attack goes against it")
     shots: dict[str, int] = {}   # ammunition this command uses, checked before anything is rolled
     for e in entries:
         found = ammo_key(a, e[0])
@@ -1531,7 +1534,7 @@ def cmd_next(args: Args, st: State) -> str:
     if c.get("performing") and c.get("performed_round", 0) < st["round"] - 1:   # not kept up: it ended
         c.pop("performing", None)
         out.append(f"  {c['token']}'s performance has ended (not maintained)")
-    for k in ("turn_actions", "move_mode", "mode_feet", "chain_feet", "chain_moves", "move_closed", "turn_path", "diag_parity"):
+    for k in ("turn_actions", "move_mode", "mode_feet", "charge_at", "chain_feet", "chain_moves", "move_closed", "turn_path", "diag_parity"):
         c.pop(k, None)
     if c.get("immediate_used"):   # an immediate action since its last turn took this turn's swift
         turn_actions(c)["swift"] = f"immediate action before this turn ({c.pop('immediate_used')})"
@@ -2447,6 +2450,19 @@ def cmd_move(args: Args, st: State) -> str:
     elif charged:
         if c.get("stepped"):
             raise CombatError(f"{c['token']} took a 5-foot step this turn, so it can't move any further distance")
+        if mode == "charge":
+            if c.get("move_mode") == "charge":
+                raise CombatError(f"{c['token']} is already charging: a charge is one straight move, then the attack")
+            if not args.target:
+                raise CombatError(f"a charge names its target: `move {c['token']} {args.pos} --as charge --target TOKEN`")
+            t = token(st, args.target)
+            why = charge_problem(st, c, t, dest)
+            if why:
+                raise CombatError(f"{c['token']} can't charge {t['token']} to {fmt_pos(*dest)}: {why} (nothing moved). "
+                                  f"`options {c['token']}` lists its charge lanes")
+            if c["size"] == 1:
+                route = straight_route(c, dest)
+            c["charge_at"] = t["token"]
         if mode:
             limit = {"charge": 2, "withdraw": 2, "run": 4}[mode] * speed
             if c.get("move_mode") not in (None, mode):
@@ -3147,6 +3163,61 @@ def _needs(st: State, a: Token, t: Token, w: dict[str, Any], kind: str, charge: 
     delta, ac, notes, _dm, miss = attack_mods(st, a, t, kind, bool(w.get("touch")), charge, w)
     b = w["bonus"][0] if isinstance(w.get("bonus"), list) else (w.get("bonus") or 0)
     return max(2, min(20, ac - (b + delta))), miss, notes
+
+
+def charge_problem(st: State, c: Token, t: Token, dest: Square) -> str | None:
+    """Why `c` can't charge `t` by moving to dest, or None. CRB pg. 198: at least 10 ft, at most
+    double speed, directly toward the opponent along a clear path (nothing that hinders movement,
+    no creature in the way, allies included), ending in the closest space from which it can attack."""
+    start = (c["x"], c["y"])
+    d = 5 * R.sq_dist(start, dest)
+    if d < 10:
+        return "a charge moves at least 10 ft"
+    if d > 2 * (c.get("speed") or 30):
+        return f"a charge moves at most double its speed ({2 * (c.get('speed') or 30)} ft)"
+    with _placed(c, dest):
+        if not threatens(c, t):
+            return f"it couldn't attack {t['token']} from there"
+    if not _straight_clear(st, c, dest):
+        return "the line isn't clear (difficult terrain, an obstacle or a creature, allies included, is in the way)"
+    closest = charge_squares(st, c, t)
+    if dest not in closest:
+        return (f"a charge ends on the closest square from which it can attack ({', '.join(fmt_pos(*q) for q in sorted(closest))}"
+                f", {5 * R.sq_dist(start, next(iter(closest)))} ft)") if closest else "no square to attack it from"
+    return None
+
+
+def charge_squares(st: State, c: Token, t: Token) -> set[Square]:
+    """The squares closest to `c` from which it could attack `t` (free, passable footprint)."""
+    start, best = (c["x"], c["y"]), None
+    found: set[Square] = set()
+    for x in range(st["w"] - c["size"] + 1):
+        for y in range(st["h"] - c["size"] + 1):
+            q = (x, y)
+            d = R.sq_dist(start, q)
+            if q == start or (best is not None and d > best):
+                continue
+            if any(cost(st, *cell) is None or occupied(st, c, *cell) for cell in cells(c, q)):
+                continue
+            with _placed(c, q):
+                if not threatens(c, t):
+                    continue
+            if best is None or d < best:
+                best, found = d, set()
+            found.add(q)
+    return found
+
+
+def straight_route(c: Token, dest: Square) -> list[Square]:
+    """The squares a straight move from c's square to dest passes, in order (a charge; one-square
+    creatures; a larger one keeps its path, which _straight_clear has checked)."""
+    with _placed(c, dest):
+        p2 = R.center(c)
+    route = [(c["x"], c["y"])]
+    for sq in R.segment_cells(R.center(c), p2, 0.1) + [dest]:
+        if sq != route[-1]:
+            route.append(sq)
+    return route
 
 
 def _straight_clear(st: State, c: Token, dest: Square) -> bool:
@@ -3873,7 +3944,7 @@ def tactical_options(st: State, c: Token, area: str | None = None, area_range: i
                 with _placed(c, sq):
                     if not threatens(c, t):
                         continue
-                if not _straight_clear(st, c, sq):
+                if charge_problem(st, c, t, sq):
                     continue
                 with _placed(c, sq):
                     need, miss, _ = _needs(st, c, t, w, "melee", charge=True)
@@ -3882,7 +3953,8 @@ def tactical_options(st: State, c: Token, area: str | None = None, area_range: i
                 need, d, sq, miss = min(lanes)
                 out.append(f"    charge: to {fmt_pos(*sq)} ({d} ft, straight and clear), hits on {need}+ (incl. +2)"
                            + (f", {miss}% miss" if miss else "") + "; −2 AC until its next turn; full-round"
-                           + (f"; provokes from {', '.join(here_threat)}" if here_threat else ""))
+                           + (f"; provokes from {', '.join(here_threat)}" if here_threat else "")
+                           + f" (`move {c['token']} {fmt_pos(*sq)} --as charge --target {t['token']}`, then `attack … --charge`)")
         for name, w in ranged:
             rrows = []
             for sq, feet in one.items():
@@ -5585,6 +5657,7 @@ def main(argv: list[str] | None = None) -> int:
     op.add_argument("--area", help='also place an area effect, e.g. "burst 20", "cone 15"'); op.add_argument("--range", type=int, help="burst range in ft")
     op.add_argument("--target", help="only this target")
     m.add_argument("--as", dest="as_", choices=["charge", "withdraw", "run"], help="movement as part of a full-round charge, withdraw or run")
+    m.add_argument("--target", help="a charge: whom it charges (the lane must be straight and clear, to the closest square it can attack from)")
     for nm in ("cast", "sla"):
         sub.choices[nm].add_argument("--time", choices=["standard", "full", "round", "swift", "immediate"],
                                      help="casting time (default standard; quickened = swift)")

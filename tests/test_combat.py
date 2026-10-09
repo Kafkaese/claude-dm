@@ -226,10 +226,27 @@ class ActionEconomy(CampaignCase):
     def test_charge_is_one_full_round_action(self) -> None:
         self.run_cmd("move", "g1", "M5", "--out-of-turn")
         self.run_cmd("next")
-        self.run_cmd("move", "g1", "C3", "--as", "charge")
+        self.run_cmd("move", "g1", "C3", "--as", "charge", "--target", "C")
         out = self.run_cmd("attack", "g1", "C", "--with", "spear", "--charge")
         self.assertIn("+2 charge", out)
         self.assertIn("actions left for g1: swift", out)
+
+    def test_charge_is_straight_clear_and_to_the_closest_square(self) -> None:
+        self.add("a1", "Ally", "H4", GOBLIN, init=1)               # g1's ally, in the lane
+        self.run_cmd("move", "g1", "M4", "--out-of-turn")
+        self.run_cmd("next")
+        self.assertIn("names its target", self.fail_cmd("move", "g1", "C2", "--as", "charge"))
+        self.assertIn("isn't clear", self.fail_cmd("move", "g1", "C3", "--as", "charge", "--target", "C"))
+        self.assertIn("closest square", self.fail_cmd("move", "g1", "B1", "--as", "charge", "--target", "C"))
+        self.assertIn("nothing moved", self.fail_cmd("move", "g1", "B1", "--as", "charge", "--target", "C"))
+        self.assertEqual((self.tok("g1")["x"], self.tok("g1")["y"]), (12, 3))
+        self.assertIn("closest square", self.fail_cmd("move", "g1", "C2", "--as", "charge", "--target", "C"))   # 55 ft, C3 is 50
+        self.run_cmd("remove", "a1")
+        self.run_cmd("move", "g1", "C3", "--as", "charge", "--target", "C")   # now clear
+        self.assertIn("already charging", self.fail_cmd("move", "g1", "D2", "--as", "charge", "--target", "C"))
+        self.add("D", "Other", "B3", PC_PROFILE, side="pc", init=2)
+        self.assertIn("goes against it", self.fail_cmd("attack", "g1", "D", "--with", "spear", "--charge"))
+        self.assertIn("+2 charge", self.run_cmd("attack", "g1", "C", "--with", "spear", "--charge"))
 
     def test_immediate_takes_next_swift(self) -> None:
         self.run_cmd("next")

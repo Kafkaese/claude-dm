@@ -201,8 +201,10 @@ TOOLS: list[Tool] = [
              "size": "--size", "reach": "--reach", "speed": "--speed", "main_dm": "--main-dm", "tactics": "--tactics", "wielding": "--wielding"})),
     Tool("combat_move", "Move a token along the cheapest legal path. NPC attacks of opportunity are rolled; a PC's chance opens a question.",
          {"token": S(TOK), "to": S(SQ), "step": B("a 5-foot step (no AoO)"), "no_aoo": B("don't roll NPC AoOs (deliberate exception)"),
-          "as": S("movement as part of this full-round action", ["charge", "withdraw", "run"]), "out_of_turn": OOT, "override": B("don't charge move actions")},
-         ["token", "to"], lambda a: ["move", a["token"], a["to"]] + flags(a, {"step": "--step", "no_aoo": "--no-aoo", "as": "--as",
+          "as": S("movement as part of this full-round action", ["charge", "withdraw", "run"]),
+          "target": S("a charge: whom it charges (a straight, clear line to the closest square it can attack from; the tool checks)"),
+          "out_of_turn": OOT, "override": B("don't charge move actions")},
+         ["token", "to"], lambda a: ["move", a["token"], a["to"]] + flags(a, {"step": "--step", "no_aoo": "--no-aoo", "as": "--as", "target": "--target",
                                                                                "out_of_turn": "--out-of-turn", "override": "--override"})),
     Tool("combat_wield", "Draw a weapon (attacks need the weapon in hand): a move action; with BAB +1 it rides on a move action "
          "spent on movement this turn; Quick Draw: free. drop: let go of what's in the way first (free, it falls to the ground); "
