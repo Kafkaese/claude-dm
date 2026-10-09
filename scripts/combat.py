@@ -1028,10 +1028,13 @@ def _attack_once(args: Args, st: State, a: Token, t: Token, name: str | None, bo
 
 def cmd_damage(args: Args, st: State) -> str:
     """Apply the player's damage roll to the hit their last attack scored (`attack … --total` without
-    --damage): DR, minimum damage and the log line, as if it had come with the attack."""
+    --damage): DR, minimum damage and the log line, as if it had come with the attack. Or the damage
+    or healing roll a PC's spell waits for (`cast` without --amount: spell_roll)."""
     pend = st.get("pending_damage")
     if not pend or pend["attacker"] != args.token:
         raise CombatError(f"{args.token} has no hit waiting for damage (`attack {args.token} TARGET --total N` first)")
+    if pend.get("spell"):
+        return spell_roll(args, st, pend)
     a, t = token(st, pend["attacker"]), token(st, pend["target"])
     dmg, nonlethal, dm = args.amount, pend["nonlethal"] or bool(args.nonlethal), []
     if pend.get("sneak"):
@@ -2048,9 +2051,8 @@ def cast_pc(args: Args, st: State, c: Token) -> str:
             raise CombatError(f"{args.spell} needs a touch attack: ask the player for it (d20 + their ranged/melee touch "
                               f"bonus) and pass total N (nothing was applied)")
         rolls = [x for x in (args.dmg, getattr(args, "heal", None)) if x]
-        if rolls and getattr(args, "amount", None) is None:
-            raise CombatError(f"the player rolls {args.spell}'s {'damage' if args.dmg else 'healing'} ({rolls[0]}): "
-                              f"ask for it and pass amount N (nothing was applied)")
+        if rolls and getattr(args, "amount", None) is None:   # the player's roll: hit or miss first, then it waits
+            args.defer_roll = (rolls[0], "damage" if args.dmg else "healing")
         args.sr_cl = cl
         if getattr(args, "sr", None) is None:
             args.sr = True
@@ -2167,6 +2169,44 @@ def resists(st: State, c: Token, t: Token, args: Args, shown: str) -> tuple[bool
     return not ok, lines
 
 
+def defer_roll(st: State, args: Args, c: Token, t: Token | None, name: str, mult: int, resolved: bool) -> list[str]:
+    """A PC's spell whose damage or healing the player rolls: once its touch attack hit (and spell
+    resistance is overcome), or before an area is resolved, the rest waits for their roll
+    (`damage TOKEN N`), with the question set so the turn can't end first. `resolved`: the touch
+    attack and spell resistance are done, so the replay skips them."""
+    expr, what = args.defer_roll
+    keep: dict[str, Any] = {}
+    for k, v in vars(args).items():
+        if k in ("defer_roll", "touch_attack"):
+            continue
+        try:
+            json.dumps(v)
+        except TypeError:
+            continue
+        keep[k] = v
+    st["pending_damage"] = {"attacker": c["token"], "target": t["token"] if t else None, "spell": keep,
+                            "name": name, "resolved": resolved, "mult": mult}
+    crit = f", critical hit: roll the dice ×{mult}" if mult > 1 else ""
+    st["awaiting"] = f"{c['name']}: roll {what} for the spell ({expr}{crit})"
+    head = ("CRITICAL HIT. " if mult > 1 else "HIT. ") if getattr(args, "touch_attack", None) else ""
+    return [f"{head}Ask the player for the {what} ({expr}{crit}), then `damage {c['token']} N` (question set). "
+            f"Nothing else was applied yet. Don't roll it yourself."]
+
+
+def spell_roll(args: Args, st: State, pend: dict[str, Any]) -> str:
+    """The player's damage or healing roll for a spell that waited for it (defer_roll): the rest of
+    the spell's effect, as if the roll had come with the cast."""
+    c = token(st, pend["attacker"])
+    ns = argparse.Namespace(**pend["spell"])
+    ns.amount, ns.touch_attack, ns.defer_roll = args.amount, None, None
+    if pend.get("resolved"):
+        ns.sr = False   # spell resistance was already overcome
+    st.pop("pending_damage", None)
+    if str(st.get("awaiting", "")).startswith(f"{c['name']}: roll"):
+        st.pop("awaiting", None)
+    return "\n".join(_spell_effect(ns, st, c, pend["name"], ns.dc))
+
+
 def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) -> list[str]:
     """The effect part of cast/sla: an area template or a single target, with save and damage.
     The player's log and questions say "the spell" / "the ability": naming it is a Spellcraft matter."""
@@ -2178,6 +2218,8 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
         m = re.match(r"^\s*(burst|cone|line)\s+(\d+)\s*$", args.area)
         if not m:
             raise CombatError('--area must look like "cone 15", "burst 20" or "line 60"')
+        if getattr(args, "defer_roll", None):
+            return out + defer_roll(st, args, c, None, name, 1, resolved=False)
         ns = argparse.Namespace(shape=m.group(1), feet=int(m.group(2)), at=args.at, frm=c["token"],
                                 toward=args.toward, save=args.save, dc=dc, dmg=args.dmg, half=args.half,
                                 name=name, no_slot=True, log_name=shown, cond=getattr(args, "cond", None), cond_rounds=getattr(args, "cond_rounds", None),
@@ -2201,6 +2243,8 @@ def _spell_effect(args: Args, st: State, c: Token, name: str, dc: int | None) ->
         out += lines
         if blocked:
             return out
+        if getattr(args, "defer_roll", None):
+            return out + defer_roll(st, args, c, t, name, mult, resolved=True)
         if getattr(args, "heal", None):   # cure spells and the like: roll it and heal the target
             amount, detail = _rolled(args, args.heal)
             before = t["hp"]

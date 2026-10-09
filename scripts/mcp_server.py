@@ -215,9 +215,10 @@ TOOLS: list[Tool] = [
          "a move action that provokes attacks of opportunity. It's held ready if a hand is free.",
          {"token": S(TOK), "item": S("the item"), "out_of_turn": OOT},
          ["token", "item"], lambda a: ["pickup", a["token"], a["item"]] + flags(a, {"out_of_turn": "--out-of-turn"})),
-    Tool("combat_damage", "The player's damage roll for the hit their last attack scored (combat_attack with `total` and no `damage`). "
+    Tool("combat_damage", "The player's damage roll for the hit their last attack scored (combat_attack with `total` and no `damage`), "
+         "or the damage or healing roll their last spell waits for (combat_cast without `amount`). "
          "Applies DR, minimum damage and the log line.",
-         {"token": S("the PC's token"), "amount": I("the player's damage total"), "nonlethal": B("nonlethal damage")},
+         {"token": S("the PC's token"), "amount": I("the player's damage (or a spell's damage or healing) roll"), "nonlethal": B("nonlethal damage")},
          ["token", "amount"], lambda a: ["damage", a["token"], str(a["amount"])] + flags(a, {"nonlethal": "--nonlethal"})),
     Tool("combat_attack", "An attack. NPC: `with` names a profile attack (the script rolls). PC: `total` (and `damage`, if the player already gave it) are the player's rolls; "
          "without `damage` a hit waits for the player's damage roll (then combat_damage). Never invent a PC's damage. Tracked ammunition is counted. "
@@ -263,7 +264,7 @@ TOOLS: list[Tool] = [
           "cl": I("PC: caster level, if not on the sheet"),
           "sr_check": I("PC: the player's caster level check (d20 + CL) when a target has spell resistance"),
           "total": I("PC touch spell (ray of frost, a touch): the player's touch attack total"),
-          "amount": I("PC: the player's rolled damage or healing for the spell (they roll its dice)"), **EFFECT},
+          "amount": I("PC: the player's rolled damage or healing for the spell, if they gave it; without it a hit waits for their roll (combat_damage)"), **EFFECT},
          ["caster", "spell"],
          lambda a: (["sla", a["caster"], a["spell"]] + flags(a, EFFECT_FLAGS) if a.get("sla") else
                     ["cast", a["caster"], a["spell"]] + flags(a, {"level": "--level", "class": "--class", "cl": "--cl",

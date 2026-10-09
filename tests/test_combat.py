@@ -1673,13 +1673,43 @@ class PlayerCasts(CampaignCase):
     def test_ray_takes_the_players_rolls(self) -> None:
         import combat
         self.assertIn("ask the player for it", self.fail_cmd("cast", "I", "ray of frost", "--target", "u1", "--amount", "2"))
-        self.assertIn("the player rolls", self.fail_cmd("cast", "I", "ray of frost", "--target", "u1", "--total", "20"))
         before = combat.token(self.state(), "u1")["hp"]
         out = self.run_cmd("cast", "I", "ray of frost", "--target", "Dessick", "--total", "20", "--amount", "2")
         self.assertIn("the player's 20", out)
         self.assertEqual(combat.token(self.state(), "u1")["hp"], before - 2)
         miss = self.run_cmd("cast", "I", "ray of frost", "--target", "u1", "--total", "1", "--amount", "3", "--override")
         self.assertIn("miss", miss)
+
+    def test_hit_first_then_the_damage(self) -> None:
+        import combat
+        before = combat.token(self.state(), "u1")["hp"]
+        out = self.run_cmd("cast", "I", "ray of frost", "--target", "u1", "--total", "20")
+        self.assertIn("HIT. Ask the player for the damage (1d3)", out)
+        st = self.state()
+        self.assertEqual(st["awaiting"], "Ilvan: roll damage for the spell (1d3)")   # End turn waits for it
+        self.assertEqual(combat.token(st, "u1")["hp"], before)
+        out = self.run_cmd("damage", "I", "2")
+        self.assertIn("the player's roll 2", out)
+        st = self.state()
+        self.assertEqual(combat.token(st, "u1")["hp"], before - 2)
+        self.assertNotIn("awaiting", st)
+        self.assertNotIn("pending_damage", st)
+        self.assertIn("no hit waiting", self.fail_cmd("damage", "I", "2"))
+
+    def test_a_miss_asks_for_nothing(self) -> None:
+        out = self.run_cmd("cast", "I", "ray of frost", "--target", "u1", "--total", "1")
+        self.assertIn("miss", out)
+        self.assertNotIn("Ask the player", out)
+        self.assertNotIn("awaiting", self.state())
+
+    def test_an_area_waits_for_the_damage(self) -> None:
+        import combat
+        self.write("spells/burning-hands.md", '# BH\n```spell-effect\n{"target": "area", "area": "cone 15", "save": "ref", "half": true, "dmg": "1d4"}\n```\n')
+        out = self.run_cmd("cast", "I", "burning hands", "--toward", "D2", "--dc", "15")
+        self.assertIn("Ask the player for the damage (1d4)", out)
+        self.assertEqual(combat.token(self.state(), "a1")["hp"], combat.token(self.state(), "a1")["max_hp"] - 5)
+        out = self.run_cmd("damage", "I", "4")
+        self.assertIn("damage 1d4 → the player's roll 4 = 4", out)       # now the cone is resolved
 
     def test_healing_is_the_players_roll(self) -> None:
         import combat
