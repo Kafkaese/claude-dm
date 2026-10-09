@@ -598,6 +598,8 @@ class ClosingSession(CampaignCase):
                 self.assertIn('"More rooftop chases"', sent[2])
                 self.assertIn("Start at Step 2", sent[2])
                 self.assertIn("No fight is in progress", sent[2])          # so the close doesn't go looking for one
+                self.assertIn("The files the close needs, read for you", sent[2])
+                self.assertIn("I follow the smuggler.", sent[2])             # the transcript is in the bundle
                 self.assertIn("A fight is still in progress", E.close_prompt(self.slug, 1, "", None, fight=True))
                 transcript = Path(d) / "transcripts" / f"{self.slug}-session-01.md"
                 self.assertIn(str(transcript), sent[2])
@@ -953,3 +955,11 @@ class CastList(CampaignCase):
         self.assertIn("Thug (t1, enemy): Thug · gear its stat block lists", text)
         self.assertIn("leather armor, club", text)
         self.assertIn(text, E._step_context(self.state(), next(t for t in self.state()["tokens"] if t["token"] == "t1")))
+
+
+class SessionClosed(CampaignCase):
+    def test_sessions_played_is_incremented_once(self) -> None:
+        self.write("campaign.md", "# Test\n**System:** pf1e\n- **Sessions played:** 4\n")
+        self.assertTrue(E.mark_session_closed(self.slug, 5))
+        self.assertIn("**Sessions played:** 5", (self.dir / "campaign.md").read_text())
+        self.assertFalse(E.mark_session_closed(self.slug, 5))                # the DM already did it, or a second call

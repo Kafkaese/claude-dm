@@ -5289,6 +5289,89 @@ def cmd_sheet_hp(args: Args) -> int:
     return 0
 
 
+XP_LINE = re.compile(r"^- \*\*XP:\*\*[^\n]*\n?", re.M)
+XP_TABLE: Path | None = None   # tests point this at their own table (the library's is local data)
+
+
+def xp_table(campaign: str) -> tuple[str, list[int]]:
+    """The campaign's XP track (session zero's "Advancement: … XP track", default medium) and the XP
+    needed for levels 2, 3, … from the library's table (library/<system>/rules/xp-and-advancement.md)."""
+    zero = PROJECT / "campaigns" / campaign / "players" / "session-zero.md"
+    m = re.search(r"\b(slow|medium|fast)\s+XP track", zero.read_text(encoding="utf-8"), re.I) if zero.exists() else None
+    track = (m.group(1) if m else "medium").lower()
+    table = XP_TABLE or PROJECT / "library" / campaign_system(campaign) / "rules" / "xp-and-advancement.md"
+    rows: list[tuple[int, int]] = []
+    if table.exists():
+        text = table.read_text(encoding="utf-8")
+        head = re.search(r"^\|\s*Level\s*\|(.*)$", text, re.M)
+        cols = [c.strip().lower() for c in head.group(1).split("|")] if head else []
+        if track in cols:
+            for lvl, rest in re.findall(r"^\|\s*(\d+)\s*\|(.*)$", text[head.end():] if head else "", re.M):
+                cells = [c.strip().replace(",", "") for c in rest.split("|")]
+                if cells[cols.index(track)].isdigit():
+                    rows.append((int(lvl), int(cells[cols.index(track)])))
+    return track, [xp for _lvl, xp in sorted(rows)]
+
+
+def cmd_sheet_xp(args: Args) -> int:
+    """Award XP outside the fight bookkeeping (the close of a session): for each character sheet (or
+    the whole party), the sheet's XP line and a changelog line with the session, the reason, the new
+    total and HP; it says who can level up. The DM decides the award; this writes it."""
+    camp_dir = PROJECT / "campaigns" / args.campaign
+    sheets = [p for p in sorted((camp_dir / "players" / "characters").glob("*.md")) if p.name.lower() != "readme.md"]
+    if args.characters.lower() not in ("party", "all"):
+        wants = [w.strip().lower() for w in args.characters.split(",") if w.strip()]
+        picked = []
+        for w in wants:
+            hits = [p for p in sheets if w in p.stem or w in p.read_text(encoding="utf-8").splitlines()[0].lower()]
+            if len(hits) != 1:
+                print(f"combat error: {'several characters match' if hits else 'no character'} {w!r} "
+                      f"(sheets: {', '.join(p.stem for p in sheets)})", file=sys.stderr)
+                return 1
+            picked.append(hits[0])
+        sheets = picked
+    track, needed = xp_table(args.campaign)
+    played = re.search(r"\*\*Sessions played:\*\*\s*(\d+)", (camp_dir / "campaign.md").read_text(encoding="utf-8"))
+    nn = args.session or (int(played.group(1)) if played else 0) + 1
+    out = []
+    for sheet in sheets:
+        text = sheet.read_text(encoding="utf-8")
+        name = text.splitlines()[0].lstrip("# ").split("—")[0].strip()
+        old = XP_LINE.search(text)
+        if old:
+            cur = int(re.search(r"(\d[\d,]*)", old.group(0)[8:]).group(1).replace(",", ""))   # type: ignore[union-attr]
+        else:   # first award through the tool: start from the last total in the changelog
+            totals = re.findall(r"total (\d[\d,]*)\s*/", text)
+            cur = int(totals[-1].replace(",", "")) if totals else 0
+        new = cur + args.xp
+        lvl_m = re.search(r"\*\*Race / Class / Level:\*\*[^\n]*?(\d+)\s*$", text, re.M)
+        level = int(lvl_m.group(1)) if lvl_m else 1
+        nxt = needed[level - 1] if needed and level - 1 < len(needed) else None   # needed[0] is level 2
+        up = nxt is not None and new >= nxt
+        xp_text = f"- **XP:** {new:,} / {nxt:,} ({track} track, level {level + 1} at {nxt:,})" if nxt else f"- **XP:** {new:,}"
+        if old:
+            text = text[:old.start()] + xp_text + "\n" + text[old.end():]
+        else:
+            anchor = re.search(r"^- \*\*Race / Class / Level:\*\*[^\n]*\n", text, re.M)
+            at = anchor.end() if anchor else len(text.splitlines()[0]) + 1
+            text = text[:at] + xp_text + "\n" + text[at:]
+        hp = HP_LINE.search(text)
+        line = (f"- {datetime.now():%Y-%m-%d}: session {nn} — +{args.xp} XP ({args.why}), total {new:,}"
+                + (f"/{nxt:,} toward level {level + 1}" if nxt else "") + (f". HP {hp.group(2)}/{hp.group(4)}" if hp else "")
+                + (". CAN LEVEL UP." if up else "."))
+        ch = re.search(r"^## Changelog[^\n]*\n", text, re.M)
+        if ch:
+            nxt_h = re.search(r"^## ", text[ch.end():], re.M)
+            end = ch.end() + (nxt_h.start() if nxt_h else len(text) - ch.end())
+            text = text[:end].rstrip("\n") + "\n" + line + "\n" + ("\n" + text[end:] if nxt_h else "")
+        else:
+            text = text.rstrip("\n") + "\n\n## Changelog\n" + line + "\n"
+        sheet.write_text(text, encoding="utf-8")
+        out.append(f"{name}: +{args.xp} XP → {new:,}" + (f" / {nxt:,}" if nxt else "") + (" — CAN LEVEL UP" if up else ""))
+    print("\n".join(out))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Command-line entry point. Returns the process exit code."""
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -5338,6 +5421,8 @@ def main(argv: list[str] | None = None) -> int:
     m.add_argument("--step", action="store_true", help="a 5-foot step (no AoO)")
     m.add_argument("--no-aoo", action="store_true", help="don't roll NPC attacks of opportunity")
     sb = sub.add_parser("stabilize"); sb.add_argument("token"); sb.add_argument("--total", type=int)
+    sx = sub.add_parser("sheet-xp"); sx.add_argument("characters", help="'party', or names separated by commas")
+    sx.add_argument("xp", type=int); sx.add_argument("--why", required=True); sx.add_argument("--session", type=int)
     sh = sub.add_parser("sheet-hp"); sh.add_argument("character"); sh.add_argument("change", help="+N, -N or =N")
     sh.add_argument("--why", required=True)
     fa = sub.add_parser("first-aid"); fa.add_argument("token"); fa.add_argument("target")
@@ -5475,6 +5560,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_profile(args)
     if args.command == "sheet-hp":
         return cmd_sheet_hp(args)
+    if args.command == "sheet-xp":
+        return cmd_sheet_xp(args)
     if args.command == "do":
         import shlex
         for c in args.cmds:

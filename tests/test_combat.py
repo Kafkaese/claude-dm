@@ -1693,3 +1693,39 @@ class PlayerCasts(CampaignCase):
         self.assertEqual(combat.token(self.state(), "harl dessick")["token"], "u1")
         self.assertEqual(combat.token(self.state(), "dessick")["token"], "u1")
         self.assertIn("no token 'Nobody'", self.fail_cmd("hp", "Nobody", "1"))
+
+
+class SheetXp(CampaignCase):
+    """The XP award at the close: the sheet's XP line, a changelog line, and who can level up."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        import combat
+        self.write("players/session-zero.md", "- **Starting level:** 1. **Advancement:** Medium XP track.\n")
+        table = self.write("xp.md", "| Level | Slow | Medium | Fast |\n|---|---|---|---|\n| 2 | 3,000 | 2,000 | 1,300 |\n| 3 | 7,500 | 5,000 | 3,300 |\n")
+        combat.XP_TABLE = table
+        self.addCleanup(setattr, combat, "XP_TABLE", None)
+        self.write("campaign.md", "# Test\n**System:** pf1e\n- **Sessions played:** 4\n")
+        self.write("players/characters/kovan.md", "# Kovan Ashgrave\n- **Race / Class / Level:** Half-Orc / Slayer / 1\n"
+                   "- **HP:** 12 / 12\n\n## Changelog\n- 2026-10-08: session 5 end — +115 XP, total 665/2000 toward level 2.\n")
+        self.write("players/characters/brenna.md", "# Brenna\n- **Race / Class / Level:** Dwarf / Monk / 1\n- **XP:** 1,950 / 2,000\n"
+                   "- **HP:** 4 / 13\n")
+
+    def test_award_the_party(self) -> None:
+        out = self.run_cmd("sheet-xp", "party", "100", "--why", "2 road toughs, split 4 ways")
+        self.assertIn("Kovan Ashgrave: +100 XP → 765 / 2,000", out)       # seeded from the last changelog total
+        self.assertIn("Brenna: +100 XP → 2,050 / 2,000 — CAN LEVEL UP", out)
+        kovan = (self.dir / "players/characters/kovan.md").read_text()
+        self.assertIn("- **XP:** 765 / 2,000 (medium track, level 2 at 2,000)\n- **HP:**", kovan)
+        self.assertIn("session 5 — +100 XP (2 road toughs, split 4 ways), total 765/2,000 toward level 2. HP 12/12.", kovan)
+        brenna = (self.dir / "players/characters/brenna.md").read_text()
+        self.assertIn("- **XP:** 2,050 / 2,000", brenna)
+        self.assertIn("CAN LEVEL UP.", brenna)
+        self.assertIn("## Changelog", brenna)                              # created when missing
+
+    def test_named_characters_and_the_tool(self) -> None:
+        import mcp_server as M
+        ok, text = M.Server().call("character_xp", {"campaign": self.slug, "characters": "kovan", "xp": 50, "why": "story award"})
+        self.assertTrue(ok, text)
+        self.assertNotIn("XP:", (self.dir / "players/characters/brenna.md").read_text().replace("- **XP:** 1,950 / 2,000", ""))
+        self.assertIn("no character", self.fail_cmd("sheet-xp", "nobody", "10", "--why", "x"))

@@ -32,8 +32,8 @@ Write these yourself. They only contain what the player knows:
    - End with open questions and leads, as the characters see them. Phrase them neutrally, and never name a lead, flaw or connection the characters haven't found (the journal test in "Player knowledge vs. DM knowledge", `running-the-game.md`).
    - Highlight names as in `communication.md`, so the recap works as a reference.
 2. **`players/party.md`:** quests, allies, enemies, and things learned. Loot and gold are already in the inventory (the `gear` tool kept it during play; the player sees the stash in the interface's Party stash tab): check with `gear show` that nothing is missing, and add it with the tool if it is.
-3. **`players/characters/*`:** the XP award, current HP and conditions. Gear and consumables are kept by the `gear` tool (their sections are generated). Add a changelog line for each. Tell the player the award and whether anyone can level up. For milestones, give the reason only if it's player-safe.
-4. **`campaign.md`:** increment "Sessions played" and update the party level.
+3. **`players/characters/*`:** the XP award goes on every sheet with **`character_xp`** ("party" or names, the XP each, and why): it writes each sheet's XP line and a changelog line with the session, the total and HP, and says who can level up. Add only what it doesn't cover (a condition, a lasting injury) to a changelog line yourself. HP outside fights goes through `character_hp`; gear and consumables are kept by the `gear` tool. Tell the player the award and whether anyone can level up. For milestones, give the reason only if it's player-safe.
+4. **`campaign.md`:** update the party level if it changed. In the web interface, "Sessions played" is incremented by the interface when the close is done: don't change it.
 5. **Safety:** if lines or veils changed, update `players/session-zero.md`.
 
 ## Step 4: Continuity check

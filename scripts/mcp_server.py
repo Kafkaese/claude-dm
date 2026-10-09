@@ -294,6 +294,12 @@ TOOLS: list[Tool] = [
     Tool("combat_stabilize", "A dying creature's stabilization check (a PC's total is required; NPCs roll).",
          {"token": S(TOK), "total": I("PC: the player's total")}, ["token"],
          lambda a: ["stabilize", a["token"]] + flags(a, {"total": "--total"})),
+    Tool("character_xp", "Award XP at the close of a session: you decide the award (session zero's advancement, the "
+         "encounters' CR, story awards, split as the table does it); this writes each sheet's XP line and a changelog line "
+         "(session, reason, total, HP) and says who can level up. Never edit XP by hand.",
+         {"characters": S("'party' (every sheet), or names separated by commas"), "xp": I("XP each"),
+          "why": S("what it's for: '2 road toughs (CR 1/2), split 4 ways'"), "session": I("session number (default: the current one)")},
+         ["characters", "xp", "why"], lambda a: ["sheet-xp", a["characters"], str(a["xp"]), "--why", a["why"]] + flags(a, {"session": "--session"})),
     Tool("character_hp", "A character's HP OUTSIDE a fight (healing between fights, a rest, a fall, a trap): changes the sheet's "
          "HP line (capped at max) and logs it. Never edit the HP line by hand. In a fight use combat_hp.",
          {"character": S("the character (name or part of it)"), "change": S("+N (healed), -N (hurt) or =N (set)"),

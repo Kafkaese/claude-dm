@@ -31,7 +31,7 @@ from dm_engine import (EFFORTS, REPO, CombatRunner, Engine, PlayerTurnRunner, wi
                        end_fight, fight_over, fight_over_prompt,
                        is_go_signal, list_campaigns, run_combat_step, slugify, step_due,
                        last_combat_events, load_history,
-                       FLUSH_PROMPT, WISHES_QUESTION, close_prompt, session_in_progress, session_start_bundle, stash_markdown,
+                       FLUSH_PROMPT, WISHES_QUESTION, close_prompt, session_in_progress, session_start_bundle, stash_markdown, close_bundle, mark_session_closed,
                        sheet_with_gear,
                        write_transcript)
 
@@ -261,7 +261,10 @@ class Hub:
         self.eng.new_session()   # same campaign lock, a fresh and small context
         with self.lock:
             self.turn_dm = None
-        ok = self._exchange(close_prompt(camp, nn, wishes, transcript, fight=bool(combat_state(camp))))
+        ok = self._exchange(close_prompt(camp, nn, wishes, transcript, fight=bool(combat_state(camp)),
+                                         bundle=close_bundle(camp, nn, transcript)))
+        if ok and mark_session_closed(camp, nn):
+            self.dbg(f"campaign.md: Sessions played = {nn}")
         self._pin_campaign()   # "continue" now picks up the closing conversation
         return ok
 

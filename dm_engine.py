@@ -168,7 +168,7 @@ FLUSH_PROMPT = ("[The session is ending. Another conversation will close it from
                 "else, and reply only: \"done\".]")
 
 
-def close_prompt(slug: str, nn: int, wishes: str, transcript: Path | None, fight: bool = False) -> str:
+def close_prompt(slug: str, nn: int, wishes: str, transcript: Path | None, fight: bool = False, bundle: str = "") -> str:
     """The fresh closing conversation's first message: run /end-session from the files. `fight`: a fight
     is still in progress (only then is it mentioned: otherwise the DM goes looking for one)."""
     where = (f" The player-visible transcript of the session (what was said and narrated, no DM secrets) is in "
@@ -181,7 +181,9 @@ def close_prompt(slug: str, nn: int, wishes: str, transcript: Path | None, fight
                else "No fight is in progress. ")
             + "\n"
             f"Step 1 is done (the interface asked). The player's answer to stars & wishes and anything to note: "
-            f"\"{wishes.strip() or 'skip'}\". Start at Step 2.]")
+            f"\"{wishes.strip() or 'skip'}\". Start at Step 2. XP goes on the sheets with character_xp; the interface "
+            f"increments \"Sessions played\" when you're done (don't).]"
+            + (f"\n\n{bundle}" if bundle else ""))
 
 
 # The session start (web.py): the interface does /start-session's mechanical steps itself and hands the
@@ -224,14 +226,7 @@ def session_start_bundle(slug: str) -> str:
     files += [camp / "dm" / "state.md", camp / "dm" / "session-prep" / f"session-{nn:02d}-prep.md"]
     if resume:
         files += [log, camp / "dm" / "screen-digest.md"]
-    parts, missing = [], []
-    for p in files:
-        if not p.exists():
-            missing.append(str(p.relative_to(REPO)))
-            continue
-        text = p.read_text(encoding="utf-8")
-        cut = f"\n[… cut at {START_FILE_LIMIT} characters: read the rest by section if you need it]" if len(text) > START_FILE_LIMIT else ""
-        parts.append(f"===== {p.relative_to(REPO)} =====\n{text[:START_FILE_LIMIT]}{cut}")
+    parts, missing = _file_blocks(files)
     if (camp / "players" / "inventory.json").exists():
         parts.append("===== the party's possessions (gear show) =====\n" + _run_script_quiet("gear.py", slug, ["show"]))
     for p in (camp / "dm" / "world.md", camp / "dm" / "threads.md"):
@@ -246,6 +241,49 @@ def session_start_bundle(slug: str) -> str:
               "Now run the /start-session skill for this campaign (Skill tool) and follow it, skipping what's done above; "
               "read further DM files only by section, as the brief needs. The player sees none of this message.]")
     return head + "\n\n" + "\n\n".join(parts)
+
+
+def _file_blocks(paths: list[Path], limit: int = START_FILE_LIMIT) -> tuple[list[str], list[str]]:
+    """The files as "===== path =====" blocks (cut at `limit` characters), and the ones that don't exist."""
+    parts, missing = [], []
+    for p in paths:
+        name = str(p.relative_to(REPO)) if p.is_relative_to(REPO) else str(p)
+        if not p.exists():
+            missing.append(name)
+            continue
+        text = p.read_text(encoding="utf-8")
+        cut = f"\n[… cut at {limit} characters: read the rest by section if you need it]" if len(text) > limit else ""
+        parts.append(f"===== {name} =====\n{text[:limit]}{cut}")
+    return parts, missing
+
+
+def close_bundle(slug: str, nn: int, transcript: Path | None) -> str:
+    """The files the closing conversation needs, read for it (instead of a dozen Reads and greps): the
+    live log, the transcript, the state and world files, the party's sheets and notes, the DM's notes on
+    the PCs, session zero (advancement), the last recap (its style), and the inventory."""
+    camp = REPO / "campaigns" / slug
+    sheets = sorted(p for p in (camp / "players" / "characters").glob("*.md") if p.name.lower() != "readme.md")
+    notes = sorted(p for p in (camp / "dm" / "characters").glob("*.md") if p.name.lower() != "readme.md")
+    recaps = sorted((camp / "players" / "recaps").glob("session-*.md"))
+    files = [camp / "dm" / "session-log" / f"session-{nn:02d}.md"] + ([transcript] if transcript else [])
+    files += [camp / "campaign.md", camp / "players" / "session-zero.md", camp / "dm" / "state.md", camp / "dm" / "world.md",
+              camp / "players" / "party.md"] + recaps[-1:] + sheets + notes
+    parts, _missing = _file_blocks([p for p in files if p is not None])
+    if (camp / "players" / "inventory.json").exists():
+        parts.append("===== the party's possessions (gear show) =====\n" + _run_script_quiet("gear.py", slug, ["show"]))
+    return ("The files the close needs, read for you: don't Read them again (read others by section if you need them).\n\n"
+            + "\n\n".join(parts))
+
+
+def mark_session_closed(slug: str, nn: int) -> bool:
+    """After the close: "Sessions played" becomes NN (once; the skill no longer does it by hand)."""
+    md = REPO / "campaigns" / slug / "campaign.md"
+    text = md.read_text(encoding="utf-8")
+    m = re.search(r"(\*\*Sessions played:\*\*\s*)(\d+)", text)
+    if not m or int(m.group(2)) >= nn:
+        return False
+    md.write_text(text[:m.start(2)] + str(nn) + text[m.end(2):], encoding="utf-8")
+    return True
 
 
 def _run_script_quiet(script: str, slug: str, args: list[str]) -> str:
