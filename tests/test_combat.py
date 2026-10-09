@@ -1218,6 +1218,18 @@ class TurnMarks(CampaignCase):
         mk = self.marks()
         self.assertEqual((mk["token"], mk["areas"]), ("C", []))
 
+    def test_a_turn_that_cant_be_acted_on_keeps_the_marks(self) -> None:
+        self.run_cmd("cond", "s1", "add", "dazed", "--rounds", "2")
+        self.run_cmd("next")                                       # g1
+        self.run_cmd("move", "g1", "D2")
+        self.run_cmd("attack", "g1", "C", "--with", "spear")
+        self.run_cmd("next")                                       # s1 is dazed: its turn is skipped
+        mk = self.marks()
+        self.assertEqual((mk["token"], mk["path"][-1], [t["to"] for t in mk["targets"]]), ("g1", [3, 1], ["C"]))
+        self.run_cmd("next")                                       # Corin: still g1's, until he acts
+        mk = self.marks()
+        self.assertEqual((mk["token"], mk["path"][-1]), ("g1", [3, 1]))
+
     def test_aoo_and_hidden_targets_are_not_marked(self) -> None:
         self.run_cmd("light", "ambient", "dark")                   # so the lurker stays hidden from Corin
         self.run_cmd("next")

@@ -545,7 +545,8 @@ TERRAIN_NAMES = {"#": "wall", "+": "door", "^": "difficult", "~": "shallow water
 # The actor's movement, the areas of its area effects, and whom it attacked or targeted (spells,
 # maneuvers, buffs, heals). A new turn clears them; when the interface moves on to a PC's turn, the
 # last NPC's marks stay until the PC acts, so the player sees what just happened. Only the actor's
-# own actions count (not attacks of opportunity or readied actions on others' turns).
+# own actions count (not attacks of opportunity or readied actions on others' turns). A turn that
+# can't be acted on (dazed, unconscious, helpless) keeps the previous actor's marks.
 
 def marks_for(st: State, c: Token) -> dict[str, Any]:
     """The turn marks of `c`, started fresh if they belonged to someone else."""
@@ -1494,7 +1495,11 @@ def cmd_next(args: Args, st: State) -> str:
     prev = next((t for t in st["tokens"] if t["token"] == st.get("turn")), None)
     if prev is not None and not prev.get("hidden"):   # a hidden actor's movement is never shown
         path = prev.pop("turn_path", None)
-        st["last_move"] = {"token": prev["token"], "path": path} if path and len(path) > 1 else None
+        if path and len(path) > 1:
+            st["last_move"] = {"token": prev["token"], "path": path}
+        elif not prev.pop("skipped", None):
+            st["last_move"] = None
+        # else it couldn't act: the marks (and movement) of the one before it stay on the map
     lapsed = []
     for g in list(grapples(st)):   # a grapple must be maintained every round, on the grappler's turn
         if g["by"] == st.get("turn") and g.get("round") != st.get("round"):
@@ -1508,8 +1513,6 @@ def cmd_next(args: Args, st: State) -> str:
         surprise_over = bool(st.pop("surprise", None))
     st["turn"] = c["token"]
     st.pop("end_turn", None)
-    if c["side"] != "pc":
-        st["turn_marks"] = {"token": c["token"], "areas": [], "targets": []}
     out = [f"Round {st['round']}: {label(c)} ({c['name']}) acts"] + lapsed
     if surprise_over:
         out.append("  the surprise round is over: full actions from now on")
@@ -1563,6 +1566,10 @@ def cmd_next(args: Args, st: State) -> str:
             out.append("  " + _stabilize(st, c, None))
     elif c["hp"] == 0:
         out.append("  disabled: a single move or standard action; a strenuous one costs 1 HP")
+    if not can_act(c):   # one that can't act leaves the last actor's marks on the map
+        c["skipped"] = True
+    elif c["side"] != "pc":
+        st["turn_marks"] = {"token": c["token"], "areas": [], "targets": []}
     return "\n".join(out)
 
 
